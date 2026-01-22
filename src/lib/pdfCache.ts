@@ -166,3 +166,34 @@ export function getCacheStats() {
     maxSize: MAX_CACHE_SIZE,
   };
 }
+
+/**
+ * Render a PDF page to canvas optimized for OCR
+ * Uses higher scale (2.5x) for better text recognition accuracy
+ */
+export async function renderPageForOCR(
+  file: File,
+  pageNumber: number = 1,
+  scale: number = 2.5
+): Promise<HTMLCanvasElement> {
+  const pdf = await getCachedPdf(file);
+  const page = await pdf.getPage(pageNumber);
+  
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d')!;
+  
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  
+  await page.render({
+    canvasContext: context,
+    viewport: viewport,
+  }).promise;
+  
+  page.cleanup(); // Release memory immediately
+  
+  console.log(`[PDF] Rendered page ${pageNumber} for OCR: ${canvas.width}x${canvas.height}px`);
+  
+  return canvas;
+}

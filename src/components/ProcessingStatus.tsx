@@ -103,10 +103,27 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
       {status.step !== 'idle' && (
         <div className="space-y-2">
           <Progress value={status.progress} className="h-2" />
-          <p className="text-xs text-muted-foreground text-right">
-            {Math.round(status.progress)}%
-          </p>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>{Math.round(status.progress)}%</span>
+            {status.isOcrActive && status.ocrProgress !== undefined && (
+              <span className="text-primary font-medium">OCR: {status.ocrProgress}%</span>
+            )}
+          </div>
         </div>
+      )}
+
+      {/* Secondary OCR progress bar */}
+      {status.isOcrActive && status.ocrProgress !== undefined && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="mt-2 space-y-1"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Reconhecimento OCR:</span>
+          </div>
+          <Progress value={status.ocrProgress} className="h-1.5 bg-primary/20" />
+        </motion.div>
       )}
 
       {/* Time information */}

@@ -6,7 +6,8 @@ import {
   renderPdfPageToImage,
   createCombinedPdf,
 } from '@/lib/pdfUtils';
-import { getCachedPdf, getCachedPageTexts, extractFirstPageText, clearCache } from '@/lib/pdfCache';
+import { getCachedPdf, getCachedPageTexts, renderPageForOCR, clearCache } from '@/lib/pdfCache';
+import { extractTextWithOCR, terminateOcrWorker } from '@/lib/ocrUtils';
 import { toast } from '@/hooks/use-toast';
 
 const CONCURRENCY_LIMIT = 5;
@@ -188,22 +189,49 @@ export function useDocumentProcessor() {
         ...prev,
         currentItem: holerite.name,
         currentItemStartTime: Date.now(),
+        message: `Executando OCR em ${holerite.name}...`,
+        isOcrActive: true,
+        ocrProgress: 0,
       }));
 
       setHolerites((prev) =>
         prev.map((h) =>
-          h.id === holerite.id ? { ...h, status: 'processing', progress: 50 } : h
+          h.id === holerite.id ? { ...h, status: 'processing', progress: 30 } : h
         )
       );
 
       try {
-        // Extract only first page text - MUCH faster (employee name is always on page 1)
-        const text = await extractFirstPageText(holerite.file);
-        console.log('=== TEXTO EXTRAÍDO ===');
+        // Step 1: Render page 1 as high-resolution image for OCR
+        console.log(`[OCR] Rendering page 1 of ${holerite.name}...`);
+        const canvas = await renderPageForOCR(holerite.file, 1, 2.5);
+        
+        setHolerites((prev) =>
+          prev.map((h) =>
+            h.id === holerite.id ? { ...h, progress: 50 } : h
+          )
+        );
+
+        // Step 2: Run OCR with progress callback
+        const ocrText = await extractTextWithOCR(canvas, (ocrProgress) => {
+          setStatus(prev => ({
+            ...prev,
+            ocrProgress,
+          }));
+        });
+        
+        console.log('=== TEXTO OCR ===');
         console.log('Arquivo:', holerite.name);
-        console.log('Texto (500 chars):', text.substring(0, 500));
-        console.log('======================');
-        const extractedName = extractEmployeeName(text);
+        console.log('Texto (500 chars):', ocrText.substring(0, 500));
+        console.log('=================');
+        
+        // Step 3: Extract name from OCR text
+        const extractedName = extractEmployeeName(ocrText);
+        
+        if (extractedName) {
+          console.log(`[OCR] Nome extraído: "${extractedName}"`);
+        } else {
+          console.warn(`[OCR] Não foi possível extrair nome de ${holerite.name}`);
+        }
 
         // Clear timer when done
         clearSlowOperationTimer();
@@ -213,7 +241,7 @@ export function useDocumentProcessor() {
           status: extractedName ? 'completed' : 'error',
           progress: 100,
           extractedName: extractedName || undefined,
-          error: extractedName ? undefined : 'Não foi possível extrair o nome',
+          error: extractedName ? undefined : 'Não foi possível extrair o nome via OCR',
         };
 
         setHolerites((prev) =>
@@ -228,20 +256,24 @@ export function useDocumentProcessor() {
           progress: ((index + 1) / holerites.length) * 40,
           message: `Processando holerite ${index + 1} de ${holerites.length}...`,
           processedItems: index + 1,
+          isOcrActive: false,
+          ocrProgress: undefined,
         }));
 
         return updatedHolerite;
       } catch (error) {
         clearSlowOperationTimer();
+        console.error(`[OCR] Erro ao processar ${holerite.name}:`, error);
         const updatedHolerite: UploadedFile = {
           ...holerite,
           status: 'error',
           progress: 100,
-          error: 'Erro ao processar o arquivo',
+          error: 'Erro ao executar OCR no arquivo',
         };
         setHolerites((prev) =>
           prev.map((h) => (h.id === holerite.id ? updatedHolerite : h))
         );
+        setStatus(prev => ({ ...prev, isOcrActive: false, ocrProgress: undefined }));
         return updatedHolerite;
       }
     };
