@@ -118,11 +118,12 @@ export function extractEmployeeName(text: string): string | null {
 
   // Padrões ordenados do mais específico ao mais genérico
   const namePatterns = [
-    // 1. Nome entre matrícula e código (formato B SERVICE)
-    /\b\d{3,6}\s+([A-Z][A-Z\s]{8,45}?)\s+\d{4,}/,
+    // 1. Formato B SERVICE: código + nome + cargo/CBO na mesma linha
+    // Ex: "2445 JOCELI BRZEZINSKI 513205" ou "2445 JOCELI BRZEZINSKI COZINHEIRA"
+    /\b\d{3,5}\s+([A-Z][A-Z\s]{5,35}?)\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|SUPERVISOR|OPERADOR|TECNICO|LIDER|ENCARREGADO|\d{5,6})\b/,
     
     // 2. Nome seguido de cargo brasileiro
-    /([A-Z][A-Z\s]{8,45}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO)/,
+    /([A-Z][A-Z\s]{8,45}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO|COZINHEIRA|SERVENTE)/,
     
     // 3. Labels explícitos brasileiros
     /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
@@ -137,26 +138,48 @@ export function extractEmployeeName(text: string): string | null {
     /^([A-Z][A-Z\s]{8,40})$/m,
   ];
 
+  // Lista expandida de palavras inválidas (inclui headers de tabelas)
+  const invalidWords = [
+    // Termos de empresa/documento
+    'CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO', 
+    'EMPRESA', 'LTDA', 'EIRELI', 'SA', 'PRESTADORA', 'SERVICOS',
+    'FOLHA', 'MENSAL', 'RECIBO', 'PAGAMENTO',
+    
+    // Termos de cabeçalho de tabelas
+    'CODIGO', 'NOME', 'FUNCIONARIO', 'DEPARTAMENTO', 'FILIAL',
+    'MATRICULA', 'DATA', 'REFERENCIA', 'VENCIMENTOS', 'DESCONTOS',
+    'LIQUIDO', 'VALOR', 'TOTAL', 'BASE', 'FGTS', 'INSS', 'IRRF',
+    'DESCRICAO', 'OBSERVACAO', 'PERIODO', 'COMPETENCIA',
+    'CBO', 'CC', 'FAR', 'NOMEDOFUNCIONARIO', 'NOMEFUNCIONARIO',
+  ];
+
   for (const pattern of namePatterns) {
     const match = normalizedText.match(pattern);
     if (match && match[1]) {
       const name = match[1].trim().replace(/\s+/g, ' ');
       const words = name.split(' ').filter(w => w.length > 1);
       
-      // Validar: pelo menos 2 palavras, tamanho razoável
-      if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
-        // Remover palavras que claramente não são nomes
-        const invalidWords = [
-          'CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO', 
-          'EMPRESA', 'LTDA', 'EIRELI', 'SA', 'PRESTADORA', 'SERVICOS',
-          'FOLHA', 'MENSAL', 'RECIBO', 'PAGAMENTO'
-        ];
-        const hasInvalidWord = words.some(w => invalidWords.includes(w));
-        if (!hasInvalidWord) {
-          console.log('[DEBUG] Nome extraído:', name);
-          return name;
-        }
+      // Validação 1: pelo menos 2 palavras, tamanho razoável
+      if (words.length < 2 || name.length < 5 || name.length > 60) {
+        continue;
       }
+      
+      // Validação 2: detectar palavras muito longas (OCR incorreto/junção de palavras)
+      const hasVeryLongWord = words.some(w => w.length > 15);
+      if (hasVeryLongWord) {
+        console.log('[DEBUG] Ignorando - palavra OCR malformada:', name);
+        continue;
+      }
+      
+      // Validação 3: não contém palavras inválidas
+      const hasInvalidWord = words.some(w => invalidWords.includes(w));
+      if (hasInvalidWord) {
+        console.log('[DEBUG] Ignorando - contém palavra inválida:', name);
+        continue;
+      }
+      
+      console.log('[DEBUG] Nome extraído:', name);
+      return name;
     }
   }
 
