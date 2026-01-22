@@ -5,6 +5,7 @@ import { FileDropzone } from '@/components/FileDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
 import { MatchedPairCard } from '@/components/MatchedPairCard';
 import { DocumentRepository } from '@/components/DocumentRepository';
+import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -16,12 +17,16 @@ const Index = () => {
     generatedDocs,
     status,
     isCancelling,
+    hasSavedState,
+    isCheckingState,
     addFiles,
     removeFile,
     processDocuments,
     generatePdfs,
     cancelProcessing,
     reset,
+    resumeProcessing,
+    discardSavedState,
   } = useDocumentProcessor();
 
   const canProcess = holerites.length > 0 && comprovantes.length > 0 && status.step === 'idle';
@@ -30,6 +35,12 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Resume Processing Dialog */}
+      <ResumeProcessingDialog
+        open={hasSavedState && !isCheckingState}
+        onResume={resumeProcessing}
+        onDiscard={discardSavedState}
+      />
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">

@@ -9,10 +9,34 @@ import {
 import { getCachedPdf, getCachedPageTextsWithOCR, renderPageForOCR, clearCache } from '@/lib/pdfCache';
 import { extractTextWithOCR, extractTextBatch, terminateOcrWorker, getWorkerCount } from '@/lib/ocrUtils';
 import { toast } from '@/hooks/use-toast';
+import {
+  saveFileBlob,
+  loadFileBlob,
+  saveProcessingState,
+  loadProcessingState,
+  clearProcessingState,
+  loadAllFiles,
+  hasSavedProcessingState,
+  cleanupOldData,
+  type ProcessingState,
+  type ExtractedEntry,
+  type PersistedMatch,
+} from '@/lib/processingPersistence';
 
 const CONCURRENCY_LIMIT = 5;
 const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
-const PAGES_PER_BATCH = 20; // Process 20 pages at a time for OCR parallelization
+
+// Optimized: Align batch size with worker count for balanced CPU usage
+const getOptimalBatchSize = () => Math.max(4, Math.min(6, getWorkerCount()));
+
+// Pause between batches to prevent UI freezing and reduce CPU spikes
+const pauseBetweenBatches = (): Promise<void> => new Promise(resolve => {
+  if ('requestIdleCallback' in window) {
+    (window as Window).requestIdleCallback(() => resolve(), { timeout: 100 });
+  } else {
+    setTimeout(resolve, 50);
+  }
+});
 
 // Process items in parallel with concurrency limit and cancellation support
 async function processInBatches<T, R>(
@@ -56,6 +80,10 @@ export function useDocumentProcessor() {
     message: '',
   });
   
+  // Resume processing state
+  const [hasSavedState, setHasSavedState] = useState(false);
+  const [isCheckingState, setIsCheckingState] = useState(true);
+  
   // Cancel mechanism
   const cancelledRef = useRef(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -64,6 +92,24 @@ export function useDocumentProcessor() {
   const slowOperationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const currentItemStartTimeRef = useRef<number>(0);
   const processStartTimeRef = useRef<number>(0);
+
+  // Check for saved state on mount
+  useEffect(() => {
+    const checkSavedState = async () => {
+      try {
+        // Clean up old data first
+        await cleanupOldData();
+        const hasState = await hasSavedProcessingState();
+        setHasSavedState(hasState);
+      } catch (error) {
+        console.error('[Persistence] Error checking saved state:', error);
+      } finally {
+        setIsCheckingState(false);
+      }
+    };
+    
+    checkSavedState();
+  }, []);
 
   // Clear slow operation timer on unmount or cancel
   useEffect(() => {
@@ -155,8 +201,94 @@ export function useDocumentProcessor() {
     setStatus((prev) => ({ ...prev, message: 'Cancelando...' }));
   }, []);
 
-  const processDocuments = useCallback(async () => {
-    if (holerites.length === 0 || comprovantes.length === 0) {
+  // Save files to IndexedDB when processing starts
+  const persistFiles = async (holeriteFiles: UploadedFile[], comprovanteFiles: UploadedFile[]) => {
+    try {
+      // Save all files in parallel
+      await Promise.all([
+        ...holeriteFiles.map(h => saveFileBlob(h.id, h.file, 'holerite')),
+        ...comprovanteFiles.map(c => saveFileBlob(c.id, c.file, 'comprovante')),
+      ]);
+      console.log('[Persistence] Files saved to IndexedDB');
+    } catch (error) {
+      console.error('[Persistence] Error saving files:', error);
+    }
+  };
+
+  // Load saved state and resume processing
+  const resumeProcessing = useCallback(async () => {
+    try {
+      const savedState = await loadProcessingState();
+      if (!savedState) {
+        toast({
+          title: "Nenhum estado salvo encontrado",
+          variant: "destructive",
+        });
+        setHasSavedState(false);
+        return;
+      }
+
+      // Load files from IndexedDB
+      const files = await loadAllFiles();
+      
+      const holeriteFiles: UploadedFile[] = [];
+      const comprovanteFiles: UploadedFile[] = [];
+      
+      for (const file of files) {
+        const reconstructedFile = new File([file.blob], file.name, { type: 'application/pdf' });
+        const uploadedFile: UploadedFile = {
+          id: file.id,
+          file: reconstructedFile,
+          name: file.name,
+          type: file.type,
+          status: 'pending',
+          progress: 0,
+        };
+        
+        if (file.type === 'holerite') {
+          holeriteFiles.push(uploadedFile);
+        } else {
+          comprovanteFiles.push(uploadedFile);
+        }
+      }
+      
+      setHolerites(holeriteFiles);
+      setComprovantes(comprovanteFiles);
+      setHasSavedState(false);
+      
+      toast({
+        title: "Estado restaurado",
+        description: `${savedState.extractedEntries.length} nome(s) já extraído(s). Continuando...`,
+      });
+      
+      // Start processing from where we left off
+      // The actual resume logic will be handled in processDocuments with savedState
+      setTimeout(() => {
+        processDocumentsWithState(holeriteFiles, comprovanteFiles, savedState);
+      }, 500);
+      
+    } catch (error) {
+      console.error('[Resume] Error resuming processing:', error);
+      toast({
+        title: "Erro ao retomar",
+        description: "Não foi possível restaurar o processamento anterior",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  const discardSavedState = useCallback(async () => {
+    await clearProcessingState();
+    setHasSavedState(false);
+  }, []);
+
+  // Internal processing with optional saved state
+  const processDocumentsWithState = async (
+    holeriteList: UploadedFile[],
+    comprovanteList: UploadedFile[],
+    savedState?: ProcessingState | null
+  ) => {
+    if (holeriteList.length === 0 || comprovanteList.length === 0) {
       return;
     }
 
@@ -164,17 +296,43 @@ export function useDocumentProcessor() {
     setIsCancelling(false);
     processStartTimeRef.current = Date.now();
     
-    const totalFiles = holerites.length + comprovantes.length;
+    const totalFiles = holeriteList.length + comprovanteList.length;
+    const PAGES_PER_BATCH = getOptimalBatchSize();
+    
+    // Determine starting point from saved state
+    const startHoleriteIndex = savedState?.currentHoleriteIndex || 0;
+    const startPageNumber = savedState?.currentPageNumber || 1;
+    const existingEntries: { originalHolerite: UploadedFile; name: string; pageNumber: number }[] = [];
+    
+    // Restore previously extracted entries
+    if (savedState?.extractedEntries) {
+      for (const entry of savedState.extractedEntries) {
+        const holerite = holeriteList.find(h => h.id === entry.holeriteId);
+        if (holerite) {
+          existingEntries.push({
+            originalHolerite: holerite,
+            name: entry.name,
+            pageNumber: entry.pageNumber,
+          });
+        }
+      }
+      console.log(`[Resume] Restored ${existingEntries.length} previously extracted entries`);
+    }
     
     setStatus({ 
       step: 'extracting', 
       progress: 0, 
-      message: 'Extraindo nomes dos holerites...',
+      message: savedState ? 'Retomando extração de nomes...' : 'Extraindo nomes dos holerites...',
       startTime: Date.now(),
       totalItems: totalFiles,
       processedItems: 0,
-      currentItem: holerites[0]?.name,
+      currentItem: holeriteList[startHoleriteIndex]?.name,
     });
+
+    // Save files to IndexedDB if starting fresh
+    if (!savedState) {
+      await persistFiles(holeriteList, comprovanteList);
+    }
 
     // Step 1: Extract names from holerites - process ALL PAGES of each PDF
     interface HoleriteEntry {
@@ -182,9 +340,13 @@ export function useDocumentProcessor() {
       name: string;
       pageNumber: number;
     }
-    const allHoleriteEntries: HoleriteEntry[] = [];
+    const allHoleriteEntries: HoleriteEntry[] = [...existingEntries];
 
-    const processHolerite = async (holerite: UploadedFile, index: number): Promise<HoleriteEntry[]> => {
+    const processHolerite = async (
+      holerite: UploadedFile, 
+      index: number,
+      resumeFromPage: number = 1
+    ): Promise<HoleriteEntry[]> => {
       if (cancelledRef.current) {
         clearSlowOperationTimer();
         return [];
@@ -200,7 +362,7 @@ export function useDocumentProcessor() {
         const entries: HoleriteEntry[] = [];
         const workerCount = getWorkerCount();
 
-        console.log(`[OCR] Processing ${holerite.name}: ${totalPages} page(s) with ${workerCount} parallel workers`);
+        console.log(`[OCR] Processing ${holerite.name}: ${totalPages} page(s) with ${workerCount} parallel workers, starting from page ${resumeFromPage}`);
 
         setHolerites((prev) =>
           prev.map((h) =>
@@ -208,8 +370,8 @@ export function useDocumentProcessor() {
           )
         );
 
-        // Process pages in batches of PAGES_PER_BATCH
-        for (let batchStart = 1; batchStart <= totalPages; batchStart += PAGES_PER_BATCH) {
+        // Process pages in batches (optimized size aligned with worker count)
+        for (let batchStart = resumeFromPage; batchStart <= totalPages; batchStart += PAGES_PER_BATCH) {
           if (cancelledRef.current) break;
 
           const batchEnd = Math.min(batchStart + PAGES_PER_BATCH - 1, totalPages);
@@ -227,11 +389,14 @@ export function useDocumentProcessor() {
             ocrProgress: Math.round(((batchStart - 1) / totalPages) * 100),
           }));
 
-          // Render all pages in this batch in parallel
-          console.log(`[OCR] Rendering pages ${batchStart}-${batchEnd}...`);
-          const canvases = await Promise.all(
-            pageNumbers.map(pageNum => renderPageForOCR(holerite.file, pageNum, 2.5))
-          );
+          // OPTIMIZED: Render pages SEQUENTIALLY to reduce CPU spikes
+          console.log(`[OCR] Rendering pages ${batchStart}-${batchEnd} sequentially...`);
+          const canvases: HTMLCanvasElement[] = [];
+          for (const pageNum of pageNumbers) {
+            if (cancelledRef.current) break;
+            const canvas = await renderPageForOCR(holerite.file, pageNum, 2.5);
+            canvases.push(canvas);
+          }
 
           if (cancelledRef.current) break;
 
@@ -269,6 +434,40 @@ export function useDocumentProcessor() {
 
           // Clear canvas references to free memory
           canvases.length = 0;
+
+          // Save state after each batch for persistence
+          const allExtracted: ExtractedEntry[] = [
+            ...existingEntries.map(e => ({
+              holeriteId: e.originalHolerite.id,
+              name: e.name,
+              pageNumber: e.pageNumber,
+            })),
+            ...allHoleriteEntries.map(e => ({
+              holeriteId: e.originalHolerite.id,
+              name: e.name,
+              pageNumber: e.pageNumber,
+            })),
+            ...entries.map(e => ({
+              holeriteId: e.originalHolerite.id,
+              name: e.name,
+              pageNumber: e.pageNumber,
+            })),
+          ];
+
+          await saveProcessingState({
+            startedAt: savedState?.startedAt || new Date(),
+            status: 'extracting',
+            holeritesIds: holeriteList.map(h => h.id),
+            comprovantesIds: comprovanteList.map(c => c.id),
+            currentHoleriteIndex: index,
+            currentPageNumber: batchEnd + 1,
+            totalPages,
+            extractedEntries: allExtracted,
+            matchedPairs: [],
+          });
+
+          // OPTIMIZED: Add pause between batches to prevent UI freezing
+          await pauseBetweenBatches();
         }
 
         clearSlowOperationTimer();
@@ -290,12 +489,12 @@ export function useDocumentProcessor() {
         );
 
         // Update time estimate
-        updateTimeEstimate(index + 1, holerites.length + comprovantes.length);
+        updateTimeEstimate(index + 1, holeriteList.length + comprovanteList.length);
 
         setStatus((prev) => ({
           ...prev,
-          progress: ((index + 1) / holerites.length) * 40,
-          message: `Processando holerite ${index + 1} de ${holerites.length} (${foundCount} nome(s))...`,
+          progress: ((index + 1) / holeriteList.length) * 40,
+          message: `Processando holerite ${index + 1} de ${holeriteList.length} (${foundCount} nome(s))...`,
           processedItems: index + 1,
           isOcrActive: false,
           ocrProgress: undefined,
@@ -317,9 +516,12 @@ export function useDocumentProcessor() {
       }
     };
 
-    // Process holerites and collect all entries
-    const holeriteResults = await processInBatches(holerites, processHolerite, 1, cancelledRef); // Process 1 at a time for accurate progress
-    for (const entries of holeriteResults) {
+    // Process holerites from starting index
+    for (let i = startHoleriteIndex; i < holeriteList.length; i++) {
+      if (cancelledRef.current) break;
+      
+      const resumeFromPage = (i === startHoleriteIndex && savedState) ? startPageNumber : 1;
+      const entries = await processHolerite(holeriteList[i], i, resumeFromPage);
       allHoleriteEntries.push(...entries);
     }
 
@@ -328,7 +530,7 @@ export function useDocumentProcessor() {
     if (allHoleriteEntries.length > 0) {
       toast({
         title: `${allHoleriteEntries.length} funcionário(s) encontrado(s)`,
-        description: `Nomes extraídos de ${holerites.length} arquivo(s) de holerite`,
+        description: `Nomes extraídos de ${holeriteList.length} arquivo(s) de holerite`,
       });
     }
 
@@ -411,20 +613,23 @@ export function useDocumentProcessor() {
       }
 
       // Update time estimate
-      const processedSoFar = holerites.length + index + 1;
-      updateTimeEstimate(processedSoFar, holerites.length + comprovantes.length);
+      const processedSoFar = holeriteList.length + index + 1;
+      updateTimeEstimate(processedSoFar, holeriteList.length + comprovanteList.length);
 
       setStatus((prev) => ({
         ...prev,
-        progress: 40 + ((index + 1) / comprovantes.length) * 20,
-        message: `Extraindo texto do comprovante ${index + 1} de ${comprovantes.length}...`,
+        progress: 40 + ((index + 1) / comprovanteList.length) * 20,
+        message: `Extraindo texto do comprovante ${index + 1} de ${comprovanteList.length}...`,
         processedItems: processedSoFar,
         isOcrActive: false,
       }));
+
+      // Pause between comprovantes to reduce CPU load
+      await pauseBetweenBatches();
     };
 
     // Process comprovantes one at a time (OCR is memory-intensive)
-    await processInBatches(comprovantes, preExtractComprovante, 1, cancelledRef);
+    await processInBatches(comprovanteList, preExtractComprovante, 1, cancelledRef);
 
     // Check if cancelled
     if (cancelledRef.current) {
@@ -440,7 +645,7 @@ export function useDocumentProcessor() {
     const matchedEntryKeys = new Set<string>(); // Track matched entries by "holeriteId_pageNumber"
 
     // Pure CPU matching - no file access!
-    matchingLoop: for (const comprovante of comprovantes) {
+    matchingLoop: for (const comprovante of comprovanteList) {
       // Check cancellation at start of each comprovante
       if (cancelledRef.current) break matchingLoop;
       
@@ -508,6 +713,9 @@ export function useDocumentProcessor() {
 
     setMatchedPairs(pairs);
 
+    // Clear processing state on successful completion
+    await clearProcessingState();
+
     // Check if cancelled
     if (cancelledRef.current) {
       setStatus({ step: 'idle', progress: 0, message: 'Processamento cancelado' });
@@ -557,7 +765,7 @@ export function useDocumentProcessor() {
 
       // Run previews in background
       if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(() => generatePreviewsLazy());
+        (window as Window).requestIdleCallback(() => generatePreviewsLazy());
       } else {
         setTimeout(generatePreviewsLazy, 0);
       }
@@ -568,6 +776,10 @@ export function useDocumentProcessor() {
       progress: 100,
       message: `${pairs.length} correspondência(s) encontrada(s)`,
     });
+  };
+
+  const processDocuments = useCallback(async () => {
+    await processDocumentsWithState(holerites, comprovantes, null);
   }, [holerites, comprovantes]);
 
   // Month names in Portuguese
@@ -663,7 +875,7 @@ export function useDocumentProcessor() {
     });
   }, [matchedPairs]);
 
-  const reset = useCallback(() => {
+  const reset = useCallback(async () => {
     // Revoke blob URLs to free memory
     generatedDocs.forEach((doc) => URL.revokeObjectURL(doc.blobUrl));
     matchedPairs.forEach((pair) => {
@@ -672,12 +884,16 @@ export function useDocumentProcessor() {
 
     // Clear PDF cache
     clearCache();
+    
+    // Clear IndexedDB
+    await clearProcessingState();
 
     setHolerites([]);
     setComprovantes([]);
     setMatchedPairs([]);
     setGeneratedDocs([]);
     setStatus({ step: 'idle', progress: 0, message: '' });
+    setHasSavedState(false);
   }, [generatedDocs, matchedPairs]);
 
   return {
@@ -687,11 +903,15 @@ export function useDocumentProcessor() {
     generatedDocs,
     status,
     isCancelling,
+    hasSavedState,
+    isCheckingState,
     addFiles,
     removeFile,
     processDocuments,
     generatePdfs,
     cancelProcessing,
     reset,
+    resumeProcessing,
+    discardSavedState,
   };
 }
