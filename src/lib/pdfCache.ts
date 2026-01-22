@@ -71,8 +71,11 @@ export async function getCachedPdf(file: File): Promise<PDFDocumentProxy> {
   return pdf;
 }
 
-// NEW: Get all page texts from a PDF (cached)
-export async function getCachedPageTexts(file: File): Promise<string[]> {
+// NEW: Get all page texts from a PDF (cached) with cancellation support
+export async function getCachedPageTexts(
+  file: File,
+  shouldCancel?: () => boolean
+): Promise<string[]> {
   const key = getFileKey(file);
   
   let pageTexts = pageTextCache.get(key);
@@ -81,13 +84,21 @@ export async function getCachedPageTexts(file: File): Promise<string[]> {
     pageTexts = [];
     
     for (let i = 1; i <= pdf.numPages; i++) {
+      // Check cancellation before each page
+      if (shouldCancel?.()) {
+        break;
+      }
+      
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       const text = textContent.items.map((item: any) => item.str).join(' ');
       pageTexts.push(text);
     }
     
-    pageTextCache.set(key, pageTexts);
+    // Only cache if not cancelled
+    if (!shouldCancel?.()) {
+      pageTextCache.set(key, pageTexts);
+    }
   }
   
   updateAccessOrder(key);
