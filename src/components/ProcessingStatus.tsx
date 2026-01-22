@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText } from 'lucide-react';
+import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText, Cpu } from 'lucide-react';
 import { ProcessingStatus as ProcessingStatusType } from '@/types/document';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getWorkerCount, isOcrWorkerReady } from '@/lib/ocrUtils';
 
 interface ProcessingStatusProps {
   status: ProcessingStatusType;
@@ -112,15 +113,40 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
         </div>
       )}
 
-      {/* Secondary OCR progress bar */}
+      {/* Secondary OCR progress bar with worker indicator */}
       {status.isOcrActive && status.ocrProgress !== undefined && (
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           className="mt-2 space-y-1"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">Reconhecimento OCR:</span>
+            {isOcrWorkerReady() && (
+              <div className="flex items-center gap-1.5">
+                <Cpu className="h-3 w-3 text-primary" />
+                <span className="text-xs font-medium text-primary">
+                  {getWorkerCount()} workers ativos
+                </span>
+                <div className="flex gap-0.5">
+                  {Array.from({ length: getWorkerCount() }).map((_, i) => (
+                    <motion.div
+                      key={i}
+                      className="h-2 w-2 rounded-full bg-primary"
+                      animate={{ 
+                        opacity: [0.4, 1, 0.4],
+                        scale: [0.8, 1, 0.8]
+                      }}
+                      transition={{ 
+                        duration: 1.2,
+                        repeat: Infinity,
+                        delay: i * 0.15
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <Progress value={status.ocrProgress} className="h-1.5 bg-primary/20" />
         </motion.div>
