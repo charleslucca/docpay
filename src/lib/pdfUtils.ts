@@ -58,7 +58,8 @@ export async function renderPdfPageToImage(
   file: File,
   pageNumber: number,
   scale: number = 1.5,
-  cachedPdf?: PDFDocumentProxy
+  cachedPdf?: PDFDocumentProxy,
+  cropToTopHalf: boolean = false
 ): Promise<string> {
   const pdf = cachedPdf || await getCachedPdf(file);
   const page = await pdf.getPage(pageNumber);
@@ -74,6 +75,25 @@ export async function renderPdfPageToImage(
     canvasContext: context,
     viewport: viewport,
   }).promise;
+  
+  // If cropping to top half, create a new canvas with only the top portion
+  if (cropToTopHalf) {
+    const croppedCanvas = document.createElement('canvas');
+    const croppedContext = croppedCanvas.getContext('2d')!;
+    const halfHeight = Math.floor(canvas.height / 2);
+    
+    croppedCanvas.width = canvas.width;
+    croppedCanvas.height = halfHeight;
+    
+    // Draw only the top half of the original canvas
+    croppedContext.drawImage(
+      canvas,
+      0, 0, canvas.width, halfHeight,  // Source: top half
+      0, 0, canvas.width, halfHeight   // Destination
+    );
+    
+    return croppedCanvas.toDataURL('image/jpeg', 0.8);
+  }
   
   return canvas.toDataURL('image/jpeg', 0.8);
 }
@@ -181,7 +201,8 @@ export async function createCombinedPdf(
   comprovanteFile: File,
   comprovantePageNumber: number,
   employeeName: string,
-  holeritePageNumber: number = 1 // Support multi-page holerites
+  holeritePageNumber: number = 1,
+  cropHoleriteToHalf: boolean = true // Crop to top half (single via)
 ): Promise<Blob> {
   const pdfDoc = await PDFDocument.create();
   
@@ -195,10 +216,27 @@ export async function createCombinedPdf(
   const holeriteBytes = await getCachedBuffer(holeriteFile);
   const comprovanteBytes = await getCachedBuffer(comprovanteFile);
   
-  const holeritePdf = await PDFDocument.load(holeriteBytes.slice(0));
+  let holeritePdf = await PDFDocument.load(holeriteBytes.slice(0));
   const comprovantePdf = await PDFDocument.load(comprovanteBytes.slice(0));
   
-  const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [holeritePageNumber - 1]);
+  // Crop holerite to top half if needed (removes duplicate via)
+  if (cropHoleriteToHalf) {
+    const originalPage = holeritePdf.getPage(holeritePageNumber - 1);
+    const { width, height } = originalPage.getSize();
+    
+    const croppedPdf = await PDFDocument.create();
+    const [copiedPage] = await croppedPdf.copyPages(holeritePdf, [holeritePageNumber - 1]);
+    
+    // Set crop box to top half only (y starts from bottom in PDF coordinates)
+    copiedPage.setCropBox(0, height / 2, width, height / 2);
+    croppedPdf.addPage(copiedPage);
+    
+    // Use the cropped PDF instead
+    holeritePdf = croppedPdf;
+  }
+  
+  // Embed the (possibly cropped) holerite page
+  const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [cropHoleriteToHalf ? 0 : holeritePageNumber - 1]);
   const [comprovantePage] = await pdfDoc.embedPdf(comprovantePdf, [comprovantePageNumber - 1]);
   
   const margin = 20;
