@@ -1,21 +1,12 @@
 import { PDFDocument, rgb } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { getCachedPdf, getCachedBuffer } from './pdfCache';
 
-// Lazy load pdfjs-dist to avoid top-level await issues
-let pdfjsLib: typeof import('pdfjs-dist') | null = null;
-
-async function getPdfJs() {
-  if (!pdfjsLib) {
-    pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
-  }
-  return pdfjsLib;
-}
-
-export async function extractTextFromPdf(file: File): Promise<{ text: string; pageTexts: string[] }> {
-  const pdfjs = await getPdfJs();
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+export async function extractTextFromPdf(
+  file: File,
+  cachedPdf?: PDFDocumentProxy
+): Promise<{ text: string; pageTexts: string[] }> {
+  const pdf = cachedPdf || await getCachedPdf(file);
   
   const pageTexts: string[] = [];
   let fullText = '';
@@ -33,10 +24,43 @@ export async function extractTextFromPdf(file: File): Promise<{ text: string; pa
   return { text: fullText, pageTexts };
 }
 
-export async function renderPdfPageToImage(file: File, pageNumber: number, scale: number = 1.5): Promise<string> {
-  const pdfjs = await getPdfJs();
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+// Optimized: Extract text from a single page only
+export async function extractTextFromPage(
+  file: File,
+  pageNumber: number,
+  cachedPdf?: PDFDocumentProxy
+): Promise<string> {
+  const pdf = cachedPdf || await getCachedPdf(file);
+  const page = await pdf.getPage(pageNumber);
+  const textContent = await page.getTextContent();
+  return textContent.items.map((item: any) => item.str).join(' ');
+}
+
+// Optimized: Search for name page by page with early termination
+export async function findNameInPdfWithEarlyExit(
+  file: File,
+  targetName: string,
+  cachedPdf?: PDFDocumentProxy
+): Promise<{ found: boolean; pageNumber: number }> {
+  const pdf = cachedPdf || await getCachedPdf(file);
+  
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pageText = await extractTextFromPage(file, i, pdf);
+    if (findNameInPage(pageText, targetName)) {
+      return { found: true, pageNumber: i };
+    }
+  }
+  
+  return { found: false, pageNumber: -1 };
+}
+
+export async function renderPdfPageToImage(
+  file: File,
+  pageNumber: number,
+  scale: number = 1.5,
+  cachedPdf?: PDFDocumentProxy
+): Promise<string> {
+  const pdf = cachedPdf || await getCachedPdf(file);
   const page = await pdf.getPage(pageNumber);
   
   const viewport = page.getViewport({ scale });
@@ -54,20 +78,19 @@ export async function renderPdfPageToImage(file: File, pageNumber: number, scale
   return canvas.toDataURL('image/jpeg', 0.8);
 }
 
-export async function getPdfPageCount(file: File): Promise<number> {
-  const pdfjs = await getPdfJs();
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+export async function getPdfPageCount(
+  file: File,
+  cachedPdf?: PDFDocumentProxy
+): Promise<number> {
+  const pdf = cachedPdf || await getCachedPdf(file);
   return pdf.numPages;
 }
 
 export function extractEmployeeName(text: string): string | null {
   // Common patterns for Brazilian payroll documents
-  // Pattern 1: "Nome:" or "NOME:" followed by name
   const namePatterns = [
     /(?:Nome|NOME|Funcionário|FUNCIONÁRIO|Empregado|EMPREGADO)[:\s]+([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][A-Za-záàâãéèêíïóôõöúçñ\s]+)/i,
     /(?:RECIBO DE PAGAMENTO DE SALÁRIO)[^]*?([A-Z][A-Z\s]{5,40})(?:\s+(?:CPF|Cargo|Função|Admissão))/i,
-    // Pattern for names in uppercase at beginning of lines
     /^([A-Z][A-Z\s]{8,40})$/m,
   ];
   
@@ -75,7 +98,6 @@ export function extractEmployeeName(text: string): string | null {
     const match = text.match(pattern);
     if (match && match[1]) {
       const name = match[1].trim();
-      // Validate it looks like a name (at least 2 words, reasonable length)
       const words = name.split(/\s+/).filter(w => w.length > 1);
       if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
         return name.toUpperCase().trim();
@@ -86,16 +108,26 @@ export function extractEmployeeName(text: string): string | null {
   return null;
 }
 
+// Extract CPF for faster matching
+export function extractCPF(text: string): string | null {
+  const cpfPattern = /\b(\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2})\b/;
+  const match = text.match(cpfPattern);
+  if (match) {
+    // Normalize CPF to digits only
+    return match[1].replace(/\D/g, '');
+  }
+  return null;
+}
+
 export function findNameInPage(pageText: string, targetName: string): boolean {
   const normalizedTarget = targetName.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const normalizedPage = pageText.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   
-  // Check for exact match or close match
   if (normalizedPage.includes(normalizedTarget)) {
     return true;
   }
   
-  // Check for partial match (first and last name)
+  // Partial match (first and last name)
   const nameParts = normalizedTarget.split(/\s+/);
   if (nameParts.length >= 2) {
     const firstName = nameParts[0];
@@ -114,35 +146,29 @@ export async function createCombinedPdf(
   comprovantePageNumber: number,
   employeeName: string
 ): Promise<Blob> {
-  // Create a new PDF in landscape A4
   const pdfDoc = await PDFDocument.create();
   
-  // A4 landscape dimensions in points (72 points = 1 inch)
-  const pageWidth = 841.89; // A4 height becomes width in landscape
-  const pageHeight = 595.28; // A4 width becomes height in landscape
+  // A4 landscape dimensions
+  const pageWidth = 841.89;
+  const pageHeight = 595.28;
   
   const page = pdfDoc.addPage([pageWidth, pageHeight]);
   
-  // Load source PDFs
-  const holeriteBytes = await holeriteFile.arrayBuffer();
-  const comprovanteBytes = await comprovanteFile.arrayBuffer();
+  // Use cached buffers
+  const holeriteBytes = await getCachedBuffer(holeriteFile);
+  const comprovanteBytes = await getCachedBuffer(comprovanteFile);
   
-  const holeritePdf = await PDFDocument.load(holeriteBytes);
-  const comprovantePdf = await PDFDocument.load(comprovanteBytes);
+  const holeritePdf = await PDFDocument.load(holeriteBytes.slice(0));
+  const comprovantePdf = await PDFDocument.load(comprovanteBytes.slice(0));
   
-  // Embed the first page of holerite
   const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [0]);
-  
-  // Embed the specific page from comprovante
   const [comprovantePage] = await pdfDoc.embedPdf(comprovantePdf, [comprovantePageNumber - 1]);
   
-  // Calculate dimensions for side-by-side layout
   const margin = 20;
   const headerHeight = 40;
   const availableWidth = (pageWidth - margin * 3) / 2;
   const availableHeight = pageHeight - margin * 2 - headerHeight;
   
-  // Scale pages to fit
   const holeriteScale = Math.min(
     availableWidth / holeritePage.width,
     availableHeight / holeritePage.height
@@ -157,15 +183,13 @@ export async function createCombinedPdf(
   const comprovanteWidth = comprovantePage.width * comprovanteScale;
   const comprovanteHeight = comprovantePage.height * comprovanteScale;
   
-  // Draw header with employee name
   page.drawText(`Funcionário: ${employeeName}`, {
     x: margin,
     y: pageHeight - margin - 15,
     size: 14,
-    color: rgb(0.086, 0.502, 0.224), // Primary green
+    color: rgb(0.086, 0.502, 0.224),
   });
   
-  // Draw date
   const date = new Date().toLocaleDateString('pt-BR');
   page.drawText(`Gerado em: ${date}`, {
     x: pageWidth - margin - 120,
@@ -174,7 +198,6 @@ export async function createCombinedPdf(
     color: rgb(0.4, 0.4, 0.4),
   });
   
-  // Draw separator line
   page.drawLine({
     start: { x: margin, y: pageHeight - headerHeight },
     end: { x: pageWidth - margin, y: pageHeight - headerHeight },
@@ -182,7 +205,6 @@ export async function createCombinedPdf(
     color: rgb(0.8, 0.8, 0.8),
   });
   
-  // Draw labels
   page.drawText('HOLERITE', {
     x: margin + availableWidth / 2 - 30,
     y: pageHeight - headerHeight - 15,
@@ -197,7 +219,6 @@ export async function createCombinedPdf(
     color: rgb(0.3, 0.3, 0.3),
   });
   
-  // Draw holerite on the left
   const holeriteY = pageHeight - headerHeight - 25 - holeriteHeight;
   page.drawPage(holeritePage, {
     x: margin + (availableWidth - holeriteWidth) / 2,
@@ -206,7 +227,6 @@ export async function createCombinedPdf(
     height: holeriteHeight,
   });
   
-  // Draw comprovante on the right
   const comprovanteY = pageHeight - headerHeight - 25 - comprovanteHeight;
   page.drawPage(comprovantePage, {
     x: margin * 2 + availableWidth + (availableWidth - comprovanteWidth) / 2,
@@ -215,7 +235,6 @@ export async function createCombinedPdf(
     height: comprovanteHeight,
   });
   
-  // Draw borders around documents
   page.drawRectangle({
     x: margin,
     y: holeriteY - 5,
