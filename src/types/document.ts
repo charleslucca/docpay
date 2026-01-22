@@ -25,6 +25,14 @@ export interface ProcessingStatus {
   step: 'idle' | 'uploading' | 'extracting' | 'matching' | 'generating' | 'completed';
   progress: number;
   message: string;
+  // Time tracking fields
+  startTime?: number;
+  currentItemStartTime?: number;
+  estimatedTimeRemaining?: number;
+  currentItem?: string;
+  totalItems?: number;
+  processedItems?: number;
+  isSlowOperation?: boolean;
 }
 
 export interface GeneratedDocument {
