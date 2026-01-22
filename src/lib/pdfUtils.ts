@@ -1,12 +1,21 @@
-import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument, rgb } from 'pdf-lib';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
+// Lazy load pdfjs-dist to avoid top-level await issues
+let pdfjsLib: typeof import('pdfjs-dist') | null = null;
+
+async function getPdfJs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
+  }
+  return pdfjsLib;
+}
 
 export async function extractTextFromPdf(file: File): Promise<{ text: string; pageTexts: string[] }> {
+  const pdfjs = await getPdfJs();
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   
   const pageTexts: string[] = [];
   let fullText = '';
@@ -25,8 +34,9 @@ export async function extractTextFromPdf(file: File): Promise<{ text: string; pa
 }
 
 export async function renderPdfPageToImage(file: File, pageNumber: number, scale: number = 1.5): Promise<string> {
+  const pdfjs = await getPdfJs();
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   const page = await pdf.getPage(pageNumber);
   
   const viewport = page.getViewport({ scale });
@@ -45,8 +55,9 @@ export async function renderPdfPageToImage(file: File, pageNumber: number, scale
 }
 
 export async function getPdfPageCount(file: File): Promise<number> {
+  const pdfjs = await getPdfJs();
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   return pdf.numPages;
 }
 
