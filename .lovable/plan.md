@@ -1,177 +1,140 @@
 
-# Plano de Otimização Avançada de Performance
+# Plano de Correção do Botão Cancelar
 
-## Diagnóstico do Problema
+## Problema Identificado
 
-Após análise detalhada, identifiquei os seguintes gargalos que ainda estão causando lentidão:
+O botão "Cancelar" não funciona porque:
 
-### Problemas Atuais
-
-1. **Matching O(n x m x p)**: Para cada comprovante, o sistema itera por TODOS os holerites e TODAS as páginas do comprovante
-   - Se há 50 holerites e 1 comprovante com 50 páginas = 2.500 verificações
-   
-2. **Falta de pré-indexação**: O script Python provavelmente extrai todos os textos primeiro e depois faz o matching em memória. O sistema atual faz extração + matching intercalados.
-
-3. **Loop sequencial nos comprovantes**: Linha 161-225 do `useDocumentProcessor.ts` processa comprovantes um por um (sequencial), não em paralelo.
-
-4. **Extração redundante**: `extractTextFromPage` é chamado múltiplas vezes para a mesma página do mesmo comprovante ao verificar diferentes nomes.
+1. **A função `processInBatches`** não recebe o flag de cancelamento e continua processando todo o batch
+2. **Loops internos** em `getCachedPageTexts` e outros lugares não verificam o cancelamento
+3. **Previews em background** continuam gerando mesmo após cancelar
 
 ---
 
-## Estratégia do Script Python (como deveria funcionar)
+## Correções a Implementar
 
-```text
-SCRIPT PYTHON (Eficiente):
-┌──────────────────────────────────────────────────────────┐
-│  1. EXTRAÇÃO EM LOTE (paralelo)                          │
-│     Holerites → extrair todos os nomes de uma vez        │
-│     Comprovantes → extrair todo o texto de uma vez       │
-├──────────────────────────────────────────────────────────┤
-│  2. MATCHING EM MEMÓRIA (instantâneo)                    │
-│     Para cada nome: buscar em strings já extraídas       │
-│     Não há I/O, apenas comparação de strings             │
-├──────────────────────────────────────────────────────────┤
-│  3. GERAÇÃO (paralelo)                                   │
-│     Apenas para pares matched                            │
-└──────────────────────────────────────────────────────────┘
+### Correção 1: Passar o flag de cancelamento para `processInBatches`
 
-IMPLEMENTAÇÃO ATUAL (Lenta):
-┌──────────────────────────────────────────────────────────┐
-│  1. Extrair nome do holerite 1                           │
-│  2. Extrair nome do holerite 2...                        │
-│  3. Para comprovante 1:                                  │
-│     → Ler página 1, buscar nome 1                        │
-│     → Ler página 1, buscar nome 2... (LEITURA REPETIDA!) │
-│     → Ler página 2, buscar nome 1...                     │
-└──────────────────────────────────────────────────────────┘
-```
-
----
-
-## Mudanças a Implementar
-
-### Etapa 1: Pré-extrair texto de TODOS os comprovantes
-
-Antes do matching, extrair e cachear todo o texto de cada página de cada comprovante.
+A função precisa aceitar um `cancelledRef` e verificá-lo antes de processar cada item.
 
 **Arquivo:** `src/hooks/useDocumentProcessor.ts`
 
-- Após processar holerites, adicionar fase de pré-extração de comprovantes
-- Criar estrutura `Map<comprovanteId, pageTexts[]>` com texto de todas as páginas
-- Isso elimina leituras repetidas durante o matching
+Modificar a função `processInBatches` para:
+- Receber `cancelledRef: React.MutableRefObject<boolean>` como parâmetro
+- Verificar `if (cancelledRef.current)` antes de cada batch e cada item
+- Retornar imediatamente se cancelado
 
-### Etapa 2: Matching puramente em memória
+### Correção 2: Cache de páginas com suporte a cancelamento
 
-Substituir chamadas a `findNameInPdfWithEarlyExit` (que lê do PDF) por busca em strings já extraídas.
-
-**Arquivo:** `src/hooks/useDocumentProcessor.ts`
-
-- Criar função `findNameInExtractedTexts(pageTexts: string[], targetName: string)`
-- Loop O(n x m) em strings, não em arquivos
-
-### Etapa 3: Processar comprovantes em paralelo
-
-O loop atual é sequencial. Paralelizar a fase de pré-extração.
-
-**Arquivo:** `src/hooks/useDocumentProcessor.ts`
-
-- Usar `processInBatches` também para comprovantes
-- Extrair texto de 5 comprovantes simultaneamente
-
-### Etapa 4: Cache de texto por página
-
-Criar cache separado para texto extraído.
+O loop em `getCachedPageTexts` precisa poder ser interrompido.
 
 **Arquivo:** `src/lib/pdfCache.ts`
 
-- Adicionar `pageTextCache: Map<string, string[]>` 
-- Função `getCachedPageTexts(file: File): Promise<string[]>`
+Modificar `getCachedPageTexts` para:
+- Aceitar um callback opcional `shouldCancel?: () => boolean`
+- Verificar antes de processar cada página
+- Lançar erro ou retornar parcialmente se cancelado
 
----
+### Correção 3: Cancelar geração de previews
 
-## Fluxo Otimizado
+A geração lazy de previews no `requestIdleCallback` não para quando o usuário cancela.
 
-```text
-NOVO FLUXO (Rápido):
+**Arquivo:** `src/hooks/useDocumentProcessor.ts`
 
-Fase 1 - Extração Paralela (I/O intensivo)
-├── Holerites (batch 5): extrair nomes
-└── Comprovantes (batch 5): extrair TODOS os textos de todas as páginas
+Modificar `generatePreviewsLazy` para:
+- Verificar `cancelledRef.current` antes de cada preview
+- Parar imediatamente se cancelado
 
-Fase 2 - Matching em Memória (CPU, instantâneo)
-├── Para cada nome de holerite:
-│   └── Buscar em pageTexts[] de cada comprovante (strings em RAM)
-└── Nenhum acesso a arquivo!
+### Correção 4: Verificação imediata no loop de matching
 
-Fase 3 - Geração (paralelo)
-└── Apenas para pares matched
-```
+O loop de matching em memória (linhas 214-259) só verifica `if (cancelledRef.current) break;` no início do loop de comprovantes, mas não sai completamente da função.
 
----
+**Arquivo:** `src/hooks/useDocumentProcessor.ts`
 
-## Estimativa de Ganho
-
-| Operação | Antes | Depois | Ganho |
-|----------|-------|--------|-------|
-| Leitura de páginas durante matching | O(n×m×p) leituras | 0 leituras | ~80% |
-| Comprovantes | Sequencial | Paralelo (5x) | ~70% |
-| Strings normalizadas | Recalculadas cada vez | Cacheadas | ~20% |
-
-**Total estimado: 3-5x mais rápido**
+Adicionar:
+- Verificação após cada matching encontrado
+- Return imediato se cancelado, não apenas break
 
 ---
 
 ## Arquivos a Modificar
 
-1. **`src/lib/pdfCache.ts`** - Adicionar cache de texto por página
-2. **`src/hooks/useDocumentProcessor.ts`** - Reestruturar fluxo com pré-extração
+1. **`src/hooks/useDocumentProcessor.ts`** - Passar cancelledRef para processInBatches e corrigir loops
+2. **`src/lib/pdfCache.ts`** - Adicionar suporte a cancelamento em getCachedPageTexts
 
 ---
 
-## Detalhes Técnicos
+## Código das Correções
 
-### Nova estrutura do cache (pdfCache.ts)
+### Correção em processInBatches
+
+A função passará a receber o ref e verificar cancelamento:
 
 ```text
-┌─────────────────────────────────────────────────────────┐
-│                   pdfCache.ts                            │
-├─────────────────────────────────────────────────────────┤
-│  pdfDocumentCache: Map<string, PDFDocumentProxy>        │
-│  arrayBufferCache: Map<string, ArrayBuffer>             │
-│  pageTextCache: Map<string, string[]>  ← NOVO           │
-├─────────────────────────────────────────────────────────┤
-│  getCachedPageTexts(file) → Promise<string[]>  ← NOVO   │
-│  - Retorna texto de TODAS as páginas de uma vez         │
-│  - Cacheia para reutilização                            │
-└─────────────────────────────────────────────────────────┘
+async function processInBatches<T, R>(
+  items: T[],
+  processor: (item: T, index: number) => Promise<R>,
+  concurrency: number,
+  cancelledRef?: React.MutableRefObject<boolean>  // NOVO
+): Promise<R[]> {
+  const results: R[] = [];
+  
+  for (let i = 0; i < items.length; i += concurrency) {
+    // NOVO: Verificar antes de cada batch
+    if (cancelledRef?.current) break;
+    
+    const batch = items.slice(i, i + concurrency);
+    const batchResults = await Promise.allSettled(...);
+    
+    // NOVO: Verificar após cada batch
+    if (cancelledRef?.current) break;
+    
+    // ... resto
+  }
+  
+  return results;
+}
 ```
 
-### Novo fluxo do processamento (useDocumentProcessor.ts)
+### Correção em getCachedPageTexts
+
+Adicionar callback de cancelamento:
 
 ```text
-processDocuments():
-│
-├─1→ Extrair nomes dos holerites (paralelo, já existe)
-│
-├─2→ PRÉ-EXTRAIR textos dos comprovantes (paralelo) ← NOVO
-│    for each comprovante in batches:
-│      pageTexts = await getCachedPageTexts(comprovante.file)
-│      store in comprovanteTextsMap
-│
-└─3→ Matching em memória (CPU only) ← REFATORAR
-     for each holerite.name:
-       for each (comprovanteId, pageTexts) in map:
-         for (pageIdx, text) in pageTexts:
-           if findNameInPage(text, name):
-             → match found, break
+export async function getCachedPageTexts(
+  file: File, 
+  shouldCancel?: () => boolean  // NOVO
+): Promise<string[]> {
+  // ...
+  for (let i = 1; i <= pdf.numPages; i++) {
+    // NOVO: Verificar cancelamento antes de cada página
+    if (shouldCancel?.()) {
+      break;
+    }
+    // processar página...
+  }
+}
+```
+
+### Correção no loop de previews
+
+```text
+const generatePreviewsLazy = async () => {
+  for (const pair of pairs) {
+    // NOVO: Verificar cancelamento
+    if (cancelledRef.current) break;
+    
+    // gerar preview...
+  }
+};
 ```
 
 ---
 
-## Considerações
+## Resultado Esperado
 
-### Memória
-A pré-extração de texto aumenta o uso de memória, mas texto é muito mais leve que objetos PDF. Para 100 PDFs de 10 páginas cada: ~5-10MB de texto vs. ~100-500MB de objetos PDF.
-
-### Compatibilidade
-A interface do usuário não muda. Apenas o processamento interno fica mais rápido.
+Após as correções:
+- O botão "Cancelar" irá interromper o processamento em até 1-2 segundos
+- Nenhum trabalho adicional será feito após cancelar
+- O status voltará para "idle" imediatamente
+- A memória será preservada (itens já processados ficam disponíveis)
