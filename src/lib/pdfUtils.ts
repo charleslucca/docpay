@@ -98,16 +98,22 @@ export function extractEmployeeName(text: string): string | null {
 
   // Padrões ordenados do mais específico ao mais genérico
   const namePatterns = [
-    // 1. Labels explícitos brasileiros
+    // 1. Nome entre matrícula e código (formato B SERVICE)
+    /\b\d{3,6}\s+([A-Z][A-Z\s]{8,45}?)\s+\d{4,}/,
+    
+    // 2. Nome seguido de cargo brasileiro
+    /([A-Z][A-Z\s]{8,45}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO)/,
+    
+    // 3. Labels explícitos brasileiros
     /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
     
-    // 2. Recibo de pagamento padrão
+    // 4. Recibo de pagamento padrão
     /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CARGO))/,
     
-    // 3. Nome imediatamente antes de CPF
+    // 5. Nome imediatamente antes de CPF
     /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
     
-    // 4. Linha com nome completo isolado
+    // 6. Linha com nome completo isolado
     /^([A-Z][A-Z\s]{8,40})$/m,
   ];
 
@@ -120,7 +126,11 @@ export function extractEmployeeName(text: string): string | null {
       // Validar: pelo menos 2 palavras, tamanho razoável
       if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
         // Remover palavras que claramente não são nomes
-        const invalidWords = ['CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO', 'EMPRESA', 'LTDA', 'EIRELI', 'SA'];
+        const invalidWords = [
+          'CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO', 
+          'EMPRESA', 'LTDA', 'EIRELI', 'SA', 'PRESTADORA', 'SERVICOS',
+          'FOLHA', 'MENSAL', 'RECIBO', 'PAGAMENTO'
+        ];
         const hasInvalidWord = words.some(w => invalidWords.includes(w));
         if (!hasInvalidWord) {
           console.log('[DEBUG] Nome extraído:', name);
