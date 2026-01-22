@@ -3,11 +3,11 @@ import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from '
 import {
   extractTextFromPdf,
   extractEmployeeName,
-  findNameInPdfWithEarlyExit,
+  findNameInPage,
   renderPdfPageToImage,
   createCombinedPdf,
 } from '@/lib/pdfUtils';
-import { getCachedPdf, clearCache } from '@/lib/pdfCache';
+import { getCachedPdf, getCachedPageTexts, clearCache } from '@/lib/pdfCache';
 
 const CONCURRENCY_LIMIT = 5;
 
@@ -151,78 +151,118 @@ export function useDocumentProcessor() {
       return;
     }
 
-    // Step 2: Match names in comprovantes with early termination
-    setStatus({ step: 'matching', progress: 40, message: 'Buscando correspondências...' });
+    // Step 2: PRE-EXTRACT all comprovante texts in PARALLEL (like Python script)
+    setStatus({ step: 'matching', progress: 40, message: 'Pré-extraindo textos dos comprovantes...' });
 
-    const validHolerites = processedHolerites.filter((h) => h.extractedName);
-    const pairs: MatchedPair[] = [];
-    const matchedHoleriteIds = new Set<string>();
+    // Create a map: comprovante.id -> { file, pageTexts: string[] }
+    const comprovanteTextsMap = new Map<string, { file: File; pageTexts: string[] }>();
 
-    for (let cIdx = 0; cIdx < comprovantes.length; cIdx++) {
-      if (cancelledRef.current) break;
-      
-      const comprovante = comprovantes[cIdx];
+    const preExtractComprovante = async (comprovante: UploadedFile, index: number) => {
+      if (cancelledRef.current) return;
       
       setComprovantes((prev) =>
         prev.map((c) =>
-          c.id === comprovante.id ? { ...c, status: 'processing', progress: 50 } : c
+          c.id === comprovante.id ? { ...c, status: 'processing', progress: 30 } : c
         )
       );
 
       try {
-        const cachedPdf = await getCachedPdf(comprovante.file);
-
-        for (const holerite of validHolerites) {
-          if (!holerite.extractedName || matchedHoleriteIds.has(holerite.id)) continue;
-
-          // Use optimized early-exit search
-          const { found, pageNumber } = await findNameInPdfWithEarlyExit(
-            comprovante.file,
-            holerite.extractedName,
-            cachedPdf
-          );
-
-          if (found) {
-            matchedHoleriteIds.add(holerite.id);
-
-            const updatedComprovante: UploadedFile = {
-              ...comprovante,
-              status: 'completed',
-              progress: 100,
-              pageNumber,
-              extractedName: holerite.extractedName,
-            };
-
-            setComprovantes((prev) =>
-              prev.map((c) => (c.id === comprovante.id ? updatedComprovante : c))
-            );
-
-            pairs.push({
-              id: generateId(),
-              employeeName: holerite.extractedName,
-              holerite,
-              comprovante: { ...updatedComprovante, pageNumber },
-              status: 'pending',
-            });
-            break; // Found match, move to next comprovante
-          }
-        }
+        // Use cached page texts extraction - this is the key optimization!
+        const pageTexts = await getCachedPageTexts(comprovante.file);
+        comprovanteTextsMap.set(comprovante.id, { file: comprovante.file, pageTexts });
+        
+        setComprovantes((prev) =>
+          prev.map((c) =>
+            c.id === comprovante.id ? { ...c, progress: 60 } : c
+          )
+        );
       } catch (error) {
         setComprovantes((prev) =>
           prev.map((c) =>
             c.id === comprovante.id
-              ? { ...c, status: 'error', progress: 100, error: 'Erro ao processar' }
+              ? { ...c, status: 'error', progress: 100, error: 'Erro ao extrair texto' }
               : c
           )
         );
       }
 
-      setStatus({
-        step: 'matching',
-        progress: 40 + ((cIdx + 1) / comprovantes.length) * 50,
-        message: `Verificando comprovante ${cIdx + 1} de ${comprovantes.length}...`,
-      });
+      setStatus((prev) => ({
+        ...prev,
+        progress: 40 + ((index + 1) / comprovantes.length) * 20,
+        message: `Extraindo texto do comprovante ${index + 1} de ${comprovantes.length}...`,
+      }));
+    };
+
+    // Process comprovantes in parallel batches
+    await processInBatches(comprovantes, preExtractComprovante);
+
+    // Check if cancelled
+    if (cancelledRef.current) {
+      setStatus({ step: 'idle', progress: 0, message: 'Processamento cancelado' });
+      setIsCancelling(false);
+      return;
     }
+
+    // Step 3: MEMORY-ONLY matching (no I/O, just string comparisons)
+    setStatus({ step: 'matching', progress: 60, message: 'Buscando correspondências em memória...' });
+
+    const validHolerites = processedHolerites.filter((h) => h.extractedName);
+    const pairs: MatchedPair[] = [];
+    const matchedHoleriteIds = new Set<string>();
+
+    // Pure CPU matching - no file access!
+    for (const comprovante of comprovantes) {
+      if (cancelledRef.current) break;
+      
+      const extracted = comprovanteTextsMap.get(comprovante.id);
+      if (!extracted) continue;
+
+      const { pageTexts } = extracted;
+
+      for (const holerite of validHolerites) {
+        if (!holerite.extractedName || matchedHoleriteIds.has(holerite.id)) continue;
+
+        // Search in pre-extracted texts (instantaneous!)
+        let foundPage = -1;
+        for (let pageIdx = 0; pageIdx < pageTexts.length; pageIdx++) {
+          if (findNameInPage(pageTexts[pageIdx], holerite.extractedName)) {
+            foundPage = pageIdx + 1; // 1-indexed
+            break;
+          }
+        }
+
+        if (foundPage > 0) {
+          matchedHoleriteIds.add(holerite.id);
+
+          const updatedComprovante: UploadedFile = {
+            ...comprovante,
+            status: 'completed',
+            progress: 100,
+            pageNumber: foundPage,
+            extractedName: holerite.extractedName,
+          };
+
+          setComprovantes((prev) =>
+            prev.map((c) => (c.id === comprovante.id ? updatedComprovante : c))
+          );
+
+          pairs.push({
+            id: generateId(),
+            employeeName: holerite.extractedName,
+            holerite,
+            comprovante: { ...updatedComprovante, pageNumber: foundPage },
+            status: 'pending',
+          });
+          break; // Found match, move to next comprovante
+        }
+      }
+    }
+
+    setStatus({
+      step: 'matching',
+      progress: 90,
+      message: `${pairs.length} correspondência(s) encontrada(s)`,
+    });
 
     setMatchedPairs(pairs);
 

@@ -14,6 +14,7 @@ async function getPdfJs() {
 // Cache structures
 const pdfDocumentCache = new Map<string, PDFDocumentProxy>();
 const arrayBufferCache = new Map<string, ArrayBuffer>();
+const pageTextCache = new Map<string, string[]>(); // NEW: Cache for extracted page texts
 
 // LRU tracking
 const accessOrder: string[] = [];
@@ -36,6 +37,7 @@ function updateAccessOrder(key: string) {
     if (oldestKey) {
       pdfDocumentCache.delete(oldestKey);
       arrayBufferCache.delete(oldestKey);
+      pageTextCache.delete(oldestKey); // Also clear text cache
     }
   }
 }
@@ -69,9 +71,33 @@ export async function getCachedPdf(file: File): Promise<PDFDocumentProxy> {
   return pdf;
 }
 
+// NEW: Get all page texts from a PDF (cached)
+export async function getCachedPageTexts(file: File): Promise<string[]> {
+  const key = getFileKey(file);
+  
+  let pageTexts = pageTextCache.get(key);
+  if (!pageTexts) {
+    const pdf = await getCachedPdf(file);
+    pageTexts = [];
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const text = textContent.items.map((item: any) => item.str).join(' ');
+      pageTexts.push(text);
+    }
+    
+    pageTextCache.set(key, pageTexts);
+  }
+  
+  updateAccessOrder(key);
+  return pageTexts;
+}
+
 export function clearCache() {
   pdfDocumentCache.clear();
   arrayBufferCache.clear();
+  pageTextCache.clear(); // Also clear text cache
   accessOrder.length = 0;
 }
 
@@ -79,6 +105,7 @@ export function getCacheStats() {
   return {
     documents: pdfDocumentCache.size,
     buffers: arrayBufferCache.size,
+    texts: pageTextCache.size,
     maxSize: MAX_CACHE_SIZE,
   };
 }
