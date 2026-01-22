@@ -510,10 +510,10 @@ export function useDocumentProcessor() {
           if (cancelledRef.current) break;
           
           try {
-            // Use sourcePageNumber for multi-page holerites
+          // Use sourcePageNumber for multi-page holerites, crop holerite to top half
             const holeritePageNum = pair.holerite.sourcePageNumber || 1;
             const [holeritePreview, comprovantePreview] = await Promise.all([
-              renderPdfPageToImage(pair.holerite.file, holeritePageNum, 0.5),
+              renderPdfPageToImage(pair.holerite.file, holeritePageNum, 0.5, undefined, true), // crop to top half
               renderPdfPageToImage(pair.comprovante.file, pair.comprovante.pageNumber!, 0.5),
             ]);
 
@@ -554,6 +554,12 @@ export function useDocumentProcessor() {
     });
   }, [holerites, comprovantes]);
 
+  // Month names in Portuguese
+  const monthNames = [
+    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+  ];
+
   const generatePdfs = useCallback(async () => {
     if (matchedPairs.length === 0) return;
 
@@ -564,7 +570,7 @@ export function useDocumentProcessor() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
-    const newDocs: GeneratedDocument[] = [];
+    const monthName = monthNames[month - 1];
 
     // Process PDF generation in parallel batches
     const generatePdf = async (pair: MatchedPair, index: number): Promise<GeneratedDocument | null> => {
@@ -582,11 +588,13 @@ export function useDocumentProcessor() {
           pair.comprovante.file,
           pair.comprovante.pageNumber!,
           pair.employeeName,
-          holeritePageNum
+          holeritePageNum,
+          true // cropHoleriteToHalf
         );
 
         const blobUrl = URL.createObjectURL(pdfBlob);
-        const fileName = `${pair.employeeName.replace(/\s+/g, '_')}_${year}_${month.toString().padStart(2, '0')}.pdf`;
+        // Format: Ano_Mês_Nome.pdf (e.g., 2026_Janeiro_ANA_BEATRIZ.pdf)
+        const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, '_')}.pdf`;
 
         setMatchedPairs((prev) =>
           prev.map((p) =>
@@ -605,6 +613,7 @@ export function useDocumentProcessor() {
           employeeName: pair.employeeName,
           year,
           month,
+          monthName,
           createdAt: now,
           blobUrl,
           fileName,

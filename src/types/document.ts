@@ -1,3 +1,14 @@
+export interface GeneratedDocument {
+  id: string;
+  employeeName: string;
+  year: number;
+  month: number;
+  monthName: string; // Portuguese month name (e.g., "Janeiro")
+  createdAt: Date;
+  blobUrl: string;
+  fileName: string;
+}
+
 export interface UploadedFile {
   id: string;
   file: File;
@@ -39,14 +50,4 @@ export interface ProcessingStatus {
   // OCR progress tracking
   ocrProgress?: number; // 0-100 during OCR recognition
   isOcrActive?: boolean;
-}
-
-export interface GeneratedDocument {
-  id: string;
-  employeeName: string;
-  year: number;
-  month: number;
-  createdAt: Date;
-  blobUrl: string;
-  fileName: string;
 }

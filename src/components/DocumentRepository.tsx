@@ -17,6 +17,7 @@ interface DocumentRepositoryProps {
   documents: GeneratedDocument[];
 }
 
+// Month names for filter display
 const monthNames = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
@@ -52,7 +53,8 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
     const groups: Record<string, GeneratedDocument[]> = {};
     
     filteredDocuments.forEach((doc) => {
-      const key = `${doc.year}/${doc.month.toString().padStart(2, '0')}`;
+      // Use year and month name for grouping
+      const key = `${doc.year}/${doc.monthName}`;
       if (!groups[key]) {
         groups[key] = [];
       }
@@ -161,7 +163,7 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
         <div className="space-y-6">
           <AnimatePresence>
             {groupedDocuments.map(([period, docs]) => {
-              const [year, month] = period.split('/');
+              const [year, monthName] = period.split('/');
               return (
                 <motion.div
                   key={period}
@@ -171,7 +173,7 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
                 >
                   <h4 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
                     <FolderOpen className="h-4 w-4 text-primary" />
-                    {monthNames[parseInt(month) - 1]} de {year}
+                    {monthName} de {year}
                     <span className="text-xs text-muted-foreground">
                       ({docs.length} arquivo{docs.length > 1 ? 's' : ''})
                     </span>
