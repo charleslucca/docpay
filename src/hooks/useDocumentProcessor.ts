@@ -7,11 +7,12 @@ import {
   createCombinedPdf,
 } from '@/lib/pdfUtils';
 import { getCachedPdf, getCachedPageTextsWithOCR, renderPageForOCR, clearCache } from '@/lib/pdfCache';
-import { extractTextWithOCR, terminateOcrWorker } from '@/lib/ocrUtils';
+import { extractTextWithOCR, extractTextBatch, terminateOcrWorker, getWorkerCount } from '@/lib/ocrUtils';
 import { toast } from '@/hooks/use-toast';
 
 const CONCURRENCY_LIMIT = 5;
 const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
+const PAGES_PER_BATCH = 20; // Process 20 pages at a time for OCR parallelization
 
 // Process items in parallel with concurrency limit and cancellation support
 async function processInBatches<T, R>(
@@ -197,8 +198,9 @@ export function useDocumentProcessor() {
         const pdf = await getCachedPdf(holerite.file);
         const totalPages = pdf.numPages;
         const entries: HoleriteEntry[] = [];
+        const workerCount = getWorkerCount();
 
-        console.log(`[OCR] Processing ${holerite.name}: ${totalPages} page(s)`);
+        console.log(`[OCR] Processing ${holerite.name}: ${totalPages} page(s) with ${workerCount} parallel workers`);
 
         setHolerites((prev) =>
           prev.map((h) =>
@@ -206,53 +208,67 @@ export function useDocumentProcessor() {
           )
         );
 
-        // Process EACH page of the holerite
-        for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        // Process pages in batches of PAGES_PER_BATCH
+        for (let batchStart = 1; batchStart <= totalPages; batchStart += PAGES_PER_BATCH) {
           if (cancelledRef.current) break;
+
+          const batchEnd = Math.min(batchStart + PAGES_PER_BATCH - 1, totalPages);
+          const pageNumbers = Array.from(
+            { length: batchEnd - batchStart + 1 },
+            (_, i) => batchStart + i
+          );
 
           setStatus(prev => ({
             ...prev,
             currentItem: holerite.name,
             currentItemStartTime: Date.now(),
-            message: `OCR em ${holerite.name} (pág. ${pageNum}/${totalPages})...`,
+            message: `OCR em ${holerite.name} (pág. ${batchStart}-${batchEnd} de ${totalPages})...`,
             isOcrActive: true,
-            ocrProgress: 0,
+            ocrProgress: Math.round(((batchStart - 1) / totalPages) * 100),
           }));
 
-          // Render page for OCR
-          const canvas = await renderPageForOCR(holerite.file, pageNum, 2.5);
-          
-          // Run OCR with progress callback
-          const ocrText = await extractTextWithOCR(canvas, (ocrProgress) => {
+          // Render all pages in this batch in parallel
+          console.log(`[OCR] Rendering pages ${batchStart}-${batchEnd}...`);
+          const canvases = await Promise.all(
+            pageNumbers.map(pageNum => renderPageForOCR(holerite.file, pageNum, 2.5))
+          );
+
+          if (cancelledRef.current) break;
+
+          // Process OCR in parallel with the scheduler
+          const texts = await extractTextBatch(canvases, (done, total) => {
+            const overallProgress = ((batchStart - 1 + done) / totalPages) * 100;
             setStatus(prev => ({
               ...prev,
-              ocrProgress,
+              ocrProgress: Math.round(overallProgress),
             }));
           });
 
-          console.log(`[OCR] Page ${pageNum} text (200 chars):`, ocrText.substring(0, 200));
+          // Extract names from texts
+          for (let i = 0; i < texts.length; i++) {
+            const pageNum = pageNumbers[i];
+            const extractedName = extractEmployeeName(texts[i]);
 
-          // Extract name from this page
-          const extractedName = extractEmployeeName(ocrText);
-
-          if (extractedName) {
-            console.log(`[OCR] Page ${pageNum}: Found "${extractedName}"`);
-            entries.push({
-              originalHolerite: holerite,
-              name: extractedName,
-              pageNumber: pageNum,
-            });
-          } else {
-            console.log(`[OCR] Page ${pageNum}: No name found`);
+            if (extractedName) {
+              console.log(`[OCR] Page ${pageNum}: Found "${extractedName}"`);
+              entries.push({
+                originalHolerite: holerite,
+                name: extractedName,
+                pageNumber: pageNum,
+              });
+            }
           }
 
-          // Update progress per page
-          const pageProgress = 10 + ((pageNum / totalPages) * 80);
+          // Update progress per batch
+          const batchProgress = 10 + ((batchEnd / totalPages) * 80);
           setHolerites((prev) =>
             prev.map((h) =>
-              h.id === holerite.id ? { ...h, progress: pageProgress } : h
+              h.id === holerite.id ? { ...h, progress: batchProgress } : h
             )
           );
+
+          // Clear canvas references to free memory
+          canvases.length = 0;
         }
 
         clearSlowOperationTimer();

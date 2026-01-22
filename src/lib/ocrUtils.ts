@@ -1,18 +1,21 @@
-import { createWorker, Worker } from 'tesseract.js';
+import { createScheduler, createWorker, Scheduler, Worker } from 'tesseract.js';
 
-let ocrWorker: Worker | null = null;
+let scheduler: Scheduler | null = null;
 let isInitializing = false;
-let initPromise: Promise<Worker> | null = null;
+let initPromise: Promise<Scheduler> | null = null;
+
+// Dynamically set worker count based on available cores (min 2, max 6)
+const WORKER_COUNT = Math.min(6, Math.max(2, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
 
 export type OcrProgressCallback = (progress: number) => void;
 
 /**
- * Initialize OCR worker (singleton pattern)
- * Downloads model files on first call (~15MB), reuses worker afterwards
+ * Initialize OCR scheduler with worker pool (singleton pattern)
+ * Downloads model files on first call (~15MB per worker), reuses afterwards
  */
-export async function initOcrWorker(onProgress?: OcrProgressCallback): Promise<Worker> {
-  // If already initialized, return existing worker
-  if (ocrWorker) return ocrWorker;
+export async function initOcrScheduler(): Promise<Scheduler> {
+  // If already initialized, return existing scheduler
+  if (scheduler) return scheduler;
   
   // If initialization is in progress, wait for it
   if (isInitializing && initPromise) {
@@ -23,31 +26,30 @@ export async function initOcrWorker(onProgress?: OcrProgressCallback): Promise<W
   
   initPromise = (async () => {
     try {
-      console.log('[OCR] Initializing Tesseract worker (Portuguese)...');
+      console.log(`[OCR] Initializing scheduler with ${WORKER_COUNT} workers...`);
       
-      ocrWorker = await createWorker('por', 1, {
-        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
-        langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
-        logger: (m) => {
-          // Log initialization progress
-          if (m.status === 'loading tesseract core' || 
-              m.status === 'loading language traineddata' ||
-              m.status === 'initializing api') {
-            console.log(`[OCR] ${m.status}: ${Math.round(m.progress * 100)}%`);
-          }
-          // Report recognition progress to callback
-          if (m.status === 'recognizing text' && onProgress) {
-            onProgress(Math.round(m.progress * 100));
-          }
-        },
+      scheduler = createScheduler();
+      
+      // Create workers in parallel
+      const workerPromises = Array.from({ length: WORKER_COUNT }, async (_, idx) => {
+        console.log(`[OCR] Starting worker ${idx + 1}/${WORKER_COUNT}...`);
+        const worker = await createWorker('por', 1, {
+          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+          corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
+          langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
+        });
+        console.log(`[OCR] Worker ${idx + 1}/${WORKER_COUNT} ready`);
+        return worker;
       });
       
-      console.log('[OCR] Worker initialized successfully');
-      return ocrWorker;
+      const workers = await Promise.all(workerPromises);
+      workers.forEach(w => scheduler!.addWorker(w));
+      
+      console.log(`[OCR] Scheduler ready with ${WORKER_COUNT} workers`);
+      return scheduler;
     } catch (error) {
-      console.error('[OCR] Failed to initialize worker:', error);
-      ocrWorker = null;
+      console.error('[OCR] Failed to initialize scheduler:', error);
+      scheduler = null;
       throw error;
     } finally {
       isInitializing = false;
@@ -59,7 +61,37 @@ export async function initOcrWorker(onProgress?: OcrProgressCallback): Promise<W
 }
 
 /**
- * Extract text from image using OCR
+ * Extract text from multiple images in parallel using the worker pool
+ * @param canvases - Array of canvas elements to process
+ * @param onProgress - Callback for batch progress (completed, total)
+ */
+export async function extractTextBatch(
+  canvases: HTMLCanvasElement[],
+  onProgress?: (completed: number, total: number) => void
+): Promise<string[]> {
+  const sched = await initOcrScheduler();
+  let completed = 0;
+  
+  console.log(`[OCR] Starting batch of ${canvases.length} pages with ${WORKER_COUNT} workers...`);
+  const startTime = performance.now();
+  
+  const promises = canvases.map(async (canvas) => {
+    const result = await sched.addJob('recognize', canvas);
+    completed++;
+    onProgress?.(completed, canvases.length);
+    return result.data.text;
+  });
+  
+  const results = await Promise.all(promises);
+  
+  const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+  console.log(`[OCR] Batch completed in ${duration}s (${(canvases.length / parseFloat(duration)).toFixed(1)} pages/sec)`);
+  
+  return results;
+}
+
+/**
+ * Extract text from a single image using the worker pool
  * @param imageSource - Canvas element or image data URL
  * @param onProgress - Callback for recognition progress (0-100)
  */
@@ -67,36 +99,46 @@ export async function extractTextWithOCR(
   imageSource: string | HTMLCanvasElement,
   onProgress?: OcrProgressCallback
 ): Promise<string> {
-  const worker = await initOcrWorker(onProgress);
+  const sched = await initOcrScheduler();
   
-  console.log('[OCR] Starting text recognition...');
+  console.log('[OCR] Starting single page recognition...');
   const startTime = performance.now();
   
-  const result = await worker.recognize(imageSource);
+  const result = await sched.addJob('recognize', imageSource);
   
   const duration = ((performance.now() - startTime) / 1000).toFixed(2);
   console.log(`[OCR] Recognition completed in ${duration}s`);
   console.log(`[OCR] Confidence: ${result.data.confidence}%`);
   
+  // Call progress callback with 100% when done
+  onProgress?.(100);
+  
   return result.data.text;
 }
 
 /**
- * Terminate OCR worker to free memory
+ * Terminate OCR scheduler and all workers to free memory
  * Call this when done with all OCR operations
  */
 export async function terminateOcrWorker(): Promise<void> {
-  if (ocrWorker) {
-    console.log('[OCR] Terminating worker...');
-    await ocrWorker.terminate();
-    ocrWorker = null;
-    console.log('[OCR] Worker terminated');
+  if (scheduler) {
+    console.log('[OCR] Terminating scheduler and workers...');
+    await scheduler.terminate();
+    scheduler = null;
+    console.log('[OCR] Scheduler terminated');
   }
 }
 
 /**
- * Check if OCR worker is initialized
+ * Check if OCR scheduler is initialized
  */
 export function isOcrWorkerReady(): boolean {
-  return ocrWorker !== null;
+  return scheduler !== null;
+}
+
+/**
+ * Get the number of workers in the pool
+ */
+export function getWorkerCount(): number {
+  return WORKER_COUNT;
 }
