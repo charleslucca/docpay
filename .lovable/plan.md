@@ -1,17 +1,19 @@
 
-# Plano: Paralelização do OCR com Worker Pool (Scheduler)
+# Plano: Persistência de Processamento e Otimização de CPU
 
-## Problema Atual
+## Problemas Identificados
 
-O processamento de um PDF com 691 páginas está demorando porque:
-- Usa apenas **1 worker OCR** (singleton)
-- Processa página por página **sequencialmente**
-- Cada página leva ~2-3 segundos de OCR
-- Total estimado: 691 × 2.5s = **~29 minutos**
+### Problema 1: Perda de Progresso ao Mudar de Página
+Quando o usuário navega para outra página ou fecha a aba, todo o processamento OCR em andamento é perdido. Isso acontece porque:
+- O processamento roda na thread principal do React
+- Os Web Workers do Tesseract.js são encerrados quando o componente desmonta
+- O estado (useState) é perdido na navegação
 
-## Solução: Tesseract.js Scheduler
-
-O Tesseract.js possui uma API de **Scheduler** que gerencia um pool de workers e distribui jobs automaticamente. Com 4 workers paralelos, podemos processar 4 páginas simultaneamente, reduzindo o tempo para ~7-8 minutos.
+### Problema 2: CPU Elevado Durante Processamento em Lote
+O processamento de 20 páginas simultâneas + 4 workers OCR causa picos de CPU porque:
+- Todas as 20 páginas são renderizadas em paralelo (Promise.all)
+- Cada canvas usa muita memória e CPU para criação
+- Os 4 workers OCR trabalham a 100% continuamente
 
 ---
 
@@ -19,185 +21,325 @@ O Tesseract.js possui uma API de **Scheduler** que gerencia um pool de workers e
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                    SCHEDULER (Pool Manager)                      │
+│                     SOLUÇÃO PROPOSTA                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           │
-│   │ Worker  │  │ Worker  │  │ Worker  │  │ Worker  │           │
-│   │   #1    │  │   #2    │  │   #3    │  │   #4    │           │
-│   └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘           │
-│        │            │            │            │                  │
-│        ▼            ▼            ▼            ▼                  │
-│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           │
-│   │ Pág. 1  │  │ Pág. 2  │  │ Pág. 3  │  │ Pág. 4  │           │
-│   │ Pág. 5  │  │ Pág. 6  │  │ Pág. 7  │  │ Pág. 8  │           │
-│   │  ...    │  │  ...    │  │  ...    │  │  ...    │           │
-│   └─────────┘  └─────────┘  └─────────┘  └─────────┘           │
+│  PROBLEMA 1: Persistência                                        │
+│  ────────────────────────                                        │
+│  ┌─────────────────┐     ┌─────────────────┐                    │
+│  │ IndexedDB       │ ←── │ Estado do       │                    │
+│  │ (Persistência)  │     │ Processamento   │                    │
+│  └────────┬────────┘     └─────────────────┘                    │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────────────────────────────┐                    │
+│  │ Ao recarregar página:                   │                    │
+│  │ 1. Verifica se há processamento salvo   │                    │
+│  │ 2. Oferece opção de retomar             │                    │
+│  │ 3. Continua de onde parou               │                    │
+│  └─────────────────────────────────────────┘                    │
+│                                                                  │
+│  PROBLEMA 2: CPU Otimizado                                       │
+│  ─────────────────────────                                       │
+│  ┌─────────────────────────────────────────┐                    │
+│  │ ANTES: 20 páginas + 4 workers = 100% CPU│                    │
+│  │                                          │                    │
+│  │ DEPOIS:                                  │                    │
+│  │ - Batch de 4 páginas (= workers)        │                    │
+│  │ - Pausa entre batches (requestIdleCallback)│                 │
+│  │ - Workers ajustados: min(cores/2, 4)    │                    │
+│  │ - Throttle opcional pelo usuário        │                    │
+│  └─────────────────────────────────────────┘                    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-               Páginas processadas em paralelo!
-               691 páginas ÷ 4 workers = ~173 batches
-               Tempo estimado: ~8 minutos
 ```
 
 ---
 
-## Mudanças a Implementar
+## Parte 1: Persistência com IndexedDB
 
-### Mudança 1: Refatorar ocrUtils.ts para usar Scheduler
+### Estratégia
+Usar IndexedDB para salvar:
+1. **Arquivos originais** (como Blobs) - para poder continuar sem re-upload
+2. **Estado do processamento** - qual página/arquivo está sendo processado
+3. **Resultados parciais** - nomes já extraídos, matches já encontrados
 
-**Arquivo:** `src/lib/ocrUtils.ts`
-
-Substituir o worker singleton por um Scheduler com pool de workers:
+### Novo Arquivo: `src/lib/processingPersistence.ts`
 
 ```typescript
-import { createScheduler, createWorker, Scheduler, Worker } from 'tesseract.js';
-
-let scheduler: Scheduler | null = null;
-const WORKER_COUNT = 4; // Número de workers paralelos
-
-export async function initOcrScheduler(): Promise<Scheduler> {
-  if (scheduler) return scheduler;
+interface ProcessingState {
+  id: string;
+  startedAt: Date;
+  status: 'extracting' | 'matching' | 'generating';
   
-  console.log(`[OCR] Initializing scheduler with ${WORKER_COUNT} workers...`);
+  // Arquivos originais (armazenados como Blob no IndexedDB)
+  holeritesIds: string[];
+  comprovantesIds: string[];
   
-  scheduler = createScheduler();
+  // Progresso
+  currentHoleriteIndex: number;
+  currentPageNumber: number;
   
-  // Criar workers em paralelo
-  const workerPromises = Array.from({ length: WORKER_COUNT }, async () => {
-    const worker = await createWorker('por', 1, {
-      workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-      corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
-      langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
-    });
-    return worker;
-  });
+  // Resultados parciais
+  extractedNames: Array<{
+    holeriteId: string;
+    name: string;
+    pageNumber: number;
+  }>;
   
-  const workers = await Promise.all(workerPromises);
-  workers.forEach(w => scheduler!.addWorker(w));
-  
-  console.log(`[OCR] Scheduler ready with ${WORKER_COUNT} workers`);
-  return scheduler;
+  // Matches encontrados
+  matchedPairs: Array<{
+    employeeName: string;
+    holeriteId: string;
+    holeritePageNumber: number;
+    comprovanteId: string;
+    comprovantePageNumber: number;
+  }>;
 }
 
-// Nova função para processar em batch
-export async function extractTextBatch(
-  canvases: HTMLCanvasElement[],
-  onProgress?: (completed: number, total: number) => void
-): Promise<string[]> {
-  const sched = await initOcrScheduler();
-  let completed = 0;
-  
-  const promises = canvases.map(async (canvas) => {
-    const result = await sched.addJob('recognize', canvas);
-    completed++;
-    onProgress?.(completed, canvases.length);
-    return result.data.text;
-  });
-  
-  return Promise.all(promises);
-}
+// Funções a implementar:
+export async function saveProcessingState(state: ProcessingState): Promise<void>;
+export async function loadProcessingState(): Promise<ProcessingState | null>;
+export async function clearProcessingState(): Promise<void>;
+export async function saveFileBlob(id: string, file: File): Promise<void>;
+export async function loadFileBlob(id: string): Promise<File | null>;
 ```
 
-### Mudança 2: Processar Páginas em Lotes Paralelos
+### Fluxo de Retomada
 
-**Arquivo:** `src/hooks/useDocumentProcessor.ts`
+```text
+Usuário abre a página
+         │
+         ▼
+┌─────────────────────────┐
+│ Verificar IndexedDB:    │
+│ Há processamento salvo? │
+└───────────┬─────────────┘
+            │
+      ┌─────┴─────┐
+      │           │
+      ▼           ▼
+   [SIM]       [NÃO]
+      │           │
+      ▼           ▼
+┌─────────────┐  ┌─────────────┐
+│ Modal:      │  │ Fluxo       │
+│ "Retomar    │  │ normal      │
+│ processo?"  │  │             │
+└─────────────┘  └─────────────┘
+      │
+  ┌───┴───┐
+  │       │
+  ▼       ▼
+[Sim]   [Não]
+  │       │
+  ▼       ▼
+Carregar  Limpar DB
+e         e começar
+continuar novo
+```
 
-Modificar `processHolerite` para processar páginas em lotes de 20:
+---
+
+## Parte 2: Otimização de CPU
+
+### Mudança 1: Reduzir Tamanho do Batch
+
+**Problema Atual:**
+```typescript
+const PAGES_PER_BATCH = 20; // 20 páginas renderizadas de uma vez
+```
+
+**Solução:**
+```typescript
+// Alinhar batch com número de workers para máxima eficiência
+const PAGES_PER_BATCH = Math.max(4, WORKER_COUNT); // 4-6 páginas por vez
+```
+
+### Mudança 2: Adicionar Pausas Entre Batches
+
+**Problema:** CPU fica a 100% continuamente sem chance de outras tarefas.
+
+**Solução:** Usar `requestIdleCallback` ou `setTimeout` entre batches:
 
 ```typescript
-const PAGES_PER_BATCH = 20;
-
-// Dentro de processHolerite:
-for (let batchStart = 1; batchStart <= totalPages; batchStart += PAGES_PER_BATCH) {
-  if (cancelledRef.current) break;
-  
-  const batchEnd = Math.min(batchStart + PAGES_PER_BATCH - 1, totalPages);
-  const pageNumbers = Array.from(
-    { length: batchEnd - batchStart + 1 }, 
-    (_, i) => batchStart + i
-  );
-  
-  setStatus(prev => ({
-    ...prev,
-    message: `OCR em ${holerite.name} (pág. ${batchStart}-${batchEnd} de ${totalPages})...`,
-  }));
-  
-  // Renderizar todas as páginas do batch em paralelo
-  const canvases = await Promise.all(
-    pageNumbers.map(pageNum => renderPageForOCR(holerite.file, pageNum, 2.5))
-  );
-  
-  // Processar OCR em paralelo com o scheduler
-  const texts = await extractTextBatch(canvases, (done, total) => {
-    const overallProgress = ((batchStart - 1 + done) / totalPages) * 100;
-    setStatus(prev => ({ ...prev, ocrProgress: overallProgress }));
-  });
-  
-  // Extrair nomes dos textos
-  for (let i = 0; i < texts.length; i++) {
-    const name = extractEmployeeName(texts[i]);
-    if (name) {
-      entries.push({
-        originalHolerite: holerite,
-        name,
-        pageNumber: pageNumbers[i],
-      });
-    }
+// Entre cada batch, dar uma pausa para o browser respirar
+const pauseBetweenBatches = () => new Promise<void>(resolve => {
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(() => resolve(), { timeout: 100 });
+  } else {
+    setTimeout(resolve, 50); // 50ms de pausa
   }
+});
+
+// Dentro do loop:
+for (let batchStart = 1; batchStart <= totalPages; batchStart += PAGES_PER_BATCH) {
+  // ... processar batch ...
+  
+  // Pausar antes do próximo batch
+  await pauseBetweenBatches();
 }
 ```
 
-### Mudança 3: Atualizar Feedback de Progresso
+### Mudança 3: Renderização Sequencial com OCR Paralelo
 
-O progresso será mostrado como:
-```
-"OCR em RECIBO.pdf (pág. 1-20 de 691)..."
-"OCR em RECIBO.pdf (pág. 21-40 de 691)..."
+**Problema:** `Promise.all` para renderizar 20 canvas sobrecarrega a GPU/CPU.
+
+**Solução:** Renderizar canvas um de cada vez, mas manter OCR paralelo:
+
+```typescript
+// ANTES (sobrecarrega):
+const canvases = await Promise.all(
+  pageNumbers.map(pageNum => renderPageForOCR(file, pageNum, 2.5))
+);
+
+// DEPOIS (mais suave):
+const canvases: HTMLCanvasElement[] = [];
+for (const pageNum of pageNumbers) {
+  if (cancelledRef.current) break;
+  const canvas = await renderPageForOCR(file, pageNum, 2.5);
+  canvases.push(canvas);
+}
+// OCR continua paralelo via scheduler
+const texts = await extractTextBatch(canvases);
 ```
 
-Com uma barra de progresso geral mostrando a porcentagem total.
+### Mudança 4: Configuração de Workers Dinâmica
+
+Adicionar opção para usuário escolher intensidade:
+
+```typescript
+type ProcessingMode = 'fast' | 'balanced' | 'efficient';
+
+const getWorkerCount = (mode: ProcessingMode): number => {
+  const cores = navigator.hardwareConcurrency || 4;
+  switch (mode) {
+    case 'fast': return Math.min(6, cores);
+    case 'balanced': return Math.min(4, Math.floor(cores / 2));
+    case 'efficient': return 2;
+  }
+};
+```
 
 ---
 
-## Arquivos a Modificar
+## Arquivos a Criar/Modificar
 
-| Arquivo | Alteração |
-|---------|-----------|
-| `src/lib/ocrUtils.ts` | Implementar Scheduler com pool de 4 workers + função `extractTextBatch` |
-| `src/hooks/useDocumentProcessor.ts` | Processar páginas em lotes de 20, usar `extractTextBatch` |
-| `src/components/ProcessingStatus.tsx` | Atualizar mensagens para mostrar range de páginas |
+| Arquivo | Ação | Descrição |
+|---------|------|-----------|
+| `src/lib/processingPersistence.ts` | **CRIAR** | Funções para salvar/carregar estado no IndexedDB |
+| `src/hooks/useDocumentProcessor.ts` | MODIFICAR | Integrar persistência + otimizar batches |
+| `src/lib/ocrUtils.ts` | MODIFICAR | Adicionar modo de intensidade configurável |
+| `src/components/ResumeProcessingDialog.tsx` | **CRIAR** | Modal para retomar processamento |
+| `src/pages/Index.tsx` | MODIFICAR | Verificar processamento salvo ao montar |
+
+---
+
+## Detalhes Técnicos
+
+### IndexedDB Schema
+
+```typescript
+// Database: 'documerge-processing'
+// Object Stores:
+
+// 1. 'files' - Armazena os arquivos originais
+{
+  id: string,           // UUID
+  file: Blob,           // O arquivo PDF
+  name: string,         // Nome original
+  type: 'holerite' | 'comprovante',
+  uploadedAt: Date,
+}
+
+// 2. 'processing-state' - Estado do processamento
+{
+  id: 'current',        // Sempre 'current' (singleton)
+  state: ProcessingState,
+  updatedAt: Date,
+}
+```
+
+### Frequência de Salvamento
+
+Para não sobrecarregar o IndexedDB:
+- Salvar estado a cada **batch completado** (não a cada página)
+- Usar debounce de 1 segundo para updates frequentes
+- Limpar DB automaticamente após processamento concluído
+
+### Limitações
+
+1. **Tamanho do IndexedDB**: Navegadores geralmente permitem 50-100MB. Arquivos grandes podem exceder.
+2. **Tempo de vida**: Dados podem ser limpos pelo browser se armazenamento ficar baixo.
+3. **Não é background real**: Se a aba fechar, o processamento para. Só persiste para retomada.
+
+---
+
+## Fluxo de Uso Atualizado
+
+```text
+1. Usuário faz upload de arquivos
+2. Clica em "Iniciar Processamento"
+3. Sistema salva arquivos no IndexedDB
+4. Processamento começa com batches otimizados
+5. A cada batch, estado é salvo
+6. Se usuário mudar de página ou fechar:
+   - Processamento pausa
+   - Estado fica salvo
+7. Ao retornar à página:
+   - Modal pergunta "Retomar processamento?"
+   - Se sim: carrega arquivos e continua
+   - Se não: limpa DB e permite novo upload
+```
+
+---
+
+## Interface do Modal de Retomada
+
+```text
+┌─────────────────────────────────────────────────────┐
+│  ⚠️  Processamento Pendente Encontrado              │
+├─────────────────────────────────────────────────────┤
+│                                                      │
+│  Encontramos um processamento que foi interrompido: │
+│                                                      │
+│  📄 Arquivo: RECIBO B SERVICE 08 AGOSTO 2025.pdf    │
+│  📊 Progresso: 380 de 691 páginas (55%)             │
+│  ⏱️  Iniciado: há 15 minutos                         │
+│                                                      │
+│  Deseja continuar de onde parou?                    │
+│                                                      │
+│  ┌──────────────┐    ┌──────────────┐              │
+│  │   Retomar    │    │ Novo Upload  │              │
+│  └──────────────┘    └──────────────┘              │
+│                                                      │
+└─────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Estimativa de Performance
 
+### CPU
 | Cenário | Antes | Depois |
 |---------|-------|--------|
-| 691 páginas | ~29 min | ~8 min |
-| 100 páginas | ~4 min | ~1 min |
-| 4 páginas | ~10 seg | ~3 seg |
+| Pico de CPU | 100% constante | ~60-80% com pausas |
+| Responsividade UI | Travamentos | Fluida |
 
-Melhoria: **~4x mais rápido**
-
----
-
-## Considerações de Memória
-
-- Cada worker OCR usa ~50-100MB de RAM
-- 4 workers = ~400MB de RAM
-- Lotes de 20 páginas = ~20 canvas em memória por vez
-- Após cada batch, os canvas são liberados
-
-O número de workers (4) é conservador para funcionar em máquinas modestas. Podemos ajustar dinamicamente baseado em `navigator.hardwareConcurrency` para usar mais cores em máquinas potentes.
+### Memória
+| Cenário | Antes | Depois |
+|---------|-------|--------|
+| Canvas simultâneos | 20 | 4-6 |
+| Pico de RAM | ~800MB | ~300-400MB |
 
 ---
 
-## Resultado Esperado
+## Considerações
 
-1. O processamento de 691 páginas levará ~8 minutos ao invés de ~29 minutos
-2. O progresso mostrará batches de páginas sendo processados
-3. O scheduler gerencia automaticamente a distribuição de trabalho
-4. A memória será gerenciada com liberação após cada batch
+1. **IndexedDB vs localStorage**: IndexedDB suporta blobs/arquivos grandes, localStorage só strings.
+
+2. **Background real**: Para processamento que continue mesmo com aba fechada, seria necessário um Service Worker com Background Sync API - mais complexo e com limitações de browser.
+
+3. **Limpar dados antigos**: Implementar limpeza automática de processamentos > 24h.
+
+4. **Feedback visual**: Mostrar indicador de "salvando..." quando estado é persistido.
