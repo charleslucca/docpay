@@ -1,127 +1,177 @@
 
-# Plano de Otimização de Performance
+# Plano de Otimização Avançada de Performance
 
-## Objetivo
-Reduzir drasticamente o tempo de processamento de documentos, aproximando-o do desempenho do script Python de referência.
+## Diagnóstico do Problema
+
+Após análise detalhada, identifiquei os seguintes gargalos que ainda estão causando lentidão:
+
+### Problemas Atuais
+
+1. **Matching O(n x m x p)**: Para cada comprovante, o sistema itera por TODOS os holerites e TODAS as páginas do comprovante
+   - Se há 50 holerites e 1 comprovante com 50 páginas = 2.500 verificações
+   
+2. **Falta de pré-indexação**: O script Python provavelmente extrai todos os textos primeiro e depois faz o matching em memória. O sistema atual faz extração + matching intercalados.
+
+3. **Loop sequencial nos comprovantes**: Linha 161-225 do `useDocumentProcessor.ts` processa comprovantes um por um (sequencial), não em paralelo.
+
+4. **Extração redundante**: `extractTextFromPage` é chamado múltiplas vezes para a mesma página do mesmo comprovante ao verificar diferentes nomes.
 
 ---
 
-## Resumo das Mudanças
+## Estratégia do Script Python (como deveria funcionar)
 
-### Mudanças Principais
-1. **Cache de PDFs carregados** - Evitar recarregar o mesmo arquivo múltiplas vezes
-2. **Lazy Loading de previews** - Gerar miniaturas apenas quando necessário para exibição
-3. **Web Workers para processamento pesado** - Mover extração de texto para thread separada
-4. **Otimização do algoritmo de matching** - Parar busca ao encontrar primeiro match
-5. **Processamento paralelo de holerites** - Usar Promise.all para processar múltiplos arquivos simultaneamente
+```text
+SCRIPT PYTHON (Eficiente):
+┌──────────────────────────────────────────────────────────┐
+│  1. EXTRAÇÃO EM LOTE (paralelo)                          │
+│     Holerites → extrair todos os nomes de uma vez        │
+│     Comprovantes → extrair todo o texto de uma vez       │
+├──────────────────────────────────────────────────────────┤
+│  2. MATCHING EM MEMÓRIA (instantâneo)                    │
+│     Para cada nome: buscar em strings já extraídas       │
+│     Não há I/O, apenas comparação de strings             │
+├──────────────────────────────────────────────────────────┤
+│  3. GERAÇÃO (paralelo)                                   │
+│     Apenas para pares matched                            │
+└──────────────────────────────────────────────────────────┘
+
+IMPLEMENTAÇÃO ATUAL (Lenta):
+┌──────────────────────────────────────────────────────────┐
+│  1. Extrair nome do holerite 1                           │
+│  2. Extrair nome do holerite 2...                        │
+│  3. Para comprovante 1:                                  │
+│     → Ler página 1, buscar nome 1                        │
+│     → Ler página 1, buscar nome 2... (LEITURA REPETIDA!) │
+│     → Ler página 2, buscar nome 1...                     │
+└──────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Etapas de Implementação
+## Mudanças a Implementar
 
-### Etapa 1: Criar Cache de PDFs
-Criar um sistema de cache para evitar recarregar os mesmos arquivos.
+### Etapa 1: Pré-extrair texto de TODOS os comprovantes
 
-**Arquivo:** `src/lib/pdfCache.ts` (novo)
-- Implementar um Map para armazenar PDFs já carregados por hash/nome do arquivo
-- Função `getCachedPdf(file: File)` que retorna PDF do cache ou carrega e armazena
-- Função `clearCache()` para liberar memória quando necessário
-
-### Etapa 2: Refatorar pdfUtils.ts
-Modificar as funções para usar o cache e aceitar PDFs já carregados.
-
-**Arquivo:** `src/lib/pdfUtils.ts`
-- `extractTextFromPdf` - Aceitar PDF já carregado como parâmetro opcional
-- `renderPdfPageToImage` - Aceitar PDF já carregado como parâmetro opcional  
-- Criar função `extractTextFromPageRange()` para extrair texto de páginas específicas
-- Implementar early return quando nome é encontrado (não processar páginas restantes)
-
-### Etapa 3: Separar Geração de Previews
-Mover a geração de previews para depois do processamento principal.
+Antes do matching, extrair e cachear todo o texto de cada página de cada comprovante.
 
 **Arquivo:** `src/hooks/useDocumentProcessor.ts`
-- Remover chamadas `renderPdfPageToImage` do loop de extração
-- Criar função separada `generatePreviews()` que roda após matching
-- Gerar previews apenas para pares matched (não para todos os arquivos)
-- Usar `requestIdleCallback` ou `setTimeout(0)` para não bloquear UI
 
-### Etapa 4: Processamento Paralelo
-Processar múltiplos holerites simultaneamente.
+- Após processar holerites, adicionar fase de pré-extração de comprovantes
+- Criar estrutura `Map<comprovanteId, pageTexts[]>` com texto de todas as páginas
+- Isso elimina leituras repetidas durante o matching
+
+### Etapa 2: Matching puramente em memória
+
+Substituir chamadas a `findNameInPdfWithEarlyExit` (que lê do PDF) por busca em strings já extraídas.
 
 **Arquivo:** `src/hooks/useDocumentProcessor.ts`
-- Substituir loop sequencial por `Promise.all()` com limite de concorrência (3-5 simultâneos)
-- Usar `Promise.allSettled()` para continuar mesmo se um arquivo falhar
-- Batch processing para comprovantes grandes
 
-### Etapa 5: Otimizar Algoritmo de Matching
-Melhorar a lógica de busca de correspondências.
+- Criar função `findNameInExtractedTexts(pageTexts: string[], targetName: string)`
+- Loop O(n x m) em strings, não em arquivos
 
-**Arquivo:** `src/lib/pdfUtils.ts`
-- Implementar busca com early termination ao encontrar match
-- Extrair texto página por página (não todas de uma vez)
-- Adicionar suporte a CPF como chave primária de matching (mais rápido e preciso)
+### Etapa 3: Processar comprovantes em paralelo
+
+O loop atual é sequencial. Paralelizar a fase de pré-extração.
+
+**Arquivo:** `src/hooks/useDocumentProcessor.ts`
+
+- Usar `processInBatches` também para comprovantes
+- Extrair texto de 5 comprovantes simultaneamente
+
+### Etapa 4: Cache de texto por página
+
+Criar cache separado para texto extraído.
+
+**Arquivo:** `src/lib/pdfCache.ts`
+
+- Adicionar `pageTextCache: Map<string, string[]>` 
+- Função `getCachedPageTexts(file: File): Promise<string[]>`
+
+---
+
+## Fluxo Otimizado
+
+```text
+NOVO FLUXO (Rápido):
+
+Fase 1 - Extração Paralela (I/O intensivo)
+├── Holerites (batch 5): extrair nomes
+└── Comprovantes (batch 5): extrair TODOS os textos de todas as páginas
+
+Fase 2 - Matching em Memória (CPU, instantâneo)
+├── Para cada nome de holerite:
+│   └── Buscar em pageTexts[] de cada comprovante (strings em RAM)
+└── Nenhum acesso a arquivo!
+
+Fase 3 - Geração (paralelo)
+└── Apenas para pares matched
+```
+
+---
+
+## Estimativa de Ganho
+
+| Operação | Antes | Depois | Ganho |
+|----------|-------|--------|-------|
+| Leitura de páginas durante matching | O(n×m×p) leituras | 0 leituras | ~80% |
+| Comprovantes | Sequencial | Paralelo (5x) | ~70% |
+| Strings normalizadas | Recalculadas cada vez | Cacheadas | ~20% |
+
+**Total estimado: 3-5x mais rápido**
+
+---
+
+## Arquivos a Modificar
+
+1. **`src/lib/pdfCache.ts`** - Adicionar cache de texto por página
+2. **`src/hooks/useDocumentProcessor.ts`** - Reestruturar fluxo com pré-extração
 
 ---
 
 ## Detalhes Técnicos
 
-### Estrutura do Cache de PDFs
+### Nova estrutura do cache (pdfCache.ts)
+
 ```text
-┌─────────────────────────────────────────────────────┐
-│                   pdfCache.ts                        │
-├─────────────────────────────────────────────────────┤
-│  pdfDocumentCache: Map<string, PDFDocumentProxy>    │
-│  arrayBufferCache: Map<string, ArrayBuffer>         │
-├─────────────────────────────────────────────────────┤
-│  getCachedPdf(file) → Promise<PDFDocumentProxy>     │
-│  getCachedBuffer(file) → Promise<ArrayBuffer>       │
-│  getFileKey(file) → string (name + size + modified) │
-│  clearCache() → void                                 │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                   pdfCache.ts                            │
+├─────────────────────────────────────────────────────────┤
+│  pdfDocumentCache: Map<string, PDFDocumentProxy>        │
+│  arrayBufferCache: Map<string, ArrayBuffer>             │
+│  pageTextCache: Map<string, string[]>  ← NOVO           │
+├─────────────────────────────────────────────────────────┤
+│  getCachedPageTexts(file) → Promise<string[]>  ← NOVO   │
+│  - Retorna texto de TODAS as páginas de uma vez         │
+│  - Cacheia para reutilização                            │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Fluxo de Processamento Otimizado
+### Novo fluxo do processamento (useDocumentProcessor.ts)
+
 ```text
-ANTES (Sequencial, bloqueante):
-Holerite 1 → load → extract → render preview → WAIT
-Holerite 2 → load → extract → render preview → WAIT
-Holerite 3 → load → extract → render preview → WAIT
-
-DEPOIS (Paralelo, não-bloqueante):  
-Holerite 1 ─┬→ extract (cached) ─┐
-Holerite 2 ─┼→ extract (cached) ─┼→ Match ─→ Generate Previews (lazy)
-Holerite 3 ─┴→ extract (cached) ─┘
+processDocuments():
+│
+├─1→ Extrair nomes dos holerites (paralelo, já existe)
+│
+├─2→ PRÉ-EXTRAIR textos dos comprovantes (paralelo) ← NOVO
+│    for each comprovante in batches:
+│      pageTexts = await getCachedPageTexts(comprovante.file)
+│      store in comprovanteTextsMap
+│
+└─3→ Matching em memória (CPU only) ← REFATORAR
+     for each holerite.name:
+       for each (comprovanteId, pageTexts) in map:
+         for (pageIdx, text) in pageTexts:
+           if findNameInPage(text, name):
+             → match found, break
 ```
-
-### Estimativa de Melhoria
-| Operação | Antes | Depois | Ganho |
-|----------|-------|--------|-------|
-| Carregamento PDF | 3x por arquivo | 1x por arquivo | ~66% |
-| Geração Preview | Durante processamento | Após matching | UI responsiva |
-| Matching | O(n×m×p) todas páginas | O(n×m) early exit | ~40-60% |
-| Threads | 1 (main) | Paralelo | ~50-70% |
 
 ---
 
-## Arquivos a Serem Modificados
-
-1. **`src/lib/pdfCache.ts`** (novo) - Sistema de cache para PDFs
-2. **`src/lib/pdfUtils.ts`** - Refatorar para usar cache e otimizar extração
-3. **`src/hooks/useDocumentProcessor.ts`** - Processamento paralelo e previews lazy
-4. **`src/types/document.ts`** - Adicionar tipos para cache se necessário
-
----
-
-## Considerações Adicionais
+## Considerações
 
 ### Memória
-O cache de PDFs aumentará o uso de memória. Implementar:
-- Limite máximo de arquivos em cache (ex: 20 PDFs)
-- LRU (Least Recently Used) para remoção automática
-- Limpeza ao resetar o processamento
+A pré-extração de texto aumenta o uso de memória, mas texto é muito mais leve que objetos PDF. Para 100 PDFs de 10 páginas cada: ~5-10MB de texto vs. ~100-500MB de objetos PDF.
 
 ### Compatibilidade
-Todas as mudanças são internas e não afetam a interface do usuário. O comportamento visual permanece idêntico, apenas mais rápido.
-
-### Fallback
-Se Web Workers não funcionarem em algum navegador, manter fallback para processamento na thread principal.
+A interface do usuário não muda. Apenas o processamento interno fica mais rápido.
