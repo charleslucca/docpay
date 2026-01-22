@@ -33,6 +33,9 @@ export interface ProcessingStatus {
   totalItems?: number;
   processedItems?: number;
   isSlowOperation?: boolean;
+  // OCR progress tracking
+  ocrProgress?: number; // 0-100 during OCR recognition
+  isOcrActive?: boolean;
 }
 
 export interface GeneratedDocument {
