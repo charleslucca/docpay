@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from '@/types/document';
 import {
   extractTextFromPdf,
@@ -8,8 +8,10 @@ import {
   createCombinedPdf,
 } from '@/lib/pdfUtils';
 import { getCachedPdf, getCachedPageTexts, clearCache } from '@/lib/pdfCache';
+import { toast } from '@/hooks/use-toast';
 
 const CONCURRENCY_LIMIT = 5;
+const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
 
 // Process items in parallel with concurrency limit and cancellation support
 async function processInBatches<T, R>(
@@ -56,6 +58,68 @@ export function useDocumentProcessor() {
   // Cancel mechanism
   const cancelledRef = useRef(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  
+  // Time tracking refs
+  const slowOperationTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const currentItemStartTimeRef = useRef<number>(0);
+  const processStartTimeRef = useRef<number>(0);
+
+  // Clear slow operation timer on unmount or cancel
+  useEffect(() => {
+    return () => {
+      if (slowOperationTimerRef.current) {
+        clearTimeout(slowOperationTimerRef.current);
+      }
+    };
+  }, []);
+
+  const startSlowOperationTimer = (fileName: string) => {
+    // Clear any existing timer
+    if (slowOperationTimerRef.current) {
+      clearTimeout(slowOperationTimerRef.current);
+    }
+    
+    currentItemStartTimeRef.current = Date.now();
+    
+    slowOperationTimerRef.current = setTimeout(() => {
+      if (!cancelledRef.current) {
+        toast({
+          title: "⚠️ Operação lenta detectada",
+          description: `A extração de "${fileName}" está demorando mais de 10 segundos. O documento pode estar escaneado ou ser muito grande.`,
+          variant: "destructive",
+        });
+        
+        setStatus(prev => ({
+          ...prev,
+          isSlowOperation: true,
+        }));
+      }
+    }, SLOW_OPERATION_THRESHOLD_MS);
+  };
+
+  const clearSlowOperationTimer = () => {
+    if (slowOperationTimerRef.current) {
+      clearTimeout(slowOperationTimerRef.current);
+      slowOperationTimerRef.current = null;
+    }
+  };
+
+  const updateTimeEstimate = (processedItems: number, totalItems: number) => {
+    if (processedItems === 0) return;
+    
+    const elapsed = Date.now() - processStartTimeRef.current;
+    const avgTimePerItem = elapsed / processedItems;
+    const remainingItems = totalItems - processedItems;
+    const estimatedRemaining = Math.round((avgTimePerItem * remainingItems) / 1000);
+    
+    setStatus(prev => ({
+      ...prev,
+      processedItems,
+      totalItems,
+      estimatedTimeRemaining: estimatedRemaining,
+      isSlowOperation: false, // Reset slow flag when item completes
+    }));
+  };
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
@@ -97,13 +161,35 @@ export function useDocumentProcessor() {
 
     cancelledRef.current = false;
     setIsCancelling(false);
-    setStatus({ step: 'extracting', progress: 0, message: 'Extraindo nomes dos holerites...' });
+    processStartTimeRef.current = Date.now();
+    
+    const totalFiles = holerites.length + comprovantes.length;
+    
+    setStatus({ 
+      step: 'extracting', 
+      progress: 0, 
+      message: 'Extraindo nomes dos holerites...',
+      startTime: Date.now(),
+      totalItems: totalFiles,
+      processedItems: 0,
+      currentItem: holerites[0]?.name,
+    });
 
     // Step 1: Extract names from holerites in parallel (NO previews yet)
     const processHolerite = async (holerite: UploadedFile, index: number): Promise<UploadedFile> => {
       if (cancelledRef.current) {
+        clearSlowOperationTimer();
         return { ...holerite, status: 'pending' as const, progress: 0 };
       }
+
+      // Start slow operation timer for this file
+      startSlowOperationTimer(holerite.name);
+
+      setStatus(prev => ({
+        ...prev,
+        currentItem: holerite.name,
+        currentItemStartTime: Date.now(),
+      }));
 
       setHolerites((prev) =>
         prev.map((h) =>
@@ -115,6 +201,9 @@ export function useDocumentProcessor() {
         const cachedPdf = await getCachedPdf(holerite.file);
         const { text } = await extractTextFromPdf(holerite.file, cachedPdf);
         const extractedName = extractEmployeeName(text);
+
+        // Clear timer when done
+        clearSlowOperationTimer();
 
         const updatedHolerite: UploadedFile = {
           ...holerite,
@@ -128,14 +217,19 @@ export function useDocumentProcessor() {
           prev.map((h) => (h.id === holerite.id ? updatedHolerite : h))
         );
 
+        // Update time estimate
+        updateTimeEstimate(index + 1, holerites.length + comprovantes.length);
+
         setStatus((prev) => ({
           ...prev,
           progress: ((index + 1) / holerites.length) * 40,
           message: `Processando holerite ${index + 1} de ${holerites.length}...`,
+          processedItems: index + 1,
         }));
 
         return updatedHolerite;
       } catch (error) {
+        clearSlowOperationTimer();
         const updatedHolerite: UploadedFile = {
           ...holerite,
           status: 'error',
@@ -165,7 +259,19 @@ export function useDocumentProcessor() {
     const comprovanteTextsMap = new Map<string, { file: File; pageTexts: string[] }>();
 
     const preExtractComprovante = async (comprovante: UploadedFile, index: number) => {
-      if (cancelledRef.current) return;
+      if (cancelledRef.current) {
+        clearSlowOperationTimer();
+        return;
+      }
+      
+      // Start slow operation timer for this file
+      startSlowOperationTimer(comprovante.name);
+      
+      setStatus(prev => ({
+        ...prev,
+        currentItem: comprovante.name,
+        currentItemStartTime: Date.now(),
+      }));
       
       setComprovantes((prev) =>
         prev.map((c) =>
@@ -180,6 +286,9 @@ export function useDocumentProcessor() {
           () => cancelledRef.current
         );
         
+        // Clear timer when done
+        clearSlowOperationTimer();
+        
         // Don't store if cancelled
         if (cancelledRef.current) return;
         
@@ -191,6 +300,7 @@ export function useDocumentProcessor() {
           )
         );
       } catch (error) {
+        clearSlowOperationTimer();
         setComprovantes((prev) =>
           prev.map((c) =>
             c.id === comprovante.id
@@ -200,10 +310,15 @@ export function useDocumentProcessor() {
         );
       }
 
+      // Update time estimate
+      const processedSoFar = holerites.length + index + 1;
+      updateTimeEstimate(processedSoFar, holerites.length + comprovantes.length);
+
       setStatus((prev) => ({
         ...prev,
         progress: 40 + ((index + 1) / comprovantes.length) * 20,
         message: `Extraindo texto do comprovante ${index + 1} de ${comprovantes.length}...`,
+        processedItems: processedSoFar,
       }));
     };
 

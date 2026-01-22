@@ -1,7 +1,9 @@
-import { motion } from 'framer-motion';
-import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText } from 'lucide-react';
 import { ProcessingStatus as ProcessingStatusType } from '@/types/document';
 import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface ProcessingStatusProps {
   status: ProcessingStatusType;
@@ -16,10 +18,38 @@ const stepConfig = {
   completed: { icon: CheckCircle, label: 'Concluído', color: 'text-primary' },
 };
 
+function formatTime(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
 export function ProcessingStatus({ status }: ProcessingStatusProps) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  
   const config = stepConfig[status.step];
   const Icon = config.icon;
   const isActive = status.step !== 'idle' && status.step !== 'completed';
+
+  // Real-time elapsed time counter
+  useEffect(() => {
+    if (!isActive || !status.startTime) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const updateElapsed = () => {
+      const elapsed = Math.floor((Date.now() - status.startTime!) / 1000);
+      setElapsedSeconds(elapsed);
+    };
+
+    updateElapsed();
+    const interval = setInterval(updateElapsed, 1000);
+    return () => clearInterval(interval);
+  }, [isActive, status.startTime]);
 
   return (
     <motion.div
@@ -51,6 +81,25 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
         )}
       </div>
 
+      {/* Current file being processed */}
+      {isActive && status.currentItem && (
+        <motion.div 
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50"
+        >
+          <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <span className="text-sm text-muted-foreground truncate">
+            Processando: <span className="text-foreground font-medium">{status.currentItem}</span>
+          </span>
+          {status.processedItems !== undefined && status.totalItems !== undefined && (
+            <span className="text-xs text-muted-foreground ml-auto flex-shrink-0">
+              {status.processedItems} de {status.totalItems}
+            </span>
+          )}
+        </motion.div>
+      )}
+
       {status.step !== 'idle' && (
         <div className="space-y-2">
           <Progress value={status.progress} className="h-2" />
@@ -59,6 +108,53 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
           </p>
         </div>
       )}
+
+      {/* Time information */}
+      {isActive && status.startTime && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="mt-4 grid grid-cols-2 gap-4"
+        >
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <p className="text-xs text-muted-foreground">Tempo decorrido</p>
+              <p className="text-sm font-medium text-foreground">{formatTime(elapsedSeconds)}</p>
+            </div>
+          </div>
+          
+          {status.estimatedTimeRemaining !== undefined && status.estimatedTimeRemaining > 0 && (
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" />
+              <div>
+                <p className="text-xs text-muted-foreground">Tempo estimado</p>
+                <p className="text-sm font-medium text-primary">~{formatTime(status.estimatedTimeRemaining)}</p>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Slow operation warning */}
+      <AnimatePresence>
+        {status.isSlowOperation && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-4"
+          >
+            <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <AlertDescription className="text-destructive">
+                <strong>Atenção:</strong> Extração lenta detectada (mais de 10s). 
+                O documento pode estar escaneado ou ser muito grande.
+              </AlertDescription>
+            </Alert>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Step indicators */}
       <div className="mt-6 flex justify-between">
