@@ -180,7 +180,8 @@ export async function createCombinedPdf(
   holeriteFile: File,
   comprovanteFile: File,
   comprovantePageNumber: number,
-  employeeName: string
+  employeeName: string,
+  holeritePageNumber: number = 1 // Support multi-page holerites
 ): Promise<Blob> {
   const pdfDoc = await PDFDocument.create();
   
@@ -197,7 +198,7 @@ export async function createCombinedPdf(
   const holeritePdf = await PDFDocument.load(holeriteBytes.slice(0));
   const comprovantePdf = await PDFDocument.load(comprovanteBytes.slice(0));
   
-  const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [0]);
+  const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [holeritePageNumber - 1]);
   const [comprovantePage] = await pdfDoc.embedPdf(comprovantePdf, [comprovantePageNumber - 1]);
   
   const margin = 20;

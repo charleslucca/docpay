@@ -100,6 +100,7 @@ async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Pr
 }
 
 const PAGE_BATCH_SIZE = 5; // Process 5 pages in parallel
+const MIN_TEXT_LENGTH_FOR_OCR = 50; // If native text extraction yields less than this, use OCR
 
 // Get all page texts from a PDF (cached) with cancellation support and parallel processing
 export async function getCachedPageTexts(
@@ -196,4 +197,59 @@ export async function renderPageForOCR(
   console.log(`[PDF] Rendered page ${pageNumber} for OCR: ${canvas.width}x${canvas.height}px`);
   
   return canvas;
+}
+
+/**
+ * Get page texts with OCR fallback for scanned PDFs
+ * First attempts native text extraction, falls back to OCR if text is too short
+ */
+export async function getCachedPageTextsWithOCR(
+  file: File,
+  ocrExtractor: (canvas: HTMLCanvasElement) => Promise<string>,
+  onProgress?: (pageNum: number, totalPages: number, isOcr: boolean) => void,
+  shouldCancel?: () => boolean
+): Promise<string[]> {
+  const key = getFileKey(file) + '_ocr';
+  
+  // Check cache first
+  const cachedTexts = pageTextCache.get(key);
+  if (cachedTexts) {
+    updateAccessOrder(key);
+    return cachedTexts;
+  }
+  
+  const pdf = await getCachedPdf(file);
+  const pageTexts: string[] = [];
+  
+  console.log(`[Comprovante] Processing ${file.name}: ${pdf.numPages} page(s)`);
+  
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    if (shouldCancel?.()) break;
+    
+    onProgress?.(pageNum, pdf.numPages, false);
+    
+    // 1. Try native text extraction first (fast)
+    let text = await extractSinglePageText(pdf, pageNum);
+    
+    // 2. If text is too short, use OCR fallback
+    if (text.trim().length < MIN_TEXT_LENGTH_FOR_OCR) {
+      console.log(`[Comprovante] Page ${pageNum}: native text too short (${text.trim().length} chars), using OCR...`);
+      onProgress?.(pageNum, pdf.numPages, true);
+      
+      const canvas = await renderPageForOCR(file, pageNum, 2.0); // Lower scale for faster OCR
+      text = await ocrExtractor(canvas);
+      
+      console.log(`[Comprovante] Page ${pageNum}: OCR extracted ${text.length} chars`);
+    }
+    
+    pageTexts.push(text);
+  }
+  
+  // Cache result if not cancelled
+  if (!shouldCancel?.()) {
+    pageTextCache.set(key, pageTexts);
+  }
+  
+  updateAccessOrder(key);
+  return pageTexts;
 }

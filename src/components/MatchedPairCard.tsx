@@ -40,7 +40,10 @@ export function MatchedPairCard({ pair, index }: MatchedPairCardProps) {
                   {pair.employeeName}
                 </h4>
                 <p className="text-xs text-muted-foreground">
-                  Página {pair.comprovante.pageNumber} do comprovante
+                  {pair.holerite.sourcePageNumber 
+                    ? `Holerite pág. ${pair.holerite.sourcePageNumber} • Comprovante pág. ${pair.comprovante.pageNumber}`
+                    : `Página ${pair.comprovante.pageNumber} do comprovante`
+                  }
                 </p>
               </div>
             </div>
