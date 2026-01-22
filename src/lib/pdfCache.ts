@@ -79,10 +79,22 @@ export async function getCachedPdf(file: File): Promise<PDFDocumentProxy> {
 }
 
 // Helper function to extract text from a single page with cleanup
+// Sorts items by position (Y then X) to preserve reading order
 async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Promise<string> {
   const page = await pdf.getPage(pageNum);
   const textContent = await page.getTextContent();
-  const text = textContent.items.map((item: any) => item.str).join(' ');
+  
+  // Ordenar itens por posição Y (topo para baixo) e X (esquerda para direita)
+  const sortedItems = textContent.items
+    .filter((item: any) => item.str && item.str.trim())
+    .sort((a: any, b: any) => {
+      // Inverter Y porque PDF usa coordenadas de baixo para cima
+      const yDiff = b.transform[5] - a.transform[5];
+      if (Math.abs(yDiff) > 5) return yDiff; // Linhas diferentes
+      return a.transform[4] - b.transform[4]; // Mesma linha, ordenar por X
+    });
+  
+  const text = sortedItems.map((item: any) => item.str).join(' ');
   page.cleanup(); // Release memory immediately!
   return text;
 }

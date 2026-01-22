@@ -199,6 +199,10 @@ export function useDocumentProcessor() {
       try {
         // Extract only first page text - MUCH faster (employee name is always on page 1)
         const text = await extractFirstPageText(holerite.file);
+        console.log('=== TEXTO EXTRAÍDO ===');
+        console.log('Arquivo:', holerite.name);
+        console.log('Texto (500 chars):', text.substring(0, 500));
+        console.log('======================');
         const extractedName = extractEmployeeName(text);
 
         // Clear timer when done
