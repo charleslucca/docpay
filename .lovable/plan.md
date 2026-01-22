@@ -1,285 +1,136 @@
 
-# Plano: Implementar OCR com Tesseract.js para PDFs Escaneados
+# Correção: Padrões Regex para Extrair Nome de Holerites Escaneados
 
-## Diagnóstico Confirmado
+## Problema Identificado
 
-Os holerites são **PDFs escaneados** (imagens), não têm texto selecionável. O PDF.js retorna string vazia ou lixo, por isso o `extractEmployeeName` falha. A solução é usar **Tesseract.js** (já instalado) para fazer OCR na imagem renderizada do PDF.
+O OCR está funcionando corretamente e extraindo o texto:
+```
+2049 CARLOS HENRIQUE DA SILVA MARIANO 410105 1 1
+SUPERVISOR ADMINISTRATIVO Admissão: 03/02/2025
+```
 
----
+Porém, a função `extractEmployeeName()` não consegue encontrar o nome porque **nenhum padrão regex cobre o formato onde o nome aparece entre números**.
 
-## Arquitetura da Solução
-
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│                    FLUXO DE EXTRAÇÃO DE NOME                     │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Renderizar página 1 do PDF como imagem (canvas)             │
-│                         ↓                                        │
-│  2. Enviar imagem para Tesseract.js (OCR em português)          │
-│                         ↓                                        │
-│  3. Receber texto reconhecido                                   │
-│                         ↓                                        │
-│  4. Aplicar extractEmployeeName() no texto OCR                  │
-│                         ↓                                        │
-│  5. Retornar nome extraído                                      │
-└─────────────────────────────────────────────────────────────────┘
+### Formato do Documento
+No holerite da B SERVICE, o nome aparece assim:
+```
+[MATRÍCULA] [NOME COMPLETO] [CÓDIGOS]
+   2049    CARLOS HENRIQUE DA SILVA MARIANO  410105 1 1
 ```
 
 ---
 
-## Mudanças a Implementar
+## Correção a Implementar
 
-### Mudança 1: Criar módulo de OCR (`src/lib/ocrUtils.ts`)
+### Arquivo: `src/lib/pdfUtils.ts`
 
-Criar um novo arquivo para encapsular toda a lógica do Tesseract.js:
+Adicionar novos padrões regex à função `extractEmployeeName()`:
 
-**Funcionalidades:**
-- Inicialização lazy do worker (só carrega quando necessário)
-- Singleton do worker para reutilizar entre chamadas
-- Função `extractTextWithOCR(imageDataUrl)` para processar imagem
-- Callback de progresso para feedback visual
-- Terminação do worker quando não mais necessário
+**Novos Padrões Necessários:**
 
-**Configuração do Tesseract:**
-```text
-createWorker('por', 1, {
-  workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-  corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
-  langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
-  logger: progressCallback
-})
-```
+1. **Nome entre números (matrícula e código)**
+   - Padrão: `\d{3,6}\s+([A-Z][A-Z\s]{8,45})\s+\d{4,}`
+   - Captura: Nome após número de 3-6 dígitos, seguido de número de 4+ dígitos
 
-### Mudança 2: Criar função de renderização otimizada para OCR
+2. **Nome após código numérico isolado**
+   - Padrão: `^\d{3,6}\s+([A-Z][A-Z\s]{8,45})(?=\s+\d|\s+SUPERVISOR|\s+ANALISTA|\s+AUXILIAR)`
+   - Captura: Nome após matrícula, antes de cargo ou código
 
-**Arquivo:** `src/lib/pdfCache.ts`
-
-Adicionar função `renderPageForOCR(file, pageNumber, scale)`:
-- Renderiza a página do PDF em alta resolução (scale 2.0-3.0)
-- Retorna canvas ou data URL para o Tesseract
-- Usa escala maior que preview para melhor precisão de OCR
-
-### Mudança 3: Modificar fluxo de extração de nomes
-
-**Arquivo:** `src/hooks/useDocumentProcessor.ts`
-
-Alterar `processHolerite` para:
-1. Renderizar página 1 como imagem
-2. Enviar para OCR (Tesseract)
-3. Aplicar `extractEmployeeName` no texto OCR
-4. Atualizar progresso durante OCR (0-100%)
-5. Atualizar status com "Executando OCR..."
-
-### Mudança 4: Atualizar interface de status
-
-**Arquivo:** `src/types/document.ts`
-
-Adicionar campo opcional para progresso do OCR:
-```text
-ocrProgress?: number; // 0-100 durante OCR
-```
-
-### Mudança 5: Exibir progresso do OCR na UI
-
-**Arquivo:** `src/components/ProcessingStatus.tsx`
-
-Mostrar barra de progresso secundária quando OCR estiver ativo.
+3. **Nome seguido de cargo comum brasileiro**
+   - Padrão: `([A-Z][A-Z\s]{8,45})\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO)`
+   - Captura: Nome que precede um cargo conhecido
 
 ---
 
-## Detalhes Técnicos
+## Código Atualizado
 
-### Novo arquivo: `src/lib/ocrUtils.ts`
+A função `extractEmployeeName` será modificada para incluir estes padrões:
 
-```text
-import { createWorker, Worker } from 'tesseract.js';
+```typescript
+export function extractEmployeeName(text: string): string | null {
+  const normalizedText = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ');
 
-let ocrWorker: Worker | null = null;
-let isInitializing = false;
+  console.log('[DEBUG] Texto normalizado (primeiros 300 chars):', normalizedText.substring(0, 300));
 
-type ProgressCallback = (progress: number) => void;
+  const namePatterns = [
+    // 1. Nome entre matrícula e código (NOVO - formato B SERVICE)
+    /\b\d{3,6}\s+([A-Z][A-Z\s]{8,45}?)\s+\d{4,}/,
+    
+    // 2. Nome seguido de cargo brasileiro (NOVO)
+    /([A-Z][A-Z\s]{8,45}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO)/,
+    
+    // 3. Labels explícitos brasileiros
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
+    
+    // 4. Recibo de pagamento padrão
+    /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CARGO))/,
+    
+    // 5. Nome imediatamente antes de CPF
+    /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
+    
+    // 6. Linha com nome completo isolado
+    /^([A-Z][A-Z\s]{8,40})$/m,
+  ];
 
-export async function initOcrWorker(onProgress?: ProgressCallback): Promise<Worker> {
-  if (ocrWorker) return ocrWorker;
-  
-  if (isInitializing) {
-    // Esperar inicialização em andamento
-    while (isInitializing) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    return ocrWorker!;
-  }
-  
-  isInitializing = true;
-  
-  ocrWorker = await createWorker('por', 1, {
-    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
-    langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
-    logger: (m) => {
-      if (m.status === 'recognizing text' && onProgress) {
-        onProgress(Math.round(m.progress * 100));
+  for (const pattern of namePatterns) {
+    const match = normalizedText.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim().replace(/\s+/g, ' ');
+      const words = name.split(' ').filter(w => w.length > 1);
+      
+      if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
+        const invalidWords = [
+          'CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO', 
+          'EMPRESA', 'LTDA', 'EIRELI', 'SA', 'PRESTADORA', 'SERVICOS',
+          'FOLHA', 'MENSAL', 'RECIBO', 'PAGAMENTO'
+        ];
+        const hasInvalidWord = words.some(w => invalidWords.includes(w));
+        if (!hasInvalidWord) {
+          console.log('[DEBUG] Nome extraído:', name);
+          return name;
+        }
       }
-    },
-  });
-  
-  isInitializing = false;
-  return ocrWorker;
-}
-
-export async function extractTextWithOCR(
-  imageSource: string | HTMLCanvasElement,
-  onProgress?: ProgressCallback
-): Promise<string> {
-  const worker = await initOcrWorker(onProgress);
-  const result = await worker.recognize(imageSource);
-  return result.data.text;
-}
-
-export async function terminateOcrWorker(): Promise<void> {
-  if (ocrWorker) {
-    await ocrWorker.terminate();
-    ocrWorker = null;
+    }
   }
+
+  console.log('[DEBUG] Nenhum nome encontrado');
+  return null;
 }
 ```
 
-### Nova função em `src/lib/pdfCache.ts`
+---
 
-```text
-export async function renderPageForOCR(
-  file: File,
-  pageNumber: number = 1,
-  scale: number = 2.5
-): Promise<HTMLCanvasElement> {
-  const pdf = await getCachedPdf(file);
-  const page = await pdf.getPage(pageNumber);
-  
-  const viewport = page.getViewport({ scale });
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d')!;
-  
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  
-  await page.render({
-    canvasContext: context,
-    viewport: viewport,
-  }).promise;
-  
-  page.cleanup();
-  return canvas;
-}
-```
+## Arquivo a Modificar
 
-### Modificação em `useDocumentProcessor.ts`
-
-```text
-// Importar novas funções
-import { extractTextWithOCR, terminateOcrWorker } from '@/lib/ocrUtils';
-import { renderPageForOCR } from '@/lib/pdfCache';
-
-// Dentro de processHolerite:
-const processHolerite = async (holerite: UploadedFile, index: number): Promise<UploadedFile> => {
-  // ... setup inicial ...
-  
-  setStatus(prev => ({
-    ...prev,
-    message: `Executando OCR em ${holerite.name}...`,
-    currentItem: holerite.name,
-  }));
-
-  try {
-    // 1. Renderizar página 1 para OCR
-    const canvas = await renderPageForOCR(holerite.file, 1, 2.5);
-    
-    // 2. Executar OCR com callback de progresso
-    const ocrText = await extractTextWithOCR(canvas, (progress) => {
-      setStatus(prev => ({
-        ...prev,
-        ocrProgress: progress,
-      }));
-    });
-    
-    console.log('=== TEXTO OCR ===');
-    console.log('Arquivo:', holerite.name);
-    console.log('Texto (500 chars):', ocrText.substring(0, 500));
-    console.log('=================');
-    
-    // 3. Extrair nome do texto OCR
-    const extractedName = extractEmployeeName(ocrText);
-    
-    // ... resto do processamento ...
-  }
-  // ...
-};
-```
+| Arquivo | Alteração |
+|---------|-----------|
+| `src/lib/pdfUtils.ts` | Adicionar 2 novos padrões regex e expandir lista de palavras inválidas |
 
 ---
 
-## Arquivos a Criar/Modificar
+## Teste do Padrão
 
-1. **`src/lib/ocrUtils.ts`** (NOVO) - Módulo de OCR com Tesseract.js
-2. **`src/lib/pdfCache.ts`** - Adicionar `renderPageForOCR()`
-3. **`src/hooks/useDocumentProcessor.ts`** - Usar OCR em vez de extração de texto
-4. **`src/types/document.ts`** - Adicionar `ocrProgress?` ao ProcessingStatus
-5. **`src/components/ProcessingStatus.tsx`** - Exibir progresso do OCR
-
----
-
-## Fluxo de Inicialização do Worker
-
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│                  INICIALIZAÇÃO DO TESSERACT                       │
-├──────────────────────────────────────────────────────────────────┤
-│  1ª chamada:                                                      │
-│    ├─ Baixa worker.min.js (~500KB)                               │
-│    ├─ Baixa tesseract-core-simd.wasm.js (~5MB)                   │
-│    ├─ Baixa por.traineddata.gz (~10MB)                           │
-│    └─ ~10-30 segundos (primeira vez)                             │
-│                                                                   │
-│  Chamadas subsequentes:                                           │
-│    └─ Reutiliza worker em memória (~1-3s por página)             │
-└──────────────────────────────────────────────────────────────────┘
+Com o texto OCR:
+```
+2049 CARLOS HENRIQUE DA SILVA MARIANO 410105 1 1
 ```
 
----
+O padrão `\b\d{3,6}\s+([A-Z][A-Z\s]{8,45}?)\s+\d{4,}` irá:
+1. Encontrar `2049` (matrícula - 4 dígitos)
+2. Capturar `CARLOS HENRIQUE DA SILVA MARIANO`
+3. Verificar que `410105` (6 dígitos) segue
 
-## Considerações de Performance
-
-| Operação | Tempo Estimado |
-|----------|----------------|
-| Primeira inicialização OCR | 10-30s (download) |
-| OCR por página (após init) | 2-5s |
-| Processamento de 50 holerites | ~3-4 minutos |
-
-**Otimizações aplicadas:**
-- Worker singleton (reutilizado entre arquivos)
-- Escala 2.5x para boa precisão sem exagerar
-- Apenas página 1 é processada
-- Progresso visual para feedback ao usuário
-
----
-
-## Mensagens de Feedback
-
-Durante o processamento, o usuário verá:
-
-```text
-"Inicializando OCR (primeira vez pode demorar)..."  → Download inicial
-"Executando OCR em documento_001.pdf..."           → Durante OCR
-"OCR: 45% concluído"                               → Progresso
-"Nome extraído: CARLOS HENRIQUE DA SILVA MARIANO"  → Sucesso
-```
+**Resultado esperado:** `CARLOS HENRIQUE DA SILVA MARIANO`
 
 ---
 
 ## Resultado Esperado
 
-Após implementação:
-- PDFs escaneados terão nomes extraídos corretamente via OCR
-- Primeira execução demora mais (download do modelo)
-- Execuções seguintes são mais rápidas (worker reutilizado)
-- Feedback visual claro do progresso do OCR
-- Nome "CARLOS HENRIQUE DA SILVA MARIANO" será extraído do exemplo
+Após a correção:
+- O nome será extraído corretamente do texto OCR
+- O padrão funcionará para outros holerites com formato similar
+- A lista expandida de palavras inválidas evitará falsos positivos com nomes de empresas
