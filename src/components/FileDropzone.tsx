@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, FileText, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText, X, CheckCircle, AlertCircle, Loader2, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UploadedFile } from '@/types/document';
 
@@ -110,8 +110,9 @@ export function FileDropzone({
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="space-y-2 max-h-60 overflow-y-auto"
+            className="space-y-2"
           >
+            <div className="max-h-60 overflow-y-auto space-y-2">
             {files.map((file) => (
               <motion.div
                 key={file.id}
@@ -141,6 +142,17 @@ export function FileDropzone({
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{file.name}</p>
+                  {/* Page count / employee estimate */}
+                  {file.pageCount === undefined && file.status === 'pending' ? (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Contando páginas...
+                    </p>
+                  ) : file.pageCount !== undefined ? (
+                    <p className="text-xs text-muted-foreground">
+                      {file.pageCount} {file.pageCount === 1 ? 'página' : 'páginas'} • ~{file.estimatedEmployees} funcionário(s)
+                    </p>
+                  ) : null}
                   {file.extractedName && (
                     <p className="text-xs text-primary font-medium">
                       {file.extractedName}
@@ -171,6 +183,28 @@ export function FileDropzone({
                 </div>
               </motion.div>
             ))}
+            </div>
+            
+            {/* Total summary */}
+            {(() => {
+              const totalEmployees = files.reduce((sum, f) => sum + (f.estimatedEmployees || 0), 0);
+              const allCounted = files.every(f => f.pageCount !== undefined);
+              return (
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground pt-2 border-t border-border">
+                  <Users className="h-4 w-4" />
+                  {allCounted ? (
+                    <span>
+                      Total: {files.length} arquivo(s) • ~{totalEmployees} funcionário(s)
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Calculando total...
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           </motion.div>
         )}
       </AnimatePresence>

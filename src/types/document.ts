@@ -23,6 +23,9 @@ export interface UploadedFile {
   // For multi-page PDF support - tracks source page in original PDF
   sourcePageNumber?: number;
   sourceFileName?: string;
+  // Page count for employee estimation
+  pageCount?: number;
+  estimatedEmployees?: number;
 }
 
 export interface MatchedPair {
