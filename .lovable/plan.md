@@ -1,192 +1,164 @@
 
-# Plano: Mostrar Apenas 1 Holerite e Organizar Downloads por Ano/Mês
+# Plano: Paralelização do OCR com Worker Pool (Scheduler)
 
-## Problemas Identificados
+## Problema Atual
 
-### Problema 1: Dois Holerites Empilhados
-O PDF de holerite da B SERVICE tem um layout de **2 vias por página** (cópia superior e cópia inferior idênticas). Quando o sistema embeda a página inteira, mostra as duas vias.
+O processamento de um PDF com 691 páginas está demorando porque:
+- Usa apenas **1 worker OCR** (singleton)
+- Processa página por página **sequencialmente**
+- Cada página leva ~2-3 segundos de OCR
+- Total estimado: 691 × 2.5s = **~29 minutos**
 
-**Solução**: Recortar automaticamente a **metade superior** da página do holerite para mostrar apenas 1 via.
+## Solução: Tesseract.js Scheduler
 
-### Problema 2: Organização dos Downloads
-O usuário quer que os downloads sejam organizados em pastas por ano e mês em português (ex: `2026/Janeiro/nome_funcionario.pdf`).
+O Tesseract.js possui uma API de **Scheduler** que gerencia um pool de workers e distribui jobs automaticamente. Com 4 workers paralelos, podemos processar 4 páginas simultaneamente, reduzindo o tempo para ~7-8 minutos.
+
+---
+
+## Arquitetura da Solução
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                    SCHEDULER (Pool Manager)                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           │
+│   │ Worker  │  │ Worker  │  │ Worker  │  │ Worker  │           │
+│   │   #1    │  │   #2    │  │   #3    │  │   #4    │           │
+│   └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘           │
+│        │            │            │            │                  │
+│        ▼            ▼            ▼            ▼                  │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           │
+│   │ Pág. 1  │  │ Pág. 2  │  │ Pág. 3  │  │ Pág. 4  │           │
+│   │ Pág. 5  │  │ Pág. 6  │  │ Pág. 7  │  │ Pág. 8  │           │
+│   │  ...    │  │  ...    │  │  ...    │  │  ...    │           │
+│   └─────────┘  └─────────┘  └─────────┘  └─────────┘           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+               Páginas processadas em paralelo!
+               691 páginas ÷ 4 workers = ~173 batches
+               Tempo estimado: ~8 minutos
+```
 
 ---
 
 ## Mudanças a Implementar
 
-### Mudança 1: Recortar Holerite para Metade Superior
+### Mudança 1: Refatorar ocrUtils.ts para usar Scheduler
 
-**Arquivo:** `src/lib/pdfUtils.ts`
+**Arquivo:** `src/lib/ocrUtils.ts`
 
-Modificar a função `createCombinedPdf` para:
-1. Embeder apenas a **metade superior** da página do holerite
-2. Usar `MediaBox` ou crop para cortar a página ao meio
-3. Manter o comprovante inteiro (já está correto)
-
-**Técnica com pdf-lib:**
-```text
-// Após embedar a página do holerite
-const holeriteOriginalHeight = holeritePage.height;
-
-// Desenhar apenas a metade superior (ajustar viewport)
-page.drawPage(holeritePage, {
-  x: margin + (availableWidth - holeriteWidth) / 2,
-  y: holeriteY,
-  width: holeriteWidth,
-  height: holeriteHeight,
-  // Recortar para mostrar apenas metade superior
-  xOffset: 0,
-  yOffset: holeriteOriginalHeight / 2, // Começar do meio
-});
-```
-
-Alternativamente, renderizar apenas a metade superior criando um clip:
-
-```text
-// Criar nova página apenas com a metade superior
-const croppedHoleritePdf = await PDFDocument.create();
-const [copiedPage] = await croppedHoleritePdf.copyPages(holeritePdf, [pageIndex]);
-
-// Ajustar MediaBox para metade superior
-const mediaBox = copiedPage.getMediaBox();
-copiedPage.setMediaBox(
-  mediaBox.x,
-  mediaBox.y + mediaBox.height / 2,  // Começar do meio
-  mediaBox.width,
-  mediaBox.height / 2  // Altura da metade
-);
-
-croppedHoleritePdf.addPage(copiedPage);
-```
-
-### Mudança 2: Atualizar Preview do Card
-
-**Arquivo:** `src/hooks/useDocumentProcessor.ts`
-
-Modificar `renderPdfPageToImage` para também recortar a metade superior quando for preview de holerite:
-- Adicionar parâmetro opcional `cropToHalf: boolean`
-- Quando true, renderizar apenas metade superior do canvas
-
-### Mudança 3: Organizar Downloads por Ano/Mês
-
-**Arquivo:** `src/types/document.ts`
-
-O `GeneratedDocument` já tem `year` e `month`. Adicionar path calculado:
-```text
-folderPath: string; // Ex: "2026/Janeiro"
-```
-
-**Arquivo:** `src/components/DocumentRepository.tsx`
-
-Modificar `handleDownload` para incluir o caminho da pasta no nome do arquivo:
-```text
-// Ao invés de: nome_funcionario.pdf
-// Usar: 2026_Janeiro_nome_funcionario.pdf
-// Ou sugerir download com estrutura de pastas
-```
-
-**Arquivo:** `src/hooks/useDocumentProcessor.ts`
-
-Na função `generatePdfs`, calcular o nome do mês em português:
-```text
-const monthNames = ['Janeiro', 'Fevereiro', 'Março', ...];
-const monthName = monthNames[month - 1];
-const fileName = `${year}_${monthName}_${employeeName}.pdf`;
-// Ou: folderPath = `${year}/${monthName}/`
-```
-
----
-
-## Detalhes Técnicos
-
-### Recorte de Página com pdf-lib
-
-A biblioteca `pdf-lib` permite recortar páginas de duas formas:
-
-**Opção A: Ajustar MediaBox antes de embedar**
-```typescript
-// Copiar página e ajustar bounds
-const holeritePdfDoc = await PDFDocument.load(holeriteBytes);
-const [page] = await holeritePdfDoc.getPages();
-const { height, width } = page.getSize();
-
-// Criar novo PDF com página recortada
-const croppedDoc = await PDFDocument.create();
-const [copiedPage] = await croppedDoc.copyPages(holeritePdfDoc, [holeritePageNumber - 1]);
-
-// Recortar para metade superior
-copiedPage.setCropBox(0, height / 2, width, height / 2);
-croppedDoc.addPage(copiedPage);
-
-// Agora embedar o documento recortado
-const [croppedHoleritePage] = await pdfDoc.embedPdf(croppedDoc);
-```
-
-**Opção B: Usar clipPath no desenho** (mais complexo)
-
-Usaremos a **Opção A** por ser mais simples e confiável.
-
-### Função Atualizada: `createCombinedPdf`
+Substituir o worker singleton por um Scheduler com pool de workers:
 
 ```typescript
-export async function createCombinedPdf(
-  holeriteFile: File,
-  comprovanteFile: File,
-  comprovantePageNumber: number,
-  employeeName: string,
-  holeritePageNumber: number = 1,
-  cropHoleriteToHalf: boolean = true  // NOVO parâmetro
-): Promise<Blob> {
-  const pdfDoc = await PDFDocument.create();
+import { createScheduler, createWorker, Scheduler, Worker } from 'tesseract.js';
+
+let scheduler: Scheduler | null = null;
+const WORKER_COUNT = 4; // Número de workers paralelos
+
+export async function initOcrScheduler(): Promise<Scheduler> {
+  if (scheduler) return scheduler;
   
-  // A4 landscape dimensions
-  const pageWidth = 841.89;
-  const pageHeight = 595.28;
+  console.log(`[OCR] Initializing scheduler with ${WORKER_COUNT} workers...`);
   
-  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+  scheduler = createScheduler();
   
-  const holeriteBytes = await getCachedBuffer(holeriteFile);
-  const comprovanteBytes = await getCachedBuffer(comprovanteFile);
+  // Criar workers em paralelo
+  const workerPromises = Array.from({ length: WORKER_COUNT }, async () => {
+    const worker = await createWorker('por', 1, {
+      workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+      corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
+      langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
+    });
+    return worker;
+  });
   
-  let holeritePdf = await PDFDocument.load(holeriteBytes.slice(0));
+  const workers = await Promise.all(workerPromises);
+  workers.forEach(w => scheduler!.addWorker(w));
   
-  // NOVO: Recortar holerite para metade superior se necessário
-  if (cropHoleriteToHalf) {
-    const originalPage = holeritePdf.getPage(holeritePageNumber - 1);
-    const { width, height } = originalPage.getSize();
-    
-    const croppedPdf = await PDFDocument.create();
-    const [copiedPage] = await croppedPdf.copyPages(holeritePdf, [holeritePageNumber - 1]);
-    
-    // Recortar para metade superior (a via do funcionário)
-    copiedPage.setCropBox(0, height / 2, width, height / 2);
-    croppedPdf.addPage(copiedPage);
-    
-    // Usar o PDF recortado
-    holeritePdf = croppedPdf;
-  }
+  console.log(`[OCR] Scheduler ready with ${WORKER_COUNT} workers`);
+  return scheduler;
+}
+
+// Nova função para processar em batch
+export async function extractTextBatch(
+  canvases: HTMLCanvasElement[],
+  onProgress?: (completed: number, total: number) => void
+): Promise<string[]> {
+  const sched = await initOcrScheduler();
+  let completed = 0;
   
-  const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [0]);
-  // ... resto do código
+  const promises = canvases.map(async (canvas) => {
+    const result = await sched.addJob('recognize', canvas);
+    completed++;
+    onProgress?.(completed, canvases.length);
+    return result.data.text;
+  });
+  
+  return Promise.all(promises);
 }
 ```
 
-### Nomes de Arquivos com Ano/Mês
+### Mudança 2: Processar Páginas em Lotes Paralelos
 
-O arquivo gerado terá o nome no formato:
-```
-2025_Setembro_ANA_BEATRIZ_DIAS_PIRES.pdf
+**Arquivo:** `src/hooks/useDocumentProcessor.ts`
+
+Modificar `processHolerite` para processar páginas em lotes de 20:
+
+```typescript
+const PAGES_PER_BATCH = 20;
+
+// Dentro de processHolerite:
+for (let batchStart = 1; batchStart <= totalPages; batchStart += PAGES_PER_BATCH) {
+  if (cancelledRef.current) break;
+  
+  const batchEnd = Math.min(batchStart + PAGES_PER_BATCH - 1, totalPages);
+  const pageNumbers = Array.from(
+    { length: batchEnd - batchStart + 1 }, 
+    (_, i) => batchStart + i
+  );
+  
+  setStatus(prev => ({
+    ...prev,
+    message: `OCR em ${holerite.name} (pág. ${batchStart}-${batchEnd} de ${totalPages})...`,
+  }));
+  
+  // Renderizar todas as páginas do batch em paralelo
+  const canvases = await Promise.all(
+    pageNumbers.map(pageNum => renderPageForOCR(holerite.file, pageNum, 2.5))
+  );
+  
+  // Processar OCR em paralelo com o scheduler
+  const texts = await extractTextBatch(canvases, (done, total) => {
+    const overallProgress = ((batchStart - 1 + done) / totalPages) * 100;
+    setStatus(prev => ({ ...prev, ocrProgress: overallProgress }));
+  });
+  
+  // Extrair nomes dos textos
+  for (let i = 0; i < texts.length; i++) {
+    const name = extractEmployeeName(texts[i]);
+    if (name) {
+      entries.push({
+        originalHolerite: holerite,
+        name,
+        pageNumber: pageNumbers[i],
+      });
+    }
+  }
+}
 ```
 
-E no repositório, será agrupado visualmente por:
+### Mudança 3: Atualizar Feedback de Progresso
+
+O progresso será mostrado como:
 ```
-📁 Setembro de 2025 (4 arquivos)
-   └── ANA BEATRIZ DIAS PIRES
-   └── CARLOS HENRIQUE DA SILVA MARIANO
-   └── MARIA JOSÉ DOS SANTOS
-   └── JOÃO PEDRO OLIVEIRA
+"OCR em RECIBO.pdf (pág. 1-20 de 691)..."
+"OCR em RECIBO.pdf (pág. 21-40 de 691)..."
 ```
+
+Com uma barra de progresso geral mostrando a porcentagem total.
 
 ---
 
@@ -194,48 +166,38 @@ E no repositório, será agrupado visualmente por:
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/lib/pdfUtils.ts` | Recortar holerite para metade superior na `createCombinedPdf` |
-| `src/lib/pdfUtils.ts` | Adicionar função `renderPdfPageToImage` com crop opcional |
-| `src/hooks/useDocumentProcessor.ts` | Passar crop=true para previews de holerite |
-| `src/hooks/useDocumentProcessor.ts` | Gerar fileName com ano e mês em português |
-| `src/types/document.ts` | Adicionar `monthName` ao GeneratedDocument (opcional) |
+| `src/lib/ocrUtils.ts` | Implementar Scheduler com pool de 4 workers + função `extractTextBatch` |
+| `src/hooks/useDocumentProcessor.ts` | Processar páginas em lotes de 20, usar `extractTextBatch` |
+| `src/components/ProcessingStatus.tsx` | Atualizar mensagens para mostrar range de páginas |
 
 ---
 
-## Resultado Visual Esperado
+## Estimativa de Performance
 
-### PDF Gerado (Após Correção)
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│  Funcionário: ANA BEATRIZ DIAS PIRES      Gerado em: 22/01/2026 │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌─────────────────┐           ┌─────────────────┐             │
-│   │   HOLERITE      │    →      │   COMPROVANTE   │             │
-│   │   (1 via só)    │           │   SICREDI       │             │
-│   │                 │           │                 │             │
-│   │   ANA BEATRIZ   │           │   ANA BEATRIZ   │             │
-│   │   R$ 1.746,29   │           │   R$ 1.746,29   │             │
-│   │                 │           │                 │             │
-│   └─────────────────┘           └─────────────────┘             │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+| Cenário | Antes | Depois |
+|---------|-------|--------|
+| 691 páginas | ~29 min | ~8 min |
+| 100 páginas | ~4 min | ~1 min |
+| 4 páginas | ~10 seg | ~3 seg |
 
-### Estrutura de Downloads
-```text
-Downloads/
-├── 2025_Setembro_ANA_BEATRIZ_DIAS_PIRES.pdf
-├── 2025_Setembro_CARLOS_HENRIQUE.pdf
-└── 2025_Outubro_MARIA_JOSE.pdf
-```
+Melhoria: **~4x mais rápido**
 
 ---
 
-## Considerações
+## Considerações de Memória
 
-1. **Crop 50%**: Assumindo que o layout padrão da B SERVICE é sempre 2 vias por página. Se houver variações, podemos adicionar detecção automática ou opção manual.
+- Cada worker OCR usa ~50-100MB de RAM
+- 4 workers = ~400MB de RAM
+- Lotes de 20 páginas = ~20 canvas em memória por vez
+- Após cada batch, os canvas são liberados
 
-2. **Compatibilidade**: O recorte via `setCropBox` é suportado pela pdf-lib e mantém a qualidade original do PDF.
+O número de workers (4) é conservador para funcionar em máquinas modestas. Podemos ajustar dinamicamente baseado em `navigator.hardwareConcurrency` para usar mais cores em máquinas potentes.
 
-3. **Performance**: O recorte é feito em memória, sem re-renderização - mantém a velocidade atual.
+---
+
+## Resultado Esperado
+
+1. O processamento de 691 páginas levará ~8 minutos ao invés de ~29 minutos
+2. O progresso mostrará batches de páginas sendo processados
+3. O scheduler gerencia automaticamente a distribuição de trabalho
+4. A memória será gerenciada com liberação após cada batch
