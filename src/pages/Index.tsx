@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { FileText, Sparkles, RotateCcw, Play, Zap } from 'lucide-react';
+import { FileText, Sparkles, RotateCcw, Play, Zap, StopCircle } from 'lucide-react';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
@@ -15,10 +15,12 @@ const Index = () => {
     matchedPairs,
     generatedDocs,
     status,
+    isCancelling,
     addFiles,
     removeFile,
     processDocuments,
     generatePdfs,
+    cancelProcessing,
     reset,
   } = useDocumentProcessor();
 
@@ -136,8 +138,25 @@ const Index = () => {
               </motion.div>
             )}
 
-            {/* Processing Status */}
-            {status.step !== 'idle' && <ProcessingStatus status={status} />}
+            {/* Processing Status with Cancel Button */}
+            {status.step !== 'idle' && (
+              <div className="space-y-4">
+                <ProcessingStatus status={status} />
+                {isProcessing && (
+                  <div className="flex justify-center">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={cancelProcessing}
+                      disabled={isCancelling}
+                    >
+                      <StopCircle className="h-4 w-4 mr-2" />
+                      {isCancelling ? 'Cancelando...' : 'Cancelar Processamento'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Matched Pairs */}
             {matchedPairs.length > 0 && (

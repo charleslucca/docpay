@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from '@/types/document';
 import {
   extractTextFromPdf,
@@ -45,6 +45,10 @@ export function useDocumentProcessor() {
     progress: 0,
     message: '',
   });
+  
+  // Cancel mechanism
+  const cancelledRef = useRef(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
@@ -73,15 +77,27 @@ export function useDocumentProcessor() {
     }
   }, []);
 
+  const cancelProcessing = useCallback(() => {
+    cancelledRef.current = true;
+    setIsCancelling(true);
+    setStatus((prev) => ({ ...prev, message: 'Cancelando...' }));
+  }, []);
+
   const processDocuments = useCallback(async () => {
     if (holerites.length === 0 || comprovantes.length === 0) {
       return;
     }
 
+    cancelledRef.current = false;
+    setIsCancelling(false);
     setStatus({ step: 'extracting', progress: 0, message: 'Extraindo nomes dos holerites...' });
 
     // Step 1: Extract names from holerites in parallel (NO previews yet)
     const processHolerite = async (holerite: UploadedFile, index: number): Promise<UploadedFile> => {
+      if (cancelledRef.current) {
+        return { ...holerite, status: 'pending' as const, progress: 0 };
+      }
+
       setHolerites((prev) =>
         prev.map((h) =>
           h.id === holerite.id ? { ...h, status: 'processing', progress: 50 } : h
@@ -128,6 +144,13 @@ export function useDocumentProcessor() {
 
     const processedHolerites = await processInBatches(holerites, processHolerite);
 
+    // Check if cancelled
+    if (cancelledRef.current) {
+      setStatus({ step: 'idle', progress: 0, message: 'Processamento cancelado' });
+      setIsCancelling(false);
+      return;
+    }
+
     // Step 2: Match names in comprovantes with early termination
     setStatus({ step: 'matching', progress: 40, message: 'Buscando correspondências...' });
 
@@ -136,6 +159,8 @@ export function useDocumentProcessor() {
     const matchedHoleriteIds = new Set<string>();
 
     for (let cIdx = 0; cIdx < comprovantes.length; cIdx++) {
+      if (cancelledRef.current) break;
+      
       const comprovante = comprovantes[cIdx];
       
       setComprovantes((prev) =>
@@ -201,6 +226,13 @@ export function useDocumentProcessor() {
 
     setMatchedPairs(pairs);
 
+    // Check if cancelled
+    if (cancelledRef.current) {
+      setStatus({ step: 'idle', progress: 0, message: 'Processamento cancelado' });
+      setIsCancelling(false);
+      return;
+    }
+
     // Step 3: Generate previews ONLY for matched pairs (lazy, non-blocking)
     if (pairs.length > 0) {
       setStatus({ step: 'matching', progress: 90, message: 'Gerando previews...' });
@@ -251,6 +283,8 @@ export function useDocumentProcessor() {
   const generatePdfs = useCallback(async () => {
     if (matchedPairs.length === 0) return;
 
+    cancelledRef.current = false;
+    setIsCancelling(false);
     setStatus({ step: 'generating', progress: 0, message: 'Gerando PDFs...' });
 
     const now = new Date();
@@ -260,6 +294,8 @@ export function useDocumentProcessor() {
 
     // Process PDF generation in parallel batches
     const generatePdf = async (pair: MatchedPair, index: number): Promise<GeneratedDocument | null> => {
+      if (cancelledRef.current) return null;
+      
       setMatchedPairs((prev) =>
         prev.map((p) => (p.id === pair.id ? { ...p, status: 'generating' } : p))
       );
@@ -311,6 +347,12 @@ export function useDocumentProcessor() {
     const results = await processInBatches(matchedPairs, generatePdf, 3);
     const validDocs = results.filter((doc): doc is GeneratedDocument => doc !== null);
 
+    if (cancelledRef.current) {
+      setStatus({ step: 'idle', progress: 0, message: 'Geração cancelada' });
+      setIsCancelling(false);
+      return;
+    }
+
     setGeneratedDocs((prev) => [...prev, ...validDocs]);
     setStatus({
       step: 'completed',
@@ -342,10 +384,12 @@ export function useDocumentProcessor() {
     matchedPairs,
     generatedDocs,
     status,
+    isCancelling,
     addFiles,
     removeFile,
     processDocuments,
     generatePdfs,
+    cancelProcessing,
     reset,
   };
 }
