@@ -170,7 +170,7 @@ export function useDocumentProcessor() {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  const addFiles = useCallback((files: File[], type: 'holerite' | 'comprovante') => {
+  const addFiles = useCallback(async (files: File[], type: 'holerite' | 'comprovante') => {
     const newFiles: UploadedFile[] = files.map((file) => ({
       id: generateId(),
       file,
@@ -178,13 +178,37 @@ export function useDocumentProcessor() {
       type,
       status: 'pending',
       progress: 0,
+      pageCount: undefined,
+      estimatedEmployees: undefined,
     }));
 
+    // Add files immediately for responsive UX
     if (type === 'holerite') {
       setHolerites((prev) => [...prev, ...newFiles]);
     } else {
       setComprovantes((prev) => [...prev, ...newFiles]);
     }
+
+    // Count pages in background (parallel)
+    const countPagePromises = newFiles.map(async (uploadedFile) => {
+      try {
+        const pdf = await getCachedPdf(uploadedFile.file);
+        const pageCount = pdf.numPages;
+        
+        // Update with page count
+        const setter = type === 'holerite' ? setHolerites : setComprovantes;
+        setter((prev) => prev.map((f) => 
+          f.id === uploadedFile.id 
+            ? { ...f, pageCount, estimatedEmployees: pageCount }
+            : f
+        ));
+      } catch (error) {
+        console.warn(`[PageCount] Error counting pages for ${uploadedFile.name}:`, error);
+      }
+    });
+
+    // Run all page counts in parallel
+    await Promise.all(countPagePromises);
   }, []);
 
   const removeFile = useCallback((id: string, type: 'holerite' | 'comprovante') => {
