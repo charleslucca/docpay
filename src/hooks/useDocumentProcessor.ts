@@ -1,13 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from '@/types/document';
 import {
-  extractTextFromPdf,
   extractEmployeeName,
   findNameInPage,
   renderPdfPageToImage,
   createCombinedPdf,
 } from '@/lib/pdfUtils';
-import { getCachedPdf, getCachedPageTexts, clearCache } from '@/lib/pdfCache';
+import { getCachedPdf, getCachedPageTexts, extractFirstPageText, clearCache } from '@/lib/pdfCache';
 import { toast } from '@/hooks/use-toast';
 
 const CONCURRENCY_LIMIT = 5;
@@ -198,8 +197,8 @@ export function useDocumentProcessor() {
       );
 
       try {
-        const cachedPdf = await getCachedPdf(holerite.file);
-        const { text } = await extractTextFromPdf(holerite.file, cachedPdf);
+        // Extract only first page text - MUCH faster (employee name is always on page 1)
+        const text = await extractFirstPageText(holerite.file);
         const extractedName = extractEmployeeName(text);
 
         // Clear timer when done
