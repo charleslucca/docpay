@@ -11,19 +11,26 @@ import { getCachedPdf, getCachedPageTexts, clearCache } from '@/lib/pdfCache';
 
 const CONCURRENCY_LIMIT = 5;
 
-// Process items in parallel with concurrency limit
+// Process items in parallel with concurrency limit and cancellation support
 async function processInBatches<T, R>(
   items: T[],
   processor: (item: T, index: number) => Promise<R>,
-  concurrency: number = CONCURRENCY_LIMIT
+  concurrency: number = CONCURRENCY_LIMIT,
+  cancelledRef?: React.MutableRefObject<boolean>
 ): Promise<R[]> {
   const results: R[] = [];
   
   for (let i = 0; i < items.length; i += concurrency) {
+    // Check cancellation before each batch
+    if (cancelledRef?.current) break;
+    
     const batch = items.slice(i, i + concurrency);
     const batchResults = await Promise.allSettled(
       batch.map((item, idx) => processor(item, i + idx))
     );
+    
+    // Check cancellation after batch completes
+    if (cancelledRef?.current) break;
     
     for (const result of batchResults) {
       if (result.status === 'fulfilled') {
@@ -142,7 +149,7 @@ export function useDocumentProcessor() {
       }
     };
 
-    const processedHolerites = await processInBatches(holerites, processHolerite);
+    const processedHolerites = await processInBatches(holerites, processHolerite, CONCURRENCY_LIMIT, cancelledRef);
 
     // Check if cancelled
     if (cancelledRef.current) {
@@ -167,8 +174,15 @@ export function useDocumentProcessor() {
       );
 
       try {
-        // Use cached page texts extraction - this is the key optimization!
-        const pageTexts = await getCachedPageTexts(comprovante.file);
+        // Use cached page texts extraction with cancellation support
+        const pageTexts = await getCachedPageTexts(
+          comprovante.file,
+          () => cancelledRef.current
+        );
+        
+        // Don't store if cancelled
+        if (cancelledRef.current) return;
+        
         comprovanteTextsMap.set(comprovante.id, { file: comprovante.file, pageTexts });
         
         setComprovantes((prev) =>
@@ -194,7 +208,7 @@ export function useDocumentProcessor() {
     };
 
     // Process comprovantes in parallel batches
-    await processInBatches(comprovantes, preExtractComprovante);
+    await processInBatches(comprovantes, preExtractComprovante, CONCURRENCY_LIMIT, cancelledRef);
 
     // Check if cancelled
     if (cancelledRef.current) {
@@ -211,8 +225,9 @@ export function useDocumentProcessor() {
     const matchedHoleriteIds = new Set<string>();
 
     // Pure CPU matching - no file access!
-    for (const comprovante of comprovantes) {
-      if (cancelledRef.current) break;
+    matchingLoop: for (const comprovante of comprovantes) {
+      // Check cancellation at start of each comprovante
+      if (cancelledRef.current) break matchingLoop;
       
       const extracted = comprovanteTextsMap.get(comprovante.id);
       if (!extracted) continue;
@@ -220,6 +235,9 @@ export function useDocumentProcessor() {
       const { pageTexts } = extracted;
 
       for (const holerite of validHolerites) {
+        // Check cancellation in inner loop too
+        if (cancelledRef.current) break matchingLoop;
+        
         if (!holerite.extractedName || matchedHoleriteIds.has(holerite.id)) continue;
 
         // Search in pre-extracted texts (instantaneous!)
@@ -280,11 +298,17 @@ export function useDocumentProcessor() {
       // Use requestIdleCallback or setTimeout to not block UI
       const generatePreviewsLazy = async () => {
         for (const pair of pairs) {
+          // Check cancellation before each preview
+          if (cancelledRef.current) break;
+          
           try {
             const [holeritePreview, comprovantePreview] = await Promise.all([
               renderPdfPageToImage(pair.holerite.file, 1, 0.5),
               renderPdfPageToImage(pair.comprovante.file, pair.comprovante.pageNumber!, 0.5),
             ]);
+
+            // Check again after async operation
+            if (cancelledRef.current) break;
 
             // Update holerite with preview
             setHolerites((prev) =>
@@ -384,7 +408,7 @@ export function useDocumentProcessor() {
       }
     };
 
-    const results = await processInBatches(matchedPairs, generatePdf, 3);
+    const results = await processInBatches(matchedPairs, generatePdf, 3, cancelledRef);
     const validDocs = results.filter((doc): doc is GeneratedDocument => doc !== null);
 
     if (cancelledRef.current) {
