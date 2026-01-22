@@ -6,7 +6,8 @@ let pdfjsLib: typeof import('pdfjs-dist') | null = null;
 async function getPdfJs() {
   if (!pdfjsLib) {
     pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
+    // Use local worker for faster loading (downloaded to public folder)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   }
   return pdfjsLib;
 }
@@ -63,7 +64,13 @@ export async function getCachedPdf(file: File): Promise<PDFDocumentProxy> {
     const pdfjs = await getPdfJs();
     const buffer = await getCachedBuffer(file);
     // Create a copy of the buffer since getDocument consumes it
-    pdf = await pdfjs.getDocument({ data: buffer.slice(0) }).promise;
+    // Configure CMaps and standard fonts for better Brazilian PDF support
+    pdf = await pdfjs.getDocument({
+      data: buffer.slice(0),
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/standard_fonts/',
+    }).promise;
     pdfDocumentCache.set(key, pdf);
   }
   
@@ -71,38 +78,65 @@ export async function getCachedPdf(file: File): Promise<PDFDocumentProxy> {
   return pdf;
 }
 
-// NEW: Get all page texts from a PDF (cached) with cancellation support
+// Helper function to extract text from a single page with cleanup
+async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Promise<string> {
+  const page = await pdf.getPage(pageNum);
+  const textContent = await page.getTextContent();
+  const text = textContent.items.map((item: any) => item.str).join(' ');
+  page.cleanup(); // Release memory immediately!
+  return text;
+}
+
+const PAGE_BATCH_SIZE = 5; // Process 5 pages in parallel
+
+// Get all page texts from a PDF (cached) with cancellation support and parallel processing
 export async function getCachedPageTexts(
   file: File,
   shouldCancel?: () => boolean
 ): Promise<string[]> {
   const key = getFileKey(file);
   
-  let pageTexts = pageTextCache.get(key);
-  if (!pageTexts) {
-    const pdf = await getCachedPdf(file);
-    pageTexts = [];
-    
-    for (let i = 1; i <= pdf.numPages; i++) {
-      // Check cancellation before each page
-      if (shouldCancel?.()) {
-        break;
-      }
-      
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const text = textContent.items.map((item: any) => item.str).join(' ');
-      pageTexts.push(text);
+  // Check cache first - instant return if cached
+  const cachedTexts = pageTextCache.get(key);
+  if (cachedTexts) {
+    updateAccessOrder(key);
+    return cachedTexts;
+  }
+  
+  const pdf = await getCachedPdf(file);
+  const pageTexts: string[] = [];
+  
+  // Process pages in parallel batches for much faster extraction
+  for (let start = 1; start <= pdf.numPages; start += PAGE_BATCH_SIZE) {
+    // Check cancellation before each batch
+    if (shouldCancel?.()) {
+      break;
     }
     
-    // Only cache if not cancelled
-    if (!shouldCancel?.()) {
-      pageTextCache.set(key, pageTexts);
+    const end = Math.min(start + PAGE_BATCH_SIZE, pdf.numPages + 1);
+    const pagePromises: Promise<string>[] = [];
+    
+    for (let i = start; i < end; i++) {
+      pagePromises.push(extractSinglePageText(pdf, i));
     }
+    
+    const batchResults = await Promise.all(pagePromises);
+    pageTexts.push(...batchResults);
+  }
+  
+  // Only cache if not cancelled
+  if (!shouldCancel?.()) {
+    pageTextCache.set(key, pageTexts);
   }
   
   updateAccessOrder(key);
   return pageTexts;
+}
+
+// Extract text from only the first page (optimized for holerites)
+export async function extractFirstPageText(file: File): Promise<string> {
+  const pdf = await getCachedPdf(file);
+  return extractSinglePageText(pdf, 1);
 }
 
 export function clearCache() {
