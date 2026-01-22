@@ -1,235 +1,198 @@
 
-# Plano de Otimização da Extração de PDF
+# Diagnóstico: Falha na Extração de Nomes
 
-## Diagnóstico do Problema
+## Problema Identificado
 
-Identifiquei as principais causas da lentidão comparado ao script Python:
+A função `extractEmployeeName` está falhando porque os **padrões regex são muito restritivos** e não cobrem os formatos de texto comuns nos PDFs brasileiros de holerites e comprovantes.
 
-### Problema 1: Worker sendo carregado via CDN
-```typescript
-// Código atual (lento)
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
-```
+### Causas Principais
 
-**Impacto:** Cada vez que o PDF.js inicializa, ele precisa baixar o worker da internet. Isso adiciona latência de rede (100-500ms) antes de qualquer processamento começar. O Python usa bibliotecas locais sem essa sobrecarga.
+1. **Padrões de labels limitados**: O código atual só reconhece `Nome`, `Funcionário`, `Empregado`, mas muitos documentos usam:
+   - `Colaborador`
+   - `Nome do Segurado`
+   - `Trabalhador`
+   - `Titular`
+   - Ou simplesmente o nome aparece em posição fixa sem label
 
-### Problema 2: Falta de CMaps e fontes padrão
-PDFs brasileiros frequentemente usam codificações especiais de caracteres. Sem os CMaps configurados, o PDF.js pode ter dificuldades para extrair texto corretamente e fazer mais tentativas.
+2. **Regex muito rígida para nomes**: O padrão exige que o nome comece com letra maiúscula acentuada específica, mas:
+   - PDFs podem extrair texto em ordem inesperada
+   - Acentos podem vir separados do caractere base
+   - Espaços extras podem quebrar o match
 
-### Problema 3: Processamento sequencial de páginas
-No loop atual (`getCachedPageTexts`), cada página é processada uma a uma com `await`:
-```typescript
-for (let i = 1; i <= pdf.numPages; i++) {
-  const page = await pdf.getPage(i);  // Espera cada página
-  const textContent = await page.getTextContent();
-  // ...
-}
-```
+3. **Falta de debug**: Não há log para saber **o que está sendo extraído** do PDF, impossibilitando diagnóstico
 
-O Python provavelmente processa páginas em paralelo ou tem acesso mais direto ao conteúdo.
-
-### Problema 4: Vazamento de memória nas páginas
-O PDF.js requer que você chame `page.cleanup()` após usar cada página para liberar memória. Sem isso, o Garbage Collector fica sobrecarregado.
+4. **Ordem de extração não preservada**: O PDF.js extrai texto item por item, mas a ordem pode não refletir a ordem visual do documento
 
 ---
 
 ## Correções a Implementar
 
-### Correção 1: Servir o PDF Worker localmente
-
-**Arquivo:** `public/` (novo arquivo)
-
-Copiar o worker do PDF.js para o projeto para eliminar latência de rede.
-
-**Arquivo:** `src/lib/pdfCache.ts`
-
-```text
-// ANTES:
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
-
-// DEPOIS:
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-```
-
-### Correção 2: Configurar CMaps e Standard Fonts
-
-**Arquivo:** `src/lib/pdfCache.ts`
-
-Adicionar configuração ao carregar PDFs:
-```text
-const pdf = await pdfjs.getDocument({
-  data: buffer.slice(0),
-  cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/cmaps/',
-  cMapPacked: true,
-  standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/standard_fonts/',
-}).promise;
-```
-
-### Correção 3: Processar páginas em paralelo (batches)
-
-**Arquivo:** `src/lib/pdfCache.ts`
-
-Mudar o loop sequencial para processamento paralelo em lotes:
-```text
-// ANTES (sequencial):
-for (let i = 1; i <= pdf.numPages; i++) {
-  const page = await pdf.getPage(i);
-  // ...
-}
-
-// DEPOIS (paralelo em batches de 5):
-const PAGE_BATCH_SIZE = 5;
-for (let start = 1; start <= pdf.numPages; start += PAGE_BATCH_SIZE) {
-  const end = Math.min(start + PAGE_BATCH_SIZE, pdf.numPages + 1);
-  const pagePromises = [];
-  
-  for (let i = start; i < end; i++) {
-    pagePromises.push(extractPageText(pdf, i));
-  }
-  
-  const batchResults = await Promise.all(pagePromises);
-  pageTexts.push(...batchResults);
-}
-```
-
-### Correção 4: Limpar páginas após uso
-
-**Arquivo:** `src/lib/pdfCache.ts`
-
-Adicionar `page.cleanup()` após extrair texto de cada página para liberar memória:
-```text
-const page = await pdf.getPage(i);
-const textContent = await page.getTextContent();
-const text = textContent.items.map((item: any) => item.str).join(' ');
-page.cleanup(); // Liberar memória!
-```
-
-### Correção 5: Extrair apenas primeira página dos holerites
+### Correção 1: Adicionar console.log para debug (temporário)
 
 **Arquivo:** `src/hooks/useDocumentProcessor.ts`
 
-Os holerites geralmente têm o nome do funcionário na primeira página. Extrair apenas a primeira página em vez de todas:
-```text
-// ANTES:
-const { text } = await extractTextFromPdf(holerite.file, cachedPdf);
+Adicionar log do texto extraído para identificar exatamente o que está vindo do PDF:
 
-// DEPOIS:
-const page = await cachedPdf.getPage(1);
-const textContent = await page.getTextContent();
-const text = textContent.items.map((item: any) => item.str).join(' ');
-page.cleanup();
+```text
+const text = await extractFirstPageText(holerite.file);
+console.log('=== TEXTO EXTRAÍDO ===');
+console.log('Arquivo:', holerite.name);
+console.log('Texto:', text.substring(0, 500)); // Primeiros 500 caracteres
+console.log('======================');
+const extractedName = extractEmployeeName(text);
+```
+
+### Correção 2: Melhorar os padrões de extração de nome
+
+**Arquivo:** `src/lib/pdfUtils.ts`
+
+Expandir a lista de padrões para cobrir mais formatos brasileiros:
+
+```text
+export function extractEmployeeName(text: string): string | null {
+  // Normalizar texto antes de processar
+  const normalizedText = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remover acentos
+    .toUpperCase();
+
+  const namePatterns = [
+    // Padrões com labels explícitos (mais comum)
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)[:\s]*([A-Z][A-Z\s]{4,50})/i,
+    
+    // Padrão específico de recibo de salário
+    /RECIBO DE PAGAMENTO[^]*?([A-Z][A-Z\s]{5,40})(?:\s*(?:CPF|CARGO|FUNCAO|ADMISSAO))/i,
+    
+    // Nome seguido de CPF (padrão muito comum)
+    /([A-Z][A-Z\s]{5,40})\s*(?:\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2})/,
+    
+    // Linha que parece ser só um nome completo (fallback)
+    /^([A-Z][A-Z\s]{8,40})$/m,
+  ];
+
+  for (const pattern of namePatterns) {
+    const match = normalizedText.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim().replace(/\s+/g, ' '); // Normalizar espaços
+      const words = name.split(' ').filter(w => w.length > 1);
+      if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
+        return name;
+      }
+    }
+  }
+
+  return null;
+}
+```
+
+### Correção 3: Melhorar a extração de texto preservando ordem
+
+**Arquivo:** `src/lib/pdfCache.ts`
+
+O PDF.js pode retornar itens em ordem de renderização, não de leitura. Ordenar por posição Y (vertical) e X (horizontal):
+
+```text
+async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Promise<string> {
+  const page = await pdf.getPage(pageNum);
+  const textContent = await page.getTextContent();
+  
+  // Ordenar itens por posição Y (topo para baixo) e X (esquerda para direita)
+  const sortedItems = textContent.items
+    .filter((item: any) => item.str && item.str.trim())
+    .sort((a: any, b: any) => {
+      // Inverter Y porque PDF usa coordenadas de baixo para cima
+      const yDiff = b.transform[5] - a.transform[5];
+      if (Math.abs(yDiff) > 5) return yDiff; // Linhas diferentes
+      return a.transform[4] - b.transform[4]; // Mesma linha, ordenar por X
+    });
+  
+  const text = sortedItems.map((item: any) => item.str).join(' ');
+  page.cleanup();
+  return text;
+}
+```
+
+### Correção 4: Adicionar estratégia de fallback com CPF
+
+**Arquivo:** `src/lib/pdfUtils.ts`
+
+Se não encontrar nome, tentar extrair CPF como identificador alternativo:
+
+```text
+export function extractIdentifier(text: string): { name: string | null; cpf: string | null } {
+  const name = extractEmployeeName(text);
+  const cpf = extractCPF(text);
+  
+  return { name, cpf };
+}
 ```
 
 ---
 
 ## Arquivos a Modificar
 
-1. **`src/lib/pdfCache.ts`** - Otimizar configuração do PDF.js e processar páginas em paralelo
-2. **`src/hooks/useDocumentProcessor.ts`** - Extrair apenas primeira página dos holerites
-3. **`vite.config.ts`** - Configurar para copiar o worker para public (opcional, usar CDN local como fallback)
+1. **`src/lib/pdfUtils.ts`** - Melhorar padrões regex e normalização
+2. **`src/lib/pdfCache.ts`** - Ordenar texto por posição para preservar ordem de leitura
+3. **`src/hooks/useDocumentProcessor.ts`** - Adicionar logs de debug
 
 ---
 
-## Comparação de Performance
+## Nova Lógica de extractEmployeeName
 
-| Operação | Antes | Depois |
-|----------|-------|--------|
-| Carregamento do worker | 100-500ms (rede) | ~5ms (local) |
-| Extração de 10 páginas | ~10s (sequencial) | ~2s (paralelo) |
-| Vazamento de memória | Sim | Não (cleanup) |
-| CMaps | Não configurado | Configurado |
-
-**Ganho estimado: 5-10x mais rápido**
-
----
-
-## Detalhes Técnicos
-
-### Nova estrutura do getCachedPageTexts
+A função completa atualizada:
 
 ```text
-export async function getCachedPageTexts(
-  file: File,
-  shouldCancel?: () => boolean
-): Promise<string[]> {
-  const key = getFileKey(file);
-  
-  let pageTexts = pageTextCache.get(key);
-  if (pageTexts) {
-    return pageTexts; // Cache hit - retorno imediato
-  }
-  
-  const pdf = await getCachedPdf(file);
-  pageTexts = [];
-  
-  const PAGE_BATCH_SIZE = 5;
-  
-  // Processar em batches paralelos
-  for (let start = 1; start <= pdf.numPages; start += PAGE_BATCH_SIZE) {
-    if (shouldCancel?.()) break;
+export function extractEmployeeName(text: string): string | null {
+  // Normalizar texto: remover acentos e converter para maiúscula
+  const normalizedText = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/\s+/g, ' '); // Normalizar espaços múltiplos
+
+  // Padrões ordenados do mais específico ao mais genérico
+  const namePatterns = [
+    // 1. Labels explícitos brasileiros
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
     
-    const end = Math.min(start + PAGE_BATCH_SIZE, pdf.numPages + 1);
-    const pagePromises: Promise<string>[] = [];
+    // 2. Recibo de pagamento padrão
+    /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CARGO))/,
     
-    for (let i = start; i < end; i++) {
-      pagePromises.push(extractSinglePageText(pdf, i));
+    // 3. Nome imediatamente antes de CPF
+    /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
+    
+    // 4. Linha com nome completo isolado
+    /^([A-Z][A-Z\s]{8,40})$/m,
+  ];
+
+  for (const pattern of namePatterns) {
+    const match = normalizedText.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim().replace(/\s+/g, ' ');
+      const words = name.split(' ').filter(w => w.length > 1);
+      
+      // Validar: pelo menos 2 palavras, tamanho razoável
+      if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
+        // Remover palavras que claramente não são nomes
+        const invalidWords = ['CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO'];
+        const hasInvalidWord = words.some(w => invalidWords.includes(w));
+        if (!hasInvalidWord) {
+          return name;
+        }
+      }
     }
-    
-    const batchResults = await Promise.all(pagePromises);
-    pageTexts.push(...batchResults);
   }
-  
-  if (!shouldCancel?.()) {
-    pageTextCache.set(key, pageTexts);
-  }
-  
-  return pageTexts;
+
+  return null;
 }
-
-async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Promise<string> {
-  const page = await pdf.getPage(pageNum);
-  const textContent = await page.getTextContent();
-  const text = textContent.items.map((item: any) => item.str).join(' ');
-  page.cleanup(); // Liberar memória!
-  return text;
-}
-```
-
-### Extração otimizada de holerites (apenas página 1)
-
-```text
-// Em processHolerite:
-const cachedPdf = await getCachedPdf(holerite.file);
-
-// Extrair apenas primeira página (onde está o nome)
-const page = await cachedPdf.getPage(1);
-const textContent = await page.getTextContent();
-const text = textContent.items.map((item: any) => item.str).join(' ');
-page.cleanup();
-
-const extractedName = extractEmployeeName(text);
-```
-
----
-
-## Fallback para Worker
-
-Se não conseguir servir localmente, usar CDN com fallback:
-```text
-// Tentar local primeiro, fallback para CDN
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-
-// Se falhar, o PDF.js irá degradar graciosamente para modo sem worker
-// Alternativamente, usar jsDelivr que é geralmente mais rápido:
-// 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs'
 ```
 
 ---
 
 ## Resultado Esperado
 
-Após as otimizações:
-- Extração de nomes de 50 holerites: de ~60s para ~5-10s
-- Pré-extração de comprovantes: de ~120s para ~15-20s
-- Total para 50 funcionários: de ~3 minutos para ~30 segundos
-- Performance comparável ao script Python
+Após as correções:
+- Debug mostrará exatamente o texto extraído para identificar problemas
+- Padrões mais flexíveis reconhecerão mais formatos de documentos
+- Ordenação por posição preservará a leitura natural do documento
+- Taxa de sucesso na extração de nomes deve aumentar significativamente
