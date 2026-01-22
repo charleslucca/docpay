@@ -87,24 +87,50 @@ export async function getPdfPageCount(
 }
 
 export function extractEmployeeName(text: string): string | null {
-  // Common patterns for Brazilian payroll documents
+  // Normalizar texto: remover acentos e converter para maiúscula
+  const normalizedText = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/\s+/g, ' '); // Normalizar espaços múltiplos
+
+  console.log('[DEBUG] Texto normalizado (primeiros 300 chars):', normalizedText.substring(0, 300));
+
+  // Padrões ordenados do mais específico ao mais genérico
   const namePatterns = [
-    /(?:Nome|NOME|Funcionário|FUNCIONÁRIO|Empregado|EMPREGADO)[:\s]+([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][A-Za-záàâãéèêíïóôõöúçñ\s]+)/i,
-    /(?:RECIBO DE PAGAMENTO DE SALÁRIO)[^]*?([A-Z][A-Z\s]{5,40})(?:\s+(?:CPF|Cargo|Função|Admissão))/i,
+    // 1. Labels explícitos brasileiros
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
+    
+    // 2. Recibo de pagamento padrão
+    /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CARGO))/,
+    
+    // 3. Nome imediatamente antes de CPF
+    /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
+    
+    // 4. Linha com nome completo isolado
     /^([A-Z][A-Z\s]{8,40})$/m,
   ];
-  
+
   for (const pattern of namePatterns) {
-    const match = text.match(pattern);
+    const match = normalizedText.match(pattern);
     if (match && match[1]) {
-      const name = match[1].trim();
-      const words = name.split(/\s+/).filter(w => w.length > 1);
+      const name = match[1].trim().replace(/\s+/g, ' ');
+      const words = name.split(' ').filter(w => w.length > 1);
+      
+      // Validar: pelo menos 2 palavras, tamanho razoável
       if (words.length >= 2 && name.length >= 5 && name.length <= 60) {
-        return name.toUpperCase().trim();
+        // Remover palavras que claramente não são nomes
+        const invalidWords = ['CNPJ', 'CPF', 'CARGO', 'FUNCAO', 'ADMISSAO', 'SALARIO', 'EMPRESA', 'LTDA', 'EIRELI', 'SA'];
+        const hasInvalidWord = words.some(w => invalidWords.includes(w));
+        if (!hasInvalidWord) {
+          console.log('[DEBUG] Nome extraído:', name);
+          return name;
+        }
       }
     }
   }
-  
+
+  console.log('[DEBUG] Nenhum nome encontrado');
   return null;
 }
 
