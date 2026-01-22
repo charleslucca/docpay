@@ -9,6 +9,9 @@ export interface UploadedFile {
   pageNumber?: number;
   previewUrl?: string;
   error?: string;
+  // For multi-page PDF support - tracks source page in original PDF
+  sourcePageNumber?: number;
+  sourceFileName?: string;
 }
 
 export interface MatchedPair {
