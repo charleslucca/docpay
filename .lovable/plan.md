@@ -1,121 +1,192 @@
 
-# Correção: Suporte a PDFs Multi-Página e OCR nos Comprovantes
+# Plano: Mostrar Apenas 1 Holerite e Organizar Downloads por Ano/Mês
 
 ## Problemas Identificados
 
-### Problema 1: Só extrai 1 nome de 4
-O arquivo "RECIBO B SERVICE - Amostra2.pdf" contém **4 funcionários em páginas diferentes**, mas o sistema atual:
-- Faz OCR **apenas na página 1** (`renderPageForOCR(holerite.file, 1, 2.5)`)
-- Extrai um único nome por arquivo
-- Ignora as páginas 2, 3, 4...
+### Problema 1: Dois Holerites Empilhados
+O PDF de holerite da B SERVICE tem um layout de **2 vias por página** (cópia superior e cópia inferior idênticas). Quando o sistema embeda a página inteira, mostra as duas vias.
 
-### Problema 2: Busca nos comprovantes não funciona
-Os comprovantes também são **PDFs escaneados**, mas a função `getCachedPageTexts` usa extração de texto nativa (PDF.js), que retorna texto vazio para imagens. Por isso:
-- O `pageTexts` array contém strings vazias
-- A busca por nome nunca encontra correspondência
-- O processo demora porque está tentando extrair texto de imagens (sem sucesso)
+**Solução**: Recortar automaticamente a **metade superior** da página do holerite para mostrar apenas 1 via.
 
----
-
-## Arquitetura da Solução
-
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│          NOVO FLUXO: HOLERITES MULTI-PÁGINA                      │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Detectar número de páginas no PDF                           │
-│                         ↓                                        │
-│  2. Para CADA PÁGINA do PDF:                                     │
-│      a. Renderizar página como imagem                           │
-│      b. Executar OCR                                            │
-│      c. Extrair nome do funcionário                             │
-│      d. Criar "holerite virtual" com pageNumber                 │
-│                         ↓                                        │
-│  3. Retornar array de nomes (um por página com funcionário)     │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│          NOVO FLUXO: COMPROVANTES COM OCR                        │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Tentar extração de texto nativa (PDF.js)                    │
-│                         ↓                                        │
-│  2. Se texto vazio/pequeno → usar OCR no comprovante           │
-│                         ↓                                        │
-│  3. Cachear resultado (texto OCR ou nativo)                     │
-└─────────────────────────────────────────────────────────────────┘
-```
+### Problema 2: Organização dos Downloads
+O usuário quer que os downloads sejam organizados em pastas por ano e mês em português (ex: `2026/Janeiro/nome_funcionario.pdf`).
 
 ---
 
 ## Mudanças a Implementar
 
-### Mudança 1: Processar Todas as Páginas do Holerite
+### Mudança 1: Recortar Holerite para Metade Superior
+
+**Arquivo:** `src/lib/pdfUtils.ts`
+
+Modificar a função `createCombinedPdf` para:
+1. Embeder apenas a **metade superior** da página do holerite
+2. Usar `MediaBox` ou crop para cortar a página ao meio
+3. Manter o comprovante inteiro (já está correto)
+
+**Técnica com pdf-lib:**
+```text
+// Após embedar a página do holerite
+const holeriteOriginalHeight = holeritePage.height;
+
+// Desenhar apenas a metade superior (ajustar viewport)
+page.drawPage(holeritePage, {
+  x: margin + (availableWidth - holeriteWidth) / 2,
+  y: holeriteY,
+  width: holeriteWidth,
+  height: holeriteHeight,
+  // Recortar para mostrar apenas metade superior
+  xOffset: 0,
+  yOffset: holeriteOriginalHeight / 2, // Começar do meio
+});
+```
+
+Alternativamente, renderizar apenas a metade superior criando um clip:
+
+```text
+// Criar nova página apenas com a metade superior
+const croppedHoleritePdf = await PDFDocument.create();
+const [copiedPage] = await croppedHoleritePdf.copyPages(holeritePdf, [pageIndex]);
+
+// Ajustar MediaBox para metade superior
+const mediaBox = copiedPage.getMediaBox();
+copiedPage.setMediaBox(
+  mediaBox.x,
+  mediaBox.y + mediaBox.height / 2,  // Começar do meio
+  mediaBox.width,
+  mediaBox.height / 2  // Altura da metade
+);
+
+croppedHoleritePdf.addPage(copiedPage);
+```
+
+### Mudança 2: Atualizar Preview do Card
 
 **Arquivo:** `src/hooks/useDocumentProcessor.ts`
 
-Modificar `processHolerite` para:
-1. Obter número total de páginas do PDF
-2. Iterar sobre cada página
-3. Para cada página:
-   - Renderizar + OCR
-   - Extrair nome
-   - Se encontrou nome, criar entrada separada
-4. Retornar múltiplos "holerites virtuais" (um por funcionário encontrado)
+Modificar `renderPdfPageToImage` para também recortar a metade superior quando for preview de holerite:
+- Adicionar parâmetro opcional `cropToHalf: boolean`
+- Quando true, renderizar apenas metade superior do canvas
 
-**Pseudo-código:**
-```text
-const pdf = await getCachedPdf(file);
-const totalPages = pdf.numPages;
-
-for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-  const canvas = await renderPageForOCR(file, pageNum, 2.5);
-  const ocrText = await extractTextWithOCR(canvas);
-  const name = extractEmployeeName(ocrText);
-  
-  if (name) {
-    // Criar holerite virtual para esta página
-    extractedNames.push({ name, pageNumber: pageNum });
-  }
-}
-```
-
-### Mudança 2: OCR Fallback nos Comprovantes
-
-**Arquivo:** `src/lib/pdfCache.ts`
-
-Adicionar função `getCachedPageTextsWithOCR`:
-1. Primeiro, tenta extração nativa (rápida)
-2. Se texto extraído for muito curto (< 50 caracteres), usa OCR
-3. Cacheia o resultado
-
-**Nova função:**
-```text
-export async function getCachedPageTextsWithOCR(
-  file: File,
-  ocrExtractor: (canvas: HTMLCanvasElement) => Promise<string>,
-  shouldCancel?: () => boolean
-): Promise<string[]>
-```
-
-### Mudança 3: Atualizar Estrutura de Dados
+### Mudança 3: Organizar Downloads por Ano/Mês
 
 **Arquivo:** `src/types/document.ts`
 
-Adicionar campo `sourceFile` para holerites virtuais que vieram de um PDF multi-página:
-
+O `GeneratedDocument` já tem `year` e `month`. Adicionar path calculado:
 ```text
-export interface UploadedFile {
-  // ... campos existentes
-  sourcePageNumber?: number;  // Página de origem (para PDFs multi-página)
-  sourceFileName?: string;    // Nome do arquivo original
+folderPath: string; // Ex: "2026/Janeiro"
+```
+
+**Arquivo:** `src/components/DocumentRepository.tsx`
+
+Modificar `handleDownload` para incluir o caminho da pasta no nome do arquivo:
+```text
+// Ao invés de: nome_funcionario.pdf
+// Usar: 2026_Janeiro_nome_funcionario.pdf
+// Ou sugerir download com estrutura de pastas
+```
+
+**Arquivo:** `src/hooks/useDocumentProcessor.ts`
+
+Na função `generatePdfs`, calcular o nome do mês em português:
+```text
+const monthNames = ['Janeiro', 'Fevereiro', 'Março', ...];
+const monthName = monthNames[month - 1];
+const fileName = `${year}_${monthName}_${employeeName}.pdf`;
+// Ou: folderPath = `${year}/${monthName}/`
+```
+
+---
+
+## Detalhes Técnicos
+
+### Recorte de Página com pdf-lib
+
+A biblioteca `pdf-lib` permite recortar páginas de duas formas:
+
+**Opção A: Ajustar MediaBox antes de embedar**
+```typescript
+// Copiar página e ajustar bounds
+const holeritePdfDoc = await PDFDocument.load(holeriteBytes);
+const [page] = await holeritePdfDoc.getPages();
+const { height, width } = page.getSize();
+
+// Criar novo PDF com página recortada
+const croppedDoc = await PDFDocument.create();
+const [copiedPage] = await croppedDoc.copyPages(holeritePdfDoc, [holeritePageNumber - 1]);
+
+// Recortar para metade superior
+copiedPage.setCropBox(0, height / 2, width, height / 2);
+croppedDoc.addPage(copiedPage);
+
+// Agora embedar o documento recortado
+const [croppedHoleritePage] = await pdfDoc.embedPdf(croppedDoc);
+```
+
+**Opção B: Usar clipPath no desenho** (mais complexo)
+
+Usaremos a **Opção A** por ser mais simples e confiável.
+
+### Função Atualizada: `createCombinedPdf`
+
+```typescript
+export async function createCombinedPdf(
+  holeriteFile: File,
+  comprovanteFile: File,
+  comprovantePageNumber: number,
+  employeeName: string,
+  holeritePageNumber: number = 1,
+  cropHoleriteToHalf: boolean = true  // NOVO parâmetro
+): Promise<Blob> {
+  const pdfDoc = await PDFDocument.create();
+  
+  // A4 landscape dimensions
+  const pageWidth = 841.89;
+  const pageHeight = 595.28;
+  
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+  
+  const holeriteBytes = await getCachedBuffer(holeriteFile);
+  const comprovanteBytes = await getCachedBuffer(comprovanteFile);
+  
+  let holeritePdf = await PDFDocument.load(holeriteBytes.slice(0));
+  
+  // NOVO: Recortar holerite para metade superior se necessário
+  if (cropHoleriteToHalf) {
+    const originalPage = holeritePdf.getPage(holeritePageNumber - 1);
+    const { width, height } = originalPage.getSize();
+    
+    const croppedPdf = await PDFDocument.create();
+    const [copiedPage] = await croppedPdf.copyPages(holeritePdf, [holeritePageNumber - 1]);
+    
+    // Recortar para metade superior (a via do funcionário)
+    copiedPage.setCropBox(0, height / 2, width, height / 2);
+    croppedPdf.addPage(copiedPage);
+    
+    // Usar o PDF recortado
+    holeritePdf = croppedPdf;
+  }
+  
+  const [holeritePage] = await pdfDoc.embedPdf(holeritePdf, [0]);
+  // ... resto do código
 }
 ```
 
-### Mudança 4: Atualizar UI para Mostrar Página
+### Nomes de Arquivos com Ano/Mês
 
-**Arquivo:** `src/components/MatchedPairCard.tsx` (se existir)
+O arquivo gerado terá o nome no formato:
+```
+2025_Setembro_ANA_BEATRIZ_DIAS_PIRES.pdf
+```
 
-Mostrar "Página X de Y" quando o holerite vier de um PDF multi-página.
+E no repositório, será agrupado visualmente por:
+```
+📁 Setembro de 2025 (4 arquivos)
+   └── ANA BEATRIZ DIAS PIRES
+   └── CARLOS HENRIQUE DA SILVA MARIANO
+   └── MARIA JOSÉ DOS SANTOS
+   └── JOÃO PEDRO OLIVEIRA
+```
 
 ---
 
@@ -123,178 +194,48 @@ Mostrar "Página X de Y" quando o holerite vier de um PDF multi-página.
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Processar todas as páginas, criar holerites virtuais |
-| `src/lib/pdfCache.ts` | Adicionar `getCachedPageTextsWithOCR` com fallback OCR |
-| `src/types/document.ts` | Adicionar campos `sourcePageNumber` e `sourceFileName` |
-| `src/lib/ocrUtils.ts` | Nenhuma mudança necessária (já funciona) |
+| `src/lib/pdfUtils.ts` | Recortar holerite para metade superior na `createCombinedPdf` |
+| `src/lib/pdfUtils.ts` | Adicionar função `renderPdfPageToImage` com crop opcional |
+| `src/hooks/useDocumentProcessor.ts` | Passar crop=true para previews de holerite |
+| `src/hooks/useDocumentProcessor.ts` | Gerar fileName com ano e mês em português |
+| `src/types/document.ts` | Adicionar `monthName` ao GeneratedDocument (opcional) |
 
 ---
 
-## Fluxo Atualizado de Processamento
+## Resultado Visual Esperado
 
+### PDF Gerado (Após Correção)
 ```text
-ANTES:                               DEPOIS:
-┌─────────────────┐                  ┌─────────────────┐
-│ 1 arquivo PDF   │                  │ 1 arquivo PDF   │
-│ com 4 páginas   │                  │ com 4 páginas   │
-└────────┬────────┘                  └────────┬────────┘
-         │                                    │
-         ▼                                    ▼
-┌─────────────────┐                  ┌─────────────────┐
-│ OCR página 1    │                  │ OCR página 1    │──▶ Nome 1
-└────────┬────────┘                  ├─────────────────┤
-         │                           │ OCR página 2    │──▶ Nome 2
-         ▼                           ├─────────────────┤
-┌─────────────────┐                  │ OCR página 3    │──▶ Nome 3
-│ 1 nome extraído │                  ├─────────────────┤
-└─────────────────┘                  │ OCR página 4    │──▶ Nome 4
-                                     └─────────────────┘
-                                              │
-                                              ▼
-                                     ┌─────────────────┐
-                                     │ 4 nomes         │
-                                     │ extraídos       │
-                                     └─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Funcionário: ANA BEATRIZ DIAS PIRES      Gerado em: 22/01/2026 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌─────────────────┐           ┌─────────────────┐             │
+│   │   HOLERITE      │    →      │   COMPROVANTE   │             │
+│   │   (1 via só)    │           │   SICREDI       │             │
+│   │                 │           │                 │             │
+│   │   ANA BEATRIZ   │           │   ANA BEATRIZ   │             │
+│   │   R$ 1.746,29   │           │   R$ 1.746,29   │             │
+│   │                 │           │                 │             │
+│   └─────────────────┘           └─────────────────┘             │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## Detalhes Técnicos
-
-### Processamento Multi-Página (useDocumentProcessor.ts)
-
-A função `processHolerite` será refatorada para retornar um **array de holerites**:
-
-```typescript
-// Novo tipo para resultado do processamento
-interface ProcessedHoleriteResult {
-  originalFile: UploadedFile;
-  extractedEntries: Array<{
-    name: string;
-    pageNumber: number;
-  }>;
-}
-
-const processHolerite = async (
-  holerite: UploadedFile, 
-  index: number
-): Promise<ProcessedHoleriteResult> => {
-  const pdf = await getCachedPdf(holerite.file);
-  const totalPages = pdf.numPages;
-  const extractedEntries: Array<{ name: string; pageNumber: number }> = [];
-  
-  console.log(`[OCR] Processando ${holerite.name}: ${totalPages} página(s)`);
-  
-  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-    if (cancelledRef.current) break;
-    
-    setStatus(prev => ({
-      ...prev,
-      message: `OCR em ${holerite.name} (pág. ${pageNum}/${totalPages})...`,
-    }));
-    
-    const canvas = await renderPageForOCR(holerite.file, pageNum, 2.5);
-    const ocrText = await extractTextWithOCR(canvas, (progress) => {
-      setStatus(prev => ({ ...prev, ocrProgress: progress }));
-    });
-    
-    const extractedName = extractEmployeeName(ocrText);
-    
-    if (extractedName) {
-      console.log(`[OCR] Página ${pageNum}: "${extractedName}"`);
-      extractedEntries.push({ name: extractedName, pageNumber: pageNum });
-    }
-  }
-  
-  return { originalFile: holerite, extractedEntries };
-};
-```
-
-### OCR Fallback nos Comprovantes (pdfCache.ts)
-
-```typescript
-// Constante para detectar texto vazio/ruim
-const MIN_TEXT_LENGTH = 50;
-
-export async function getCachedPageTextsWithOCR(
-  file: File,
-  ocrExtractor: (canvas: HTMLCanvasElement) => Promise<string>,
-  shouldCancel?: () => boolean
-): Promise<string[]> {
-  const key = getFileKey(file);
-  
-  // Verificar cache
-  const cachedTexts = pageTextCache.get(key);
-  if (cachedTexts) {
-    updateAccessOrder(key);
-    return cachedTexts;
-  }
-  
-  const pdf = await getCachedPdf(file);
-  const pageTexts: string[] = [];
-  
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    if (shouldCancel?.()) break;
-    
-    // 1. Tentar extração nativa primeiro
-    let text = await extractSinglePageText(pdf, pageNum);
-    
-    // 2. Se texto muito curto, usar OCR
-    if (text.trim().length < MIN_TEXT_LENGTH) {
-      console.log(`[Comprovante] Página ${pageNum}: texto nativo muito curto, usando OCR...`);
-      const canvas = await renderPageForOCR(file, pageNum, 2.0); // escala menor para comprovantes
-      text = await ocrExtractor(canvas);
-    }
-    
-    pageTexts.push(text);
-  }
-  
-  // Cachear resultado
-  if (!shouldCancel?.()) {
-    pageTextCache.set(key, pageTexts);
-  }
-  
-  updateAccessOrder(key);
-  return pageTexts;
-}
-```
-
----
-
-## Estimativa de Performance
-
-| Cenário | Tempo Estimado |
-|---------|----------------|
-| Holerite 4 páginas (OCR) | ~8-16 segundos |
-| Comprovante 10 páginas (OCR fallback) | ~20-40 segundos |
-| Total para 4 funcionários | ~30-60 segundos |
-
----
-
-## Mensagens de Feedback Atualizadas
-
-Durante o processamento, o usuário verá:
-
+### Estrutura de Downloads
 ```text
-"OCR em RECIBO B SERVICE.pdf (pág. 1/4)..."
-"OCR em RECIBO B SERVICE.pdf (pág. 2/4)..."
-"OCR em RECIBO B SERVICE.pdf (pág. 3/4)..."
-"OCR em RECIBO B SERVICE.pdf (pág. 4/4)..."
-"4 funcionários encontrados no holerite"
-
-"Extraindo texto do comprovante SICREDI.pdf..."
-"Página 3: texto vazio, usando OCR..."
-"Buscando correspondências..."
-"4 correspondência(s) encontrada(s)"
+Downloads/
+├── 2025_Setembro_ANA_BEATRIZ_DIAS_PIRES.pdf
+├── 2025_Setembro_CARLOS_HENRIQUE.pdf
+└── 2025_Outubro_MARIA_JOSE.pdf
 ```
 
 ---
 
-## Resultado Esperado
+## Considerações
 
-Após implementação:
-1. Um PDF com 4 funcionários gerará 4 entradas de holerite (uma por página)
-2. Os comprovantes escaneados serão processados com OCR quando necessário
-3. A busca encontrará correspondências corretamente
-4. O progresso mostrará página atual / total
-5. Todos os 4 nomes aparecerão como matches
+1. **Crop 50%**: Assumindo que o layout padrão da B SERVICE é sempre 2 vias por página. Se houver variações, podemos adicionar detecção automática ou opção manual.
+
+2. **Compatibilidade**: O recorte via `setCropBox` é suportado pela pdf-lib e mantém a qualidade original do PDF.
+
+3. **Performance**: O recorte é feito em memória, sem re-renderização - mantém a velocidade atual.
