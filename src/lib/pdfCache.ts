@@ -283,7 +283,7 @@ export async function getCachedPageTextsWithOCR(
   
   // STEP 2: Process OCR pages in parallel batches (if any)
   if (pagesNeedingOcr.length > 0) {
-    onProgress?.(0, totalPages, true);
+    onProgress?.(nativeCount, totalPages, true);
     
     // Process OCR in batches to avoid memory issues
     const OCR_BATCH_SIZE = 4; // Process 4 pages at a time
@@ -294,10 +294,15 @@ export async function getCachedPageTextsWithOCR(
       
       const batch = pagesNeedingOcr.slice(i, i + OCR_BATCH_SIZE);
       
-      // Render and OCR batch in parallel
+      // Render and OCR batch in parallel, update progress per page (not per batch)
       const batchPromises = batch.map(async (pageNum) => {
         const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_HIGH, true);
         const text = await ocrExtractor(canvas);
+        
+        // Update progress immediately after each page (granular feedback)
+        ocrCompleted++;
+        onProgress?.(nativeCount + ocrCompleted, totalPages, true);
+        
         return { pageNum, text };
       });
       
@@ -305,10 +310,7 @@ export async function getCachedPageTextsWithOCR(
       
       for (const { pageNum, text } of batchResults) {
         pageTexts[pageNum - 1] = text;
-        ocrCompleted++;
       }
-      
-      onProgress?.(nativeCount + ocrCompleted, totalPages, true);
       
       // Small pause between batches for UI responsiveness
       if (i + OCR_BATCH_SIZE < pagesNeedingOcr.length) {
