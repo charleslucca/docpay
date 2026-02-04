@@ -813,7 +813,13 @@ export function useDocumentProcessor() {
     }
 
     // Step 3: MEMORY-ONLY matching with COOPERATIVE loop (no UI freeze)
-    setStatus({ step: 'matching', progress: 60, message: 'Buscando correspondências em memória...' });
+    setStatus({ 
+      step: 'matching', 
+      progress: 60, 
+      message: 'Buscando correspondências em memória...', 
+      matchesFound: 0,
+      totalToMatch: allHoleriteEntries.length,
+    });
 
     const pairs: MatchedPair[] = [];
     const matchedEntryKeys = new Set<string>(); // Track matched entries by "holeriteId_pageNumber"
@@ -879,7 +885,7 @@ export function useDocumentProcessor() {
           if (cancelledRef.current) break matchingLoop;
         }
         
-        // Throttled status updates
+        // Throttled status updates with match count
         const now = Date.now();
         if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL_MS) {
           lastStatusUpdate = now;
@@ -888,6 +894,8 @@ export function useDocumentProcessor() {
             ...prev,
             progress: Math.min(90, progress),
             message: `Matching comprovante ${compIdx + 1}/${totalComprovantes} - funcionário ${entryIdx + 1}/${totalEntries}...`,
+            matchesFound: pairs.length,
+            totalToMatch: totalEntries,
           }));
         }
         

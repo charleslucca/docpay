@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText, Cpu } from 'lucide-react';
+import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText, Cpu, Link2 } from 'lucide-react';
 import { ProcessingStatus as ProcessingStatusType } from '@/types/document';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -161,6 +161,28 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
             )}
           </div>
           <Progress value={status.ocrProgress} className="h-1.5 bg-primary/20" />
+        </motion.div>
+      )}
+
+      {/* Matches found indicator during matching */}
+      {status.step === 'matching' && status.matchesFound !== undefined && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="mt-3 flex items-center justify-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20"
+        >
+          <div className="flex items-center gap-2">
+            <Link2 className="h-5 w-5 text-primary" />
+            <span className="text-lg font-bold text-primary">{status.matchesFound}</span>
+          </div>
+          <span className="text-sm text-muted-foreground">
+            correspondência{status.matchesFound !== 1 ? 's' : ''} encontrada{status.matchesFound !== 1 ? 's' : ''}
+            {status.totalToMatch !== undefined && (
+              <span className="text-xs ml-1">
+                (de {status.totalToMatch} funcionário{status.totalToMatch !== 1 ? 's' : ''})
+              </span>
+            )}
+          </span>
         </motion.div>
       )}
 

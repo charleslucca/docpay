@@ -55,4 +55,7 @@ export interface ProcessingStatus {
   isOcrActive?: boolean;
   // Persistence tracking
   isSaving?: boolean;
+  // Matching progress tracking
+  matchesFound?: number;
+  totalToMatch?: number;
 }
