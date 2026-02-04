@@ -73,7 +73,7 @@ export async function initOcrScheduler(): Promise<Scheduler> {
         const worker = await createWorker('por', 1, {
           workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
           corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js',
-          langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
+          langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast',
         });
         console.log(`[OCR] Worker ${idx + 1}/${WORKER_COUNT} ready`);
         return worker;
