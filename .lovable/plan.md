@@ -1,118 +1,162 @@
 
+## O que está acontecendo (com base no print)
+Pelo print, não parece que o app “travou” no matching; ele **concluiu o matching com 0 correspondências**:
+
+- Título da etapa: “Buscando correspondências” (rótulo fixo da etapa `matching`)
+- Mensagem logo abaixo: “0 correspondência(s) encontrada(s)”
+- Barra em 100%
+
+Hoje, quando dá **0 matches**, o fluxo fica “sem saída” porque:
+- não aparece o botão “Gerar PDFs” (depende de `matchedPairs.length > 0`)
+- o status permanece em `matching` com `progress: 100`
+Isso passa a impressão de travamento, mas na prática é “processo terminou e não achou ninguém”.
+
+O problema real, então, é: **o texto extraído do comprovante (OCR/nativo) não está trazendo nomes utilizáveis** ou o matching não está conseguindo localizar os nomes no texto extraído.
+
+---
+
 ## Objetivo
-Destravar a etapa **“match / Buscando correspondências em memória…”** após o OCR do recibo, evitando que o navegador fique “congelado” e reduzindo drasticamente o tempo de matching.
+1) Parar de deixar o usuário “preso” quando o resultado é 0 matches (UX/feedback).  
+2) Adicionar diagnóstico simples e confiável para confirmar se o OCR está vindo vazio/fraco.  
+3) Melhorar a robustez do OCR para comprovantes: **auto-retry** em páginas com texto muito curto + opção de “OCR reforçado” (maior escala/timeout) sem precisar recomeçar do zero.
 
 ---
 
-## Diagnóstico (causa mais provável)
-Hoje o matching faz um “triplo loop” totalmente **CPU-bound** (sem `await` dentro):
+## Diagnóstico técnico provável
+### A) OCR “termina”, mas retorna texto vazio em várias páginas
+Atualmente `extractTextWithOCR()` faz timeout em 30s e, em erro, **retorna string vazia** (`''`) silenciosamente.  
+Isso permite o pipeline seguir normalmente, mas o matching não acha nada.
 
-- Para cada **comprovante**  
-  - Para cada **funcionário extraído dos holerites**  
-    - Para cada **página do comprovante (70 páginas)**  
-      - chama `findNameInPage(pageText, entry.name)`
-
-E `findNameInPage` atualmente:
-- normaliza **o texto inteiro da página** (`normalize(pageText)`) *toda vez*  
-- faz `split` em palavras *toda vez*  
-- pode calcular Levenshtein em vários pares de palavras
-
-Isso explode o custo (ex.: 1 comprovante * 70 funcionários * 70 páginas = 4900 chamadas), e como é tudo síncrono no main-thread, a UI aparenta travada no “match”.
+### B) O comprovante é “difícil” (texto pequeno/baixa qualidade)
+O comprovante usa `OCR_SCALE_HIGH = 2.0`. Em alguns PDFs escaneados com fonte pequena, isso pode produzir OCR fraco.  
+Sem retry, várias páginas podem ficar com texto curto.
 
 ---
 
-## Correção proposta (alto impacto, baixo risco)
-### A) Pré-processar os textos do comprovante (uma única vez por página)
-Em vez de normalizar e tokenizar a mesma página 70 vezes, vamos preparar cada página 1x:
+## Solução (implementação)
+### 1) Adicionar “Resumo de qualidade do OCR” e sinalização quando 0 matches
+**Mudanças:**
+- Estender `ProcessingStatus` (type) com métricas do comprovante, por exemplo:
+  - `ocrPagesTotal?: number`
+  - `ocrPagesNeedingOcr?: number`
+  - `ocrPagesEmptyOrShort?: number` (ex.: texto < 30–50 chars)
+  - `ocrTimeoutCount?: number`
+  - `ocrRetryCount?: number`
+- Exibir no UI (em `ProcessingStatus.tsx`) um bloco informativo quando `status.step === 'matching' && status.progress === 100 && matchesFound === 0`:
+  - “Nenhuma correspondência encontrada. Isso normalmente acontece quando o OCR retornou pouco texto ou quando os nomes não aparecem no comprovante.”
+  - Mostrar métricas: “OCR: X/Y páginas | Páginas com texto curto: Z | Timeouts: W | Retries: R”
+  - Mostrar CTA: **“Reprocessar comprovante com OCR reforçado”** e **“Reiniciar”**.
 
-- `normalizedPage` (string normalizada)
-- `pageWords` (lista de palavras)
-- `pageWordSet` (Set para match exato)
-- `pageWordsByLength` (Map para reduzir candidatos no fuzzy)
+**Arquivos:**
+- `src/types/document.ts`
+- `src/components/ProcessingStatus.tsx`
+- `src/pages/Index.tsx` (para exibir botões/ações extras quando 0 matches, se necessário)
 
-Isso reduz o trabalho de “normalização de página” de **4900x** para **70x**.
-
-### B) Pré-processar os nomes dos holerites (uma única vez por funcionário)
-Preparar `normalizedTarget`, `targetWords`, `firstName`, `lastName` uma única vez por entrada.
-
-### C) Fazer o loop de matching “cooperativo” (não travar UI)
-Adicionar “yields” no matching (ex.: a cada 200–500 comparações):
-- `await pauseBetweenBatches()` (já existe e usa `requestIdleCallback` quando possível)
-
-Além disso, atualizar o status de forma **throttled** (ex.: no máximo 4x/seg) para não gerar re-render excessivo.
-
-### D) Reduzir logs no match
-Os `console.log('[Match] ...')` dentro de `findNameInPage` podem gerar volume alto em caso de falso positivo. Vamos colocar logs atrás de um `DEBUG_MATCH = false` (ou remover logs).
-
----
-
-## Mudanças de código (arquivos)
-### 1) `src/lib/pdfUtils.ts` — separar “preparo” e “match”
-Adicionar:
-- `normalizeForMatch(text: string): string`
-- `preparePageForMatch(pageText: string): PreparedPage`
-- `prepareTargetNameForMatch(name: string): PreparedTarget`
-- `findNameInPreparedPage(preparedPage, preparedTarget): boolean`
-
-Manter `findNameInPage(pageText, targetName)` como wrapper para compatibilidade (chamando as funções novas), mas o matching principal vai usar as versões “prepared”.
-
-**Otimizações dentro do fuzzy:**
-- usar `pageWordSet` para match exato sem loop
-- buscar candidatos só em buckets de tamanho `len ± maxErrors` antes de calcular Levenshtein
-- early-exit: se já atingiu `requiredMatches`, retorna; se não há como atingir (restante insuficiente), encerra
-
-### 2) `src/hooks/useDocumentProcessor.ts` — refatorar etapa “Step 3: matching”
-Alterar o mapa `comprovanteTextsMap` para armazenar também o pré-processado:
-- `pageTexts` (opcional, para debug)
-- `preparedPages: PreparedPage[]`
-
-Fluxo:
-1. Após `getCachedPageTextsWithOCR`, construir `preparedPages = pageTexts.map(preparePageForMatch)`
-2. Preparar todas as entradas de holerite uma vez:
-   - `preparedEntries = allHoleriteEntries.map(e => ({...e, prepared: prepareTargetNameForMatch(e.name)}))`
-3. Matching usando `findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)`
-
-**Não travar UI:**
-- adicionar contador `comparisons`
-- a cada `YIELD_EVERY = 250` comparações: `await pauseBetweenBatches()`
-- atualizar status com throttle:
-  - mensagem: `Matching comprovante X/Y - funcionário A/B - página p/q`
-  - progresso: de 60 → 90 baseado em `(comprovanteIndex + entryIndex/entriesTotal) / comprovantesTotal`
-
-**Atalho opcional simples (sem mudar a regra de negócio):**
-- se `matchedEntryKeys.size === allHoleriteEntries.length`, parar o matching (já achou todos)
-
-### 3) (Opcional) Timeout de segurança do matching
-Assim como no OCR, adicionar um limite (ex.: 5 minutos) para evitar loop “parecendo infinito” em edge cases:
-- se exceder: abortar matching e mostrar toast/erro com instrução “tente novamente / reduza lote / verifique OCR”.
+**Critério de aceite:**
+- Ao terminar com 0 matches, o usuário vê claramente que “terminou, mas não encontrou”, e vê o porquê provável + ação de correção.
 
 ---
 
-## Critérios de aceite (o que deve melhorar)
-1. Ao entrar em “Buscando correspondências…”, a UI **continua atualizando** (mensagem e barra de progresso se movem).
-2. Para 70 páginas, o matching deixa de “congelar” e passa a:
-   - concluir em tempo significativamente menor (normalmente segundos a dezenas de segundos, dependendo do texto)
-   - permitir cancelar imediatamente (botão de cancelar responde)
-3. Sem spam de logs de match.
+### 2) Tornar OCR observável: retornar metadados (timeout/retry/len)
+Hoje `extractTextWithOCR` retorna só `string`. Vamos mudar para **retornar também o status** (sem expor conteúdo sensível; apenas métricas).
+
+**Proposta:**
+- Criar um tipo:
+  ```ts
+  export type OcrPageResult = {
+    text: string;
+    timedOut: boolean;
+    durationMs: number;
+    confidence?: number;
+  };
+  ```
+- `extractTextWithOCR(...)` passa a retornar `OcrPageResult` (ou criar uma nova função `extractTextWithOCRResult` e manter a antiga para compatibilidade).
+
+**Arquivos:**
+- `src/lib/ocrUtils.ts`
+
+**Critério de aceite:**
+- Conseguimos contar timeouts e medir duração real de OCR por página.
 
 ---
 
-## Plano de implementação (passo a passo)
-1. Ler e ajustar `findNameInPage` em `pdfUtils.ts` para extrair normalização/tokenização e criar as funções “prepare”.
-2. Implementar `findNameInPreparedPage` com as mesmas 4 camadas (exato / primeiro+último / fuzzy / substring), mas usando dados pré-processados e buckets.
-3. Refatorar a etapa de matching em `useDocumentProcessor.ts` para:
-   - preparar páginas do comprovante 1x
-   - preparar nomes 1x
-   - inserir `await pauseBetweenBatches()` periodicamente
-   - inserir updates de status throttled
-4. Testar com:
-   - comprovante 70 páginas (escaneado)
-   - lote pequeno (poucos holerites) para garantir que não “pare” no match
-5. Se ainda estiver lento: avaliar “indexação” por tokens (map de palavra → lista de entries) ou mover matching para Web Worker (plano B).
+### 3) Auto-retry no comprovante quando OCR vier “curto”
+No `getCachedPageTextsWithOCR` (comprovantes), implementar:
+- após OCR de uma página, se `text.trim().length < MIN_ACCEPTABLE_OCR_TEXT` (ex.: 40):
+  - **retry 1x** com:
+    - escala maior (ex.: 2.6 ou 3.0)
+    - (opcional) timeout maior (ex.: 45s)
+    - possivelmente sem grayscale (em alguns casos ajuda, mas é trade-off; podemos manter grayscale no 1º e desativar só no retry)
+
+Isso melhora muito casos onde escala 2.0 não basta.
+
+**Como encaixar sem quebrar o fluxo:**
+- Ajustar `getCachedPageTextsWithOCR` para aceitar um objeto de opções, por exemplo:
+  ```ts
+  type OcrOptions = {
+    minAcceptableTextLen?: number;
+    scalePrimary?: number;
+    scaleRetry?: number;
+    timeoutPrimaryMs?: number;
+    timeoutRetryMs?: number;
+    retryOnceIfShort?: boolean;
+  };
+  ```
+- Na extração de comprovantes (em `useDocumentProcessor`), quando estiver processando comprovantes grandes ou quando o usuário clicar “OCR reforçado”, usar opções mais agressivas.
+
+**Arquivos:**
+- `src/lib/pdfCache.ts`
+- `src/hooks/useDocumentProcessor.ts`
+
+**Critério de aceite:**
+- PDFs escaneados com texto pequeno passam a produzir texto suficiente para matching em mais páginas (reduz “0 matches” falsos).
+- Métricas refletem “retries”.
 
 ---
 
-## Riscos / trade-offs
-- Pré-processar páginas cria estruturas em memória (Set/Map). Para ~70 páginas é aceitável; para centenas, pode crescer. Vamos manter estruturas enxutas e, se necessário, usar apenas `normalizedPage` + `pageWordsByLength`.
-- Throttle de status evita re-render excessivo; sem throttle pode ficar mais lento do que o ganho do matching.
+### 4) Botão “Reprocessar comprovante com OCR reforçado” (sem precisar reupar)
+Adicionar uma ação no hook:
+- `reprocessComprovantesEnhancedOcr()`:
+  - limpar caches relevantes:
+    - `clearCache()` (pdfCache) e `clearOcrCache()` (ocrUtils)
+    - opcional: `terminateOcrWorker()` para recriar pool “limpo”
+  - rodar novamente o pipeline (pelo menos comprovantes + matching; ou tudo, mas mantendo holerites já carregados)
+  - setar um flag interno `enhancedOcrMode` para usar `scaleRetry/timeoutRetry` mais altos
+
+**Arquivos:**
+- `src/hooks/useDocumentProcessor.ts`
+- `src/lib/pdfCache.ts`
+- `src/lib/ocrUtils.ts`
+- `src/pages/Index.tsx` / `src/components/ProcessingStatus.tsx` (botão)
+
+**Critério de aceite:**
+- Após 0 matches, um clique reprocessa com OCR mais forte e tenta novamente achar correspondências.
+
+---
+
+## Observações de performance e segurança (privacy)
+- Continuamos 100% client-side (sem serviços externos de OCR além de baixar os assets do Tesseract, como já ocorre hoje).
+- O retry só acontece em páginas “curtas”, evitando explosão de tempo.
+- Mantemos cancelamento funcionando (checar `cancelledRef.current` também durante retries).
+
+---
+
+## Plano de testes (manual)
+1) Reproduzir com o mesmo PDF de comprovante (70 páginas):
+   - confirmar que, se der 0 matches, aparece o painel “Nenhuma correspondência” + métricas + botão de reprocessar.
+2) Clicar “Reprocessar com OCR reforçado”:
+   - verificar que o processamento reinicia e a UI atualiza progresso.
+3) Validar que o matching passa a encontrar matches (se o comprovante realmente contiver os mesmos funcionários dos holerites).
+4) Testar cancelamento durante OCR e durante retry (não deve travar).
+5) Testar em PC mais fraco (2–4 cores) para garantir que o retry não derruba o navegador.
+
+---
+
+## Arquivos que serão alterados
+- `src/types/document.ts` (novas métricas de OCR no status)
+- `src/lib/ocrUtils.ts` (retornar metadados e permitir timeout configurável)
+- `src/lib/pdfCache.ts` (retry de OCR quando texto curto + opções)
+- `src/hooks/useDocumentProcessor.ts` (coletar métricas, ligar enhanced mode, ação de reprocessar)
+- `src/components/ProcessingStatus.tsx` (mostrar métricas + CTA quando 0 matches)
+- (se necessário) `src/pages/Index.tsx` (expor o botão de reprocesso em local apropriado)
 
