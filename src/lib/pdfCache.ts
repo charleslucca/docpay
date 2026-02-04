@@ -231,6 +231,7 @@ export async function renderPageForOCR(
 
 /**
  * Get page texts with OCR fallback for scanned PDFs
+ * OPTIMIZED: Uses parallel pipeline similar to holerite processing
  * First attempts native text extraction, falls back to OCR if text is too short
  */
 export async function getCachedPageTextsWithOCR(
@@ -249,37 +250,83 @@ export async function getCachedPageTextsWithOCR(
   }
   
   const pdf = await getCachedPdf(file);
-  const pageTexts: string[] = [];
+  const totalPages = pdf.numPages;
+  const pageTexts: (string | null)[] = new Array(totalPages).fill(null);
   
-  console.log(`[Comprovante] Processing ${file.name}: ${pdf.numPages} page(s)`);
+  console.log(`[Comprovante] Processing ${file.name}: ${totalPages} page(s) with PARALLEL pipeline`);
   
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+  // STEP 1: Try native text extraction for ALL pages in parallel (very fast)
+  const nativeTextPromises: Promise<{ pageNum: number; text: string }>[] = [];
+  
+  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     if (shouldCancel?.()) break;
+    nativeTextPromises.push(
+      extractSinglePageText(pdf, pageNum).then(text => ({ pageNum, text }))
+    );
+  }
+  
+  const nativeResults = await Promise.all(nativeTextPromises);
+  
+  // Identify pages that need OCR
+  const pagesNeedingOcr: number[] = [];
+  
+  for (const { pageNum, text } of nativeResults) {
+    if (text.trim().length >= MIN_TEXT_LENGTH_FOR_OCR) {
+      pageTexts[pageNum - 1] = text;
+    } else {
+      pagesNeedingOcr.push(pageNum);
+    }
+  }
+  
+  const nativeCount = totalPages - pagesNeedingOcr.length;
+  console.log(`[Comprovante] Native extraction: ${nativeCount}/${totalPages} pages OK, ${pagesNeedingOcr.length} need OCR`);
+  
+  // STEP 2: Process OCR pages in parallel batches (if any)
+  if (pagesNeedingOcr.length > 0) {
+    onProgress?.(0, totalPages, true);
     
-    onProgress?.(pageNum, pdf.numPages, false);
+    // Process OCR in batches to avoid memory issues
+    const OCR_BATCH_SIZE = 4; // Process 4 pages at a time
+    let ocrCompleted = 0;
     
-    // 1. Try native text extraction first (fast)
-    let text = await extractSinglePageText(pdf, pageNum);
-    
-    // 2. If text is too short, use OCR fallback
-    if (text.trim().length < MIN_TEXT_LENGTH_FOR_OCR) {
-      console.log(`[Comprovante] Page ${pageNum}: native text too short (${text.trim().length} chars), using OCR...`);
-      onProgress?.(pageNum, pdf.numPages, true);
+    for (let i = 0; i < pagesNeedingOcr.length; i += OCR_BATCH_SIZE) {
+      if (shouldCancel?.()) break;
       
-      const canvas = await renderPageForOCR(file, pageNum, 2.0); // Lower scale for faster OCR
-      text = await ocrExtractor(canvas);
+      const batch = pagesNeedingOcr.slice(i, i + OCR_BATCH_SIZE);
       
-      console.log(`[Comprovante] Page ${pageNum}: OCR extracted ${text.length} chars`);
+      // Render and OCR batch in parallel
+      const batchPromises = batch.map(async (pageNum) => {
+        const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_HIGH, true);
+        const text = await ocrExtractor(canvas);
+        return { pageNum, text };
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      
+      for (const { pageNum, text } of batchResults) {
+        pageTexts[pageNum - 1] = text;
+        ocrCompleted++;
+      }
+      
+      onProgress?.(nativeCount + ocrCompleted, totalPages, true);
+      
+      // Small pause between batches for UI responsiveness
+      if (i + OCR_BATCH_SIZE < pagesNeedingOcr.length) {
+        await new Promise(r => setTimeout(r, 10));
+      }
     }
     
-    pageTexts.push(text);
+    console.log(`[Comprovante] OCR complete: ${ocrCompleted} pages processed`);
   }
+  
+  // Convert to string array (null should not exist at this point)
+  const result = pageTexts.map((t, idx) => t ?? `[Empty page ${idx + 1}]`);
   
   // Cache result if not cancelled
   if (!shouldCancel?.()) {
-    pageTextCache.set(key, pageTexts);
+    pageTextCache.set(key, result);
   }
   
   updateAccessOrder(key);
-  return pageTexts;
+  return result;
 }
