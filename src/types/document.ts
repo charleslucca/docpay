@@ -53,4 +53,6 @@ export interface ProcessingStatus {
   // OCR progress tracking
   ocrProgress?: number; // 0-100 during OCR recognition
   isOcrActive?: boolean;
+  // Persistence tracking
+  isSaving?: boolean;
 }
