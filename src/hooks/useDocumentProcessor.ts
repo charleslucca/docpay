@@ -5,6 +5,11 @@ import {
   findNameInPage,
   renderPdfPageToImage,
   createCombinedPdf,
+  preparePageForMatch,
+  prepareTargetNameForMatch,
+  findNameInPreparedPage,
+  type PreparedPage,
+  type PreparedTarget,
 } from '@/lib/pdfUtils';
 import { getCachedPdf, getCachedPageTextsWithOCR, renderPageForOCR, clearCache, OCR_SCALE_FAST } from '@/lib/pdfCache';
 import { extractTextWithOCR, extractTextBatch, terminateOcrWorker, getWorkerCount, getOcrCacheKey, getCachedOcrResult, setCachedOcrResult } from '@/lib/ocrUtils';
@@ -711,8 +716,8 @@ export function useDocumentProcessor() {
     // Step 2: PRE-EXTRACT all comprovante texts in PARALLEL (like Python script)
     setStatus({ step: 'matching', progress: 40, message: 'Pré-extraindo textos dos comprovantes...' });
 
-    // Create a map: comprovante.id -> { file, pageTexts: string[] }
-    const comprovanteTextsMap = new Map<string, { file: File; pageTexts: string[] }>();
+    // Create a map: comprovante.id -> { file, pageTexts: string[], preparedPages: PreparedPage[] }
+    const comprovanteTextsMap = new Map<string, { file: File; pageTexts: string[]; preparedPages: PreparedPage[] }>();
 
     const preExtractComprovante = async (comprovante: UploadedFile, index: number) => {
       if (cancelledRef.current) {
@@ -760,7 +765,9 @@ export function useDocumentProcessor() {
         // Don't store if cancelled
         if (cancelledRef.current) return;
         
-        comprovanteTextsMap.set(comprovante.id, { file: comprovante.file, pageTexts });
+        // Pre-process pages for fast matching (done ONCE per page)
+        const preparedPages = pageTexts.map(preparePageForMatch);
+        comprovanteTextsMap.set(comprovante.id, { file: comprovante.file, pageTexts, preparedPages });
         
         setComprovantes((prev) =>
           prev.map((c) =>
@@ -805,33 +812,92 @@ export function useDocumentProcessor() {
       return;
     }
 
-    // Step 3: MEMORY-ONLY matching (no I/O, just string comparisons)
+    // Step 3: MEMORY-ONLY matching with COOPERATIVE loop (no UI freeze)
     setStatus({ step: 'matching', progress: 60, message: 'Buscando correspondências em memória...' });
 
     const pairs: MatchedPair[] = [];
     const matchedEntryKeys = new Set<string>(); // Track matched entries by "holeriteId_pageNumber"
 
-    // Pure CPU matching - no file access!
-    matchingLoop: for (const comprovante of comprovanteList) {
-      // Check cancellation at start of each comprovante
+    // Pre-process all employee names ONCE (huge optimization)
+    interface PreparedEntry extends HoleriteEntry {
+      prepared: PreparedTarget;
+    }
+    const preparedEntries: PreparedEntry[] = allHoleriteEntries.map(entry => ({
+      ...entry,
+      prepared: prepareTargetNameForMatch(entry.name),
+    }));
+
+    // Cooperative matching with yields and throttled progress
+    const YIELD_EVERY = 250; // Yield to UI every 250 comparisons
+    const STATUS_UPDATE_INTERVAL_MS = 250; // Max 4 updates per second
+    let comparisons = 0;
+    let lastStatusUpdate = Date.now();
+    
+    const totalComprovantes = comprovanteList.length;
+    const totalEntries = preparedEntries.length;
+    
+    // Timeout protection (5 minutes max for matching)
+    const matchStartTime = Date.now();
+    const MATCH_TIMEOUT_MS = 300000;
+
+    matchingLoop: for (let compIdx = 0; compIdx < totalComprovantes; compIdx++) {
+      const comprovante = comprovanteList[compIdx];
+      
+      // Check cancellation and timeout
       if (cancelledRef.current) break matchingLoop;
+      if (Date.now() - matchStartTime > MATCH_TIMEOUT_MS) {
+        console.error('[Match] Timeout after 5 minutes');
+        toast({
+          title: "Matching demorou demais",
+          description: "O processo de matching excedeu 5 minutos. Tente com menos arquivos.",
+          variant: "destructive",
+        });
+        break matchingLoop;
+      }
       
       const extracted = comprovanteTextsMap.get(comprovante.id);
       if (!extracted) continue;
 
-      const { pageTexts } = extracted;
+      const { preparedPages } = extracted;
+      const totalPages = preparedPages.length;
 
-      for (const entry of allHoleriteEntries) {
-        // Check cancellation in inner loop too
-        if (cancelledRef.current) break matchingLoop;
+      // Early exit: if all employees already matched, stop
+      if (matchedEntryKeys.size === totalEntries) {
+        console.log('[Match] All employees matched - stopping early');
+        break matchingLoop;
+      }
+
+      for (let entryIdx = 0; entryIdx < totalEntries; entryIdx++) {
+        const entry = preparedEntries[entryIdx];
+        
+        // Yield to UI periodically (cooperative multitasking)
+        comparisons++;
+        if (comparisons % YIELD_EVERY === 0) {
+          await pauseBetweenBatches();
+          
+          // Check cancellation after yield
+          if (cancelledRef.current) break matchingLoop;
+        }
+        
+        // Throttled status updates
+        const now = Date.now();
+        if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL_MS) {
+          lastStatusUpdate = now;
+          const progress = 60 + ((compIdx + (entryIdx / totalEntries)) / totalComprovantes) * 30;
+          setStatus(prev => ({
+            ...prev,
+            progress: Math.min(90, progress),
+            message: `Matching comprovante ${compIdx + 1}/${totalComprovantes} - funcionário ${entryIdx + 1}/${totalEntries}...`,
+          }));
+        }
         
         const entryKey = `${entry.originalHolerite.id}_${entry.pageNumber}`;
         if (matchedEntryKeys.has(entryKey)) continue;
 
-        // Search in pre-extracted texts (instantaneous!)
+        // Search using pre-processed data (FAST!)
         let foundPage = -1;
-        for (let pageIdx = 0; pageIdx < pageTexts.length; pageIdx++) {
-          if (findNameInPage(pageTexts[pageIdx], entry.name)) {
+        for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+          if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
             foundPage = pageIdx + 1; // 1-indexed
             break;
           }
@@ -867,10 +933,11 @@ export function useDocumentProcessor() {
             comprovante: { ...updatedComprovante, pageNumber: foundPage },
             status: 'pending',
           });
-          // Don't break - continue looking for more matches in this comprovante
         }
       }
     }
+    
+    console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
 
     setStatus({
       step: 'matching',
