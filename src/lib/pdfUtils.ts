@@ -228,6 +228,17 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+// Helper: Find ALL occurrences of a substring in text
+function findAllOccurrences(text: string, search: string): number[] {
+  const positions: number[] = [];
+  let pos = 0;
+  while ((pos = text.indexOf(search, pos)) !== -1) {
+    positions.push(pos);
+    pos += 1;
+  }
+  return positions;
+}
+
 export function findNameInPage(pageText: string, targetName: string): boolean {
   // Robust normalization: remove accents, symbols, normalize spaces
   const normalize = (s: string) => s
@@ -241,47 +252,77 @@ export function findNameInPage(pageText: string, targetName: string): boolean {
   const normalizedTarget = normalize(targetName);
   const normalizedPage = normalize(pageText);
   
-  // 1. Exact match
+  // 1. EXACT MATCH - fastest path
   if (normalizedPage.includes(normalizedTarget)) {
+    console.log('[Match] Exato:', targetName);
     return true;
   }
   
-  // 2. Match by first + last name with proximity check
+  // 2. FIRST + LAST NAME with ALL occurrences search (fixes indexOf limitation)
   const nameParts = normalizedTarget.split(' ').filter(p => p.length > 2);
   if (nameParts.length >= 2) {
     const firstName = nameParts[0];
     const lastName = nameParts[nameParts.length - 1];
     
-    if (normalizedPage.includes(firstName) && normalizedPage.includes(lastName)) {
-      // Verify proximity (first + last name should be close together)
-      const firstIdx = normalizedPage.indexOf(firstName);
-      const lastIdx = normalizedPage.indexOf(lastName);
-      if (Math.abs(firstIdx - lastIdx) < 100) {
-        return true;
+    // Find ALL occurrences of first and last name
+    const allFirstPositions = findAllOccurrences(normalizedPage, firstName);
+    const allLastPositions = findAllOccurrences(normalizedPage, lastName);
+    
+    // Check if any pair is within 150 characters (increased from 100)
+    for (const firstPos of allFirstPositions) {
+      for (const lastPos of allLastPositions) {
+        if (Math.abs(firstPos - lastPos) < 150) {
+          console.log('[Match] Primeiro+Último nome:', targetName);
+          return true;
+        }
       }
     }
   }
   
-  // 3. Fuzzy match with 1-character tolerance per word (handles OCR errors)
+  // 3. FUZZY MATCH with proportional tolerance (handles OCR errors better)
   const targetWords = normalizedTarget.split(' ').filter(w => w.length >= 3);
   const pageWords = normalizedPage.split(' ').filter(w => w.length >= 3);
   
   let matchedWords = 0;
   for (const targetWord of targetWords) {
+    // Proportional tolerance: 1 error for short, 2 for medium, 3 for long words
+    const maxErrors = targetWord.length <= 5 ? 1 : 
+                      targetWord.length <= 8 ? 2 : 3;
+    
     for (const pageWord of pageWords) {
-      // Exact match or 1-character difference (Levenshtein)
-      if (pageWord === targetWord || 
-          (Math.abs(pageWord.length - targetWord.length) <= 1 && 
-           levenshteinDistance(pageWord, targetWord) <= 1)) {
+      // First try exact match (fastest)
+      if (pageWord === targetWord) {
         matchedWords++;
         break;
+      }
+      
+      // Only calculate Levenshtein if sizes are similar
+      if (Math.abs(pageWord.length - targetWord.length) <= maxErrors) {
+        if (levenshteinDistance(pageWord, targetWord) <= maxErrors) {
+          matchedWords++;
+          break;
+        }
       }
     }
   }
   
-  // If 80% of name words were found, consider it a match
-  const requiredMatches = Math.ceil(targetWords.length * 0.8);
-  if (matchedWords >= requiredMatches && matchedWords >= 2) {
+  // Reduced threshold from 80% to 70% (more tolerant)
+  const requiredMatches = Math.max(2, Math.floor(targetWords.length * 0.7));
+  if (matchedWords >= requiredMatches) {
+    console.log(`[Match] Fuzzy ${matchedWords}/${targetWords.length}:`, targetName);
+    return true;
+  }
+  
+  // 4. SUBSTRING MATCH - if >60% of name characters are present
+  const targetLength = normalizedTarget.replace(/\s/g, '').length;
+  let matchedChars = 0;
+  for (const word of targetWords) {
+    if (normalizedPage.includes(word)) {
+      matchedChars += word.length;
+    }
+  }
+  if (targetLength > 0 && matchedChars / targetLength >= 0.6) {
+    console.log(`[Match] Substring ${matchedChars}/${targetLength}:`, targetName);
     return true;
   }
   
