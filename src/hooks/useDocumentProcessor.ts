@@ -812,6 +812,16 @@ export function useDocumentProcessor() {
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
   ];
 
+  // Utility function to trigger automatic download
+  const triggerDownload = (blobUrl: string, fileName: string) => {
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const generatePdfs = useCallback(async () => {
     if (matchedPairs.length === 0) return;
 
@@ -824,9 +834,13 @@ export function useDocumentProcessor() {
     const month = now.getMonth() + 1;
     const monthName = monthNames[month - 1];
 
-    // Process PDF generation in parallel batches
-    const generatePdf = async (pair: MatchedPair, index: number): Promise<GeneratedDocument | null> => {
-      if (cancelledRef.current) return null;
+    const generatedDocuments: GeneratedDocument[] = [];
+
+    // Process PDFs sequentially for controlled download timing
+    for (let index = 0; index < matchedPairs.length; index++) {
+      if (cancelledRef.current) break;
+
+      const pair = matchedPairs[index];
       
       setMatchedPairs((prev) =>
         prev.map((p) => (p.id === pair.id ? { ...p, status: 'generating' } : p))
@@ -848,6 +862,12 @@ export function useDocumentProcessor() {
         // Format: Ano_Mês_Nome.pdf (e.g., 2026_Janeiro_ANA_BEATRIZ.pdf)
         const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, '_')}.pdf`;
 
+        // Trigger automatic download
+        triggerDownload(blobUrl, fileName);
+
+        // Wait 300ms between downloads to avoid browser blocking
+        await new Promise(resolve => setTimeout(resolve, 300));
+
         setMatchedPairs((prev) =>
           prev.map((p) =>
             p.id === pair.id ? { ...p, status: 'completed', outputUrl: blobUrl } : p
@@ -857,10 +877,10 @@ export function useDocumentProcessor() {
         setStatus((prev) => ({
           ...prev,
           progress: ((index + 1) / matchedPairs.length) * 100,
-          message: `Gerando PDF ${index + 1} de ${matchedPairs.length}...`,
+          message: `Gerando e baixando PDF ${index + 1} de ${matchedPairs.length}...`,
         }));
 
-        return {
+        generatedDocuments.push({
           id: generateId(),
           employeeName: pair.employeeName,
           year,
@@ -869,8 +889,9 @@ export function useDocumentProcessor() {
           createdAt: now,
           blobUrl,
           fileName,
-        };
+        });
       } catch (error) {
+        console.error(`[PDF] Error generating PDF for ${pair.employeeName}:`, error);
         setMatchedPairs((prev) =>
           prev.map((p) =>
             p.id === pair.id
@@ -878,12 +899,8 @@ export function useDocumentProcessor() {
               : p
           )
         );
-        return null;
       }
-    };
-
-    const results = await processInBatches(matchedPairs, generatePdf, 3, cancelledRef);
-    const validDocs = results.filter((doc): doc is GeneratedDocument => doc !== null);
+    }
 
     if (cancelledRef.current) {
       setStatus({ step: 'idle', progress: 0, message: 'Geração cancelada' });
@@ -891,11 +908,18 @@ export function useDocumentProcessor() {
       return;
     }
 
-    setGeneratedDocs((prev) => [...prev, ...validDocs]);
+    setGeneratedDocs((prev) => [...prev, ...generatedDocuments]);
+    
+    // Show success toast with download count
+    toast({
+      title: "Downloads concluídos",
+      description: `${generatedDocuments.length} arquivo(s) baixado(s) para sua pasta de Downloads`,
+    });
+
     setStatus({
       step: 'completed',
       progress: 100,
-      message: `${validDocs.length} PDF(s) gerado(s) com sucesso!`,
+      message: `${generatedDocuments.length} PDF(s) gerado(s) e baixado(s)!`,
     });
   }, [matchedPairs]);
 
