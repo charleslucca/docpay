@@ -1,13 +1,17 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText, Cpu, Link2 } from 'lucide-react';
+import { Loader2, CheckCircle, Upload, Search, FileOutput, Sparkles, Clock, AlertTriangle, FileText, Cpu, Link2, RefreshCw, RotateCcw, AlertCircle } from 'lucide-react';
 import { ProcessingStatus as ProcessingStatusType } from '@/types/document';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { getWorkerCount, isOcrWorkerReady } from '@/lib/ocrUtils';
 
 interface ProcessingStatusProps {
   status: ProcessingStatusType;
+  onReprocessEnhanced?: () => void;
+  onReset?: () => void;
 }
 
 const stepConfig = {
@@ -28,12 +32,17 @@ function formatTime(seconds: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-export function ProcessingStatus({ status }: ProcessingStatusProps) {
+export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: ProcessingStatusProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   
   const config = stepConfig[status.step];
   const Icon = config.icon;
   const isActive = status.step !== 'idle' && status.step !== 'completed';
+
+  // Check if this is a "0 matches" terminal state
+  const isZeroMatchesState = status.step === 'matching' && 
+    status.progress >= 100 && 
+    status.matchesFound === 0;
 
   // Real-time elapsed time counter
   useEffect(() => {
@@ -59,15 +68,19 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
       className="rounded-xl border bg-card p-6 shadow-sm"
     >
       <div className="flex items-center gap-4 mb-4">
-        <div className={`rounded-full p-3 ${status.step === 'completed' ? 'bg-primary/10' : 'bg-muted'}`}>
-          {isActive ? (
+        <div className={`rounded-full p-3 ${status.step === 'completed' || isZeroMatchesState ? 'bg-primary/10' : 'bg-muted'}`}>
+          {isActive && !isZeroMatchesState ? (
             <Loader2 className={`h-6 w-6 animate-spin ${config.color}`} />
+          ) : isZeroMatchesState ? (
+            <AlertCircle className="h-6 w-6 text-destructive" />
           ) : (
             <Icon className={`h-6 w-6 ${config.color}`} />
           )}
         </div>
         <div className="flex-1">
-          <h4 className="font-semibold text-foreground">{config.label}</h4>
+          <h4 className="font-semibold text-foreground">
+            {isZeroMatchesState ? 'Nenhuma correspondência encontrada' : config.label}
+          </h4>
           <p className="text-sm text-muted-foreground">{status.message}</p>
         </div>
         {status.step === 'completed' && (
@@ -82,8 +95,85 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
         )}
       </div>
 
+      {/* Zero matches diagnostic panel */}
+      {isZeroMatchesState && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="mb-4"
+        >
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardContent className="p-4 space-y-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-sm text-foreground font-medium">
+                    O processo terminou mas não encontrou correspondências entre holerites e comprovantes.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Isso normalmente acontece quando o OCR não conseguiu extrair texto legível do comprovante ou quando os nomes dos funcionários não aparecem no documento.
+                  </p>
+                </div>
+              </div>
+              
+              {/* OCR Metrics if available */}
+              {status.ocrPagesTotal !== undefined && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-border/50">
+                  <div className="text-center p-2 rounded bg-background/50">
+                    <p className="text-lg font-bold text-foreground">{status.ocrPagesTotal}</p>
+                    <p className="text-xs text-muted-foreground">Páginas totais</p>
+                  </div>
+                  <div className="text-center p-2 rounded bg-background/50">
+                    <p className="text-lg font-bold text-foreground">{status.ocrPagesNeedingOcr ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">Páginas OCR</p>
+                  </div>
+                  <div className="text-center p-2 rounded bg-background/50">
+                    <p className={`text-lg font-bold ${(status.ocrPagesEmptyOrShort ?? 0) > 0 ? 'text-destructive' : 'text-foreground'}`}>
+                      {status.ocrPagesEmptyOrShort ?? 0}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Páginas vazias</p>
+                  </div>
+                  <div className="text-center p-2 rounded bg-background/50">
+                    <p className={`text-lg font-bold ${(status.ocrTimeoutCount ?? 0) > 0 ? 'text-destructive' : 'text-foreground'}`}>
+                      {status.ocrTimeoutCount ?? 0}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Timeouts</p>
+                  </div>
+                </div>
+              )}
+              
+              {/* Action buttons */}
+              <div className="flex flex-wrap gap-2 pt-2">
+                {onReprocessEnhanced && (
+                  <Button 
+                    onClick={onReprocessEnhanced} 
+                    variant="default"
+                    size="sm"
+                    className="gap-2"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Reprocessar com OCR reforçado
+                  </Button>
+                )}
+                {onReset && (
+                  <Button 
+                    onClick={onReset} 
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Reiniciar
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
       {/* Current file being processed */}
-      {isActive && status.currentItem && (
+      {isActive && !isZeroMatchesState && status.currentItem && (
         <motion.div 
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
@@ -113,7 +203,7 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
         </motion.div>
       )}
 
-      {status.step !== 'idle' && (
+      {status.step !== 'idle' && !isZeroMatchesState && (
         <div className="space-y-2">
           <Progress value={status.progress} className="h-2" />
           <div className="flex justify-between text-xs text-muted-foreground">
@@ -126,7 +216,7 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
       )}
 
       {/* Secondary OCR progress bar with worker indicator */}
-      {status.isOcrActive && status.ocrProgress !== undefined && (
+      {status.isOcrActive && status.ocrProgress !== undefined && !isZeroMatchesState && (
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
@@ -164,8 +254,8 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
         </motion.div>
       )}
 
-      {/* Matches found indicator during matching */}
-      {status.step === 'matching' && status.matchesFound !== undefined && (
+      {/* Matches found indicator during matching (not in zero state) */}
+      {status.step === 'matching' && status.matchesFound !== undefined && !isZeroMatchesState && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -187,7 +277,7 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
       )}
 
       {/* Time information */}
-      {isActive && status.startTime && (
+      {isActive && !isZeroMatchesState && status.startTime && (
         <motion.div 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -215,7 +305,7 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
 
       {/* Slow operation warning */}
       <AnimatePresence>
-        {status.isSlowOperation && (
+        {status.isSlowOperation && !isZeroMatchesState && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}

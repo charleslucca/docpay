@@ -101,6 +101,35 @@ async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Pr
 
 const PAGE_BATCH_SIZE = 5; // Process 5 pages in parallel
 const MIN_TEXT_LENGTH_FOR_OCR = 50; // If native text extraction yields less than this, use OCR
+const MIN_ACCEPTABLE_OCR_TEXT = 40; // If OCR yields less than this, retry with higher scale
+export const OCR_SCALE_ENHANCED = 3.0; // Higher scale for retry/enhanced mode
+
+// OCR extraction options for comprovantes
+export interface ComprovanteOcrOptions {
+  scalePrimary?: number;       // default 2.0
+  scaleRetry?: number;         // default 3.0
+  timeoutPrimaryMs?: number;   // default 30000
+  timeoutRetryMs?: number;     // default 45000
+  minAcceptableTextLen?: number; // default 40
+  retryOnShortText?: boolean;  // default true
+  enhancedMode?: boolean;      // if true, use higher scale from the start
+}
+
+// OCR metrics for diagnostics
+export interface OcrMetrics {
+  pagesTotal: number;
+  pagesNeedingOcr: number;
+  pagesEmptyOrShort: number;
+  timeoutCount: number;
+  retryCount: number;
+}
+
+export type OcrExtractorWithResult = (
+  canvas: HTMLCanvasElement,
+  options?: { timeoutMs?: number }
+) => Promise<{ text: string; timedOut: boolean; durationMs: number }>;
+
+export type OcrProgressCallback = (pageNum: number, totalPages: number, isOcr: boolean) => void;
 
 // Get all page texts from a PDF (cached) with cancellation support and parallel processing
 export async function getCachedPageTexts(
@@ -230,9 +259,7 @@ export async function renderPageForOCR(
 }
 
 /**
- * Get page texts with OCR fallback for scanned PDFs
- * OPTIMIZED: Uses parallel pipeline similar to holerite processing
- * First attempts native text extraction, falls back to OCR if text is too short
+ * Get page texts with OCR fallback for scanned PDFs (legacy interface, for backwards compatibility)
  */
 export async function getCachedPageTextsWithOCR(
   file: File,
@@ -240,20 +267,72 @@ export async function getCachedPageTextsWithOCR(
   onProgress?: (pageNum: number, totalPages: number, isOcr: boolean) => void,
   shouldCancel?: () => boolean
 ): Promise<string[]> {
-  const key = getFileKey(file) + '_ocr';
+  // Wrap legacy extractor to match new interface
+  const wrappedExtractor: OcrExtractorWithResult = async (canvas, opts) => {
+    const text = await ocrExtractor(canvas);
+    return { text, timedOut: false, durationMs: 0 };
+  };
   
-  // Check cache first
+  const { texts } = await getCachedPageTextsWithOCREnhanced(
+    file,
+    wrappedExtractor,
+    onProgress,
+    shouldCancel,
+    {} // default options
+  );
+  return texts;
+}
+
+/**
+ * Get page texts with OCR fallback for scanned PDFs
+ * ENHANCED: Returns metrics, supports auto-retry for short text, and enhanced mode
+ * First attempts native text extraction, falls back to OCR if text is too short
+ */
+export async function getCachedPageTextsWithOCREnhanced(
+  file: File,
+  ocrExtractor: OcrExtractorWithResult,
+  onProgress?: OcrProgressCallback,
+  shouldCancel?: () => boolean,
+  options?: ComprovanteOcrOptions
+): Promise<{ texts: string[]; metrics: OcrMetrics }> {
+  const opts: Required<ComprovanteOcrOptions> = {
+    scalePrimary: options?.enhancedMode ? OCR_SCALE_ENHANCED : (options?.scalePrimary ?? OCR_SCALE_HIGH),
+    scaleRetry: options?.scaleRetry ?? OCR_SCALE_ENHANCED,
+    timeoutPrimaryMs: options?.enhancedMode ? 45000 : (options?.timeoutPrimaryMs ?? 30000),
+    timeoutRetryMs: options?.timeoutRetryMs ?? 45000,
+    minAcceptableTextLen: options?.minAcceptableTextLen ?? MIN_ACCEPTABLE_OCR_TEXT,
+    retryOnShortText: options?.retryOnShortText ?? true,
+    enhancedMode: options?.enhancedMode ?? false,
+  };
+  
+  const cacheKeySuffix = opts.enhancedMode ? '_ocr_enhanced' : '_ocr';
+  const key = getFileKey(file) + cacheKeySuffix;
+  
+  // Check cache first (only for non-enhanced, or if enhanced was previously cached)
   const cachedTexts = pageTextCache.get(key);
   if (cachedTexts) {
     updateAccessOrder(key);
-    return cachedTexts;
+    // Return cached with dummy metrics (we don't cache metrics)
+    return {
+      texts: cachedTexts,
+      metrics: { pagesTotal: cachedTexts.length, pagesNeedingOcr: 0, pagesEmptyOrShort: 0, timeoutCount: 0, retryCount: 0 },
+    };
   }
   
   const pdf = await getCachedPdf(file);
   const totalPages = pdf.numPages;
   const pageTexts: (string | null)[] = new Array(totalPages).fill(null);
   
-  console.log(`[Comprovante] Processing ${file.name}: ${totalPages} page(s) with PARALLEL pipeline`);
+  // Metrics tracking
+  const metrics: OcrMetrics = {
+    pagesTotal: totalPages,
+    pagesNeedingOcr: 0,
+    pagesEmptyOrShort: 0,
+    timeoutCount: 0,
+    retryCount: 0,
+  };
+  
+  console.log(`[Comprovante] Processing ${file.name}: ${totalPages} page(s) with PARALLEL pipeline${opts.enhancedMode ? ' (ENHANCED MODE)' : ''}`);
   
   // STEP 1: Try native text extraction for ALL pages in parallel (very fast)
   const nativeTextPromises: Promise<{ pageNum: number; text: string }>[] = [];
@@ -278,6 +357,7 @@ export async function getCachedPageTextsWithOCR(
     }
   }
   
+  metrics.pagesNeedingOcr = pagesNeedingOcr.length;
   const nativeCount = totalPages - pagesNeedingOcr.length;
   console.log(`[Comprovante] Native extraction: ${nativeCount}/${totalPages} pages OK, ${pagesNeedingOcr.length} need OCR`);
   
@@ -294,16 +374,53 @@ export async function getCachedPageTextsWithOCR(
       
       const batch = pagesNeedingOcr.slice(i, i + OCR_BATCH_SIZE);
       
-      // Render and OCR batch in parallel, update progress per page (not per batch)
+      // Render and OCR batch in parallel with retry logic
       const batchPromises = batch.map(async (pageNum) => {
-        const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_HIGH, true);
-        const text = await ocrExtractor(canvas);
+        // First attempt
+        let canvas = await renderPageForOCR(file, pageNum, opts.scalePrimary, true);
+        let result = await ocrExtractor(canvas, { timeoutMs: opts.timeoutPrimaryMs });
+        
+        // Track timeout
+        if (result.timedOut) {
+          metrics.timeoutCount++;
+        }
+        
+        // Free first canvas
+        canvas.width = 0;
+        canvas.height = 0;
+        
+        // Retry if text too short and retry enabled
+        if (opts.retryOnShortText && result.text.trim().length < opts.minAcceptableTextLen && !result.timedOut) {
+          metrics.retryCount++;
+          console.log(`[Comprovante] Page ${pageNum}: text too short (${result.text.trim().length} chars), retrying with scale ${opts.scaleRetry}...`);
+          
+          canvas = await renderPageForOCR(file, pageNum, opts.scaleRetry, true);
+          const retryResult = await ocrExtractor(canvas, { timeoutMs: opts.timeoutRetryMs });
+          
+          if (retryResult.timedOut) {
+            metrics.timeoutCount++;
+          }
+          
+          // Use retry result if it's better
+          if (retryResult.text.trim().length > result.text.trim().length) {
+            result = retryResult;
+          }
+          
+          // Free retry canvas
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+        
+        // Track empty/short pages
+        if (result.text.trim().length < opts.minAcceptableTextLen) {
+          metrics.pagesEmptyOrShort++;
+        }
         
         // Update progress immediately after each page (granular feedback)
         ocrCompleted++;
         onProgress?.(nativeCount + ocrCompleted, totalPages, true);
         
-        return { pageNum, text };
+        return { pageNum, text: result.text };
       });
       
       const batchResults = await Promise.all(batchPromises);
@@ -318,7 +435,7 @@ export async function getCachedPageTextsWithOCR(
       }
     }
     
-    console.log(`[Comprovante] OCR complete: ${ocrCompleted} pages processed`);
+    console.log(`[Comprovante] OCR complete: ${ocrCompleted} pages processed, ${metrics.pagesEmptyOrShort} empty/short, ${metrics.timeoutCount} timeouts, ${metrics.retryCount} retries`);
   }
   
   // Convert to string array (null should not exist at this point)
@@ -330,5 +447,14 @@ export async function getCachedPageTextsWithOCR(
   }
   
   updateAccessOrder(key);
-  return result;
+  return { texts: result, metrics };
+}
+
+/**
+ * Clear the cached texts for a specific file (for reprocessing with enhanced OCR)
+ */
+export function clearCachedTextsForFile(file: File): void {
+  const key = getFileKey(file);
+  pageTextCache.delete(key + '_ocr');
+  pageTextCache.delete(key + '_ocr_enhanced');
 }
