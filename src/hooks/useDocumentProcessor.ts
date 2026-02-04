@@ -546,11 +546,12 @@ export function useDocumentProcessor() {
               await pauseBetweenBatches();
             }
             
-            // Check if done
-            if (renderingComplete && canvasQueue.length === 0 && pagesProcessed >= totalPages) {
-              ocrComplete = true;
-            } else if (canvasQueue.length === 0 && !renderingComplete) {
-              // Wait for more canvases
+            // FIXED: Simplified termination - when render is done and queue is empty, we're done
+            // The old condition failed when pages came from cache (pagesProcessed was updated in renderLoop)
+            if (renderingComplete && canvasQueue.length === 0) {
+              break; // Exit loop cleanly
+            } else if (canvasQueue.length === 0) {
+              // Wait for more canvases from render loop
               await new Promise(r => setTimeout(r, 20));
             }
           }
