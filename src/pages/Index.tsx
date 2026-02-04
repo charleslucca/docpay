@@ -27,6 +27,7 @@ const Index = () => {
     reset,
     resumeProcessing,
     discardSavedState,
+    reprocessWithEnhancedOcr,
   } = useDocumentProcessor();
 
   const canProcess = holerites.length > 0 && comprovantes.length > 0 && status.step === 'idle';
@@ -152,7 +153,11 @@ const Index = () => {
             {/* Processing Status with Cancel Button */}
             {status.step !== 'idle' && (
               <div className="space-y-4">
-                <ProcessingStatus status={status} />
+                <ProcessingStatus 
+                  status={status} 
+                  onReprocessEnhanced={reprocessWithEnhancedOcr}
+                  onReset={reset}
+                />
                 {isProcessing && (
                   <div className="flex justify-center">
                     <Button

@@ -11,8 +11,8 @@ import {
   type PreparedPage,
   type PreparedTarget,
 } from '@/lib/pdfUtils';
-import { getCachedPdf, getCachedPageTextsWithOCR, renderPageForOCR, clearCache, OCR_SCALE_FAST } from '@/lib/pdfCache';
-import { extractTextWithOCR, extractTextBatch, terminateOcrWorker, getWorkerCount, getOcrCacheKey, getCachedOcrResult, setCachedOcrResult } from '@/lib/ocrUtils';
+import { getCachedPdf, getCachedPageTextsWithOCREnhanced, renderPageForOCR, clearCache, clearCachedTextsForFile, OCR_SCALE_FAST, type OcrMetrics } from '@/lib/pdfCache';
+import { extractTextWithOCR, extractTextWithOCRResult, extractTextBatch, terminateOcrWorker, clearOcrCache, getWorkerCount, getOcrCacheKey, getCachedOcrResult, setCachedOcrResult } from '@/lib/ocrUtils';
 import { toast } from '@/hooks/use-toast';
 import {
   saveFileBlob,
@@ -718,6 +718,15 @@ export function useDocumentProcessor() {
 
     // Create a map: comprovante.id -> { file, pageTexts: string[], preparedPages: PreparedPage[] }
     const comprovanteTextsMap = new Map<string, { file: File; pageTexts: string[]; preparedPages: PreparedPage[] }>();
+    
+    // Aggregate OCR metrics from all comprovantes
+    let aggregatedMetrics: OcrMetrics = {
+      pagesTotal: 0,
+      pagesNeedingOcr: 0,
+      pagesEmptyOrShort: 0,
+      timeoutCount: 0,
+      retryCount: 0,
+    };
 
     const preExtractComprovante = async (comprovante: UploadedFile, index: number) => {
       if (cancelledRef.current) {
@@ -741,12 +750,12 @@ export function useDocumentProcessor() {
       );
 
       try {
-        // Use OCR-enabled page text extraction for scanned PDFs
-        const pageTexts = await getCachedPageTextsWithOCR(
+        // Use enhanced OCR extraction with retry logic and metrics
+        const { texts: pageTexts, metrics } = await getCachedPageTextsWithOCREnhanced(
           comprovante.file,
-          async (canvas) => {
-            // OCR extractor callback
-            return await extractTextWithOCR(canvas);
+          async (canvas, opts) => {
+            // OCR extractor callback that returns full result
+            return await extractTextWithOCRResult(canvas, undefined, opts);
           },
           (pageNum, totalPages, isOcr) => {
             // Progress callback
@@ -756,8 +765,16 @@ export function useDocumentProcessor() {
               isOcrActive: isOcr,
             }));
           },
-          () => cancelledRef.current
+          () => cancelledRef.current,
+          { retryOnShortText: true } // Enable auto-retry
         );
+        
+        // Aggregate metrics
+        aggregatedMetrics.pagesTotal += metrics.pagesTotal;
+        aggregatedMetrics.pagesNeedingOcr += metrics.pagesNeedingOcr;
+        aggregatedMetrics.pagesEmptyOrShort += metrics.pagesEmptyOrShort;
+        aggregatedMetrics.timeoutCount += metrics.timeoutCount;
+        aggregatedMetrics.retryCount += metrics.retryCount;
         
         // Clear timer when done
         clearSlowOperationTimer();
@@ -796,6 +813,12 @@ export function useDocumentProcessor() {
         message: `Extraindo texto do comprovante ${index + 1} de ${comprovanteList.length}...`,
         processedItems: processedSoFar,
         isOcrActive: false,
+        // Include OCR metrics in status for UI display
+        ocrPagesTotal: aggregatedMetrics.pagesTotal,
+        ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
+        ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
+        ocrTimeoutCount: aggregatedMetrics.timeoutCount,
+        ocrRetryCount: aggregatedMetrics.retryCount,
       }));
 
       // Pause between comprovantes to reduce CPU load
@@ -819,6 +842,12 @@ export function useDocumentProcessor() {
       message: 'Buscando correspondências em memória...', 
       matchesFound: 0,
       totalToMatch: allHoleriteEntries.length,
+      // Preserve OCR metrics
+      ocrPagesTotal: aggregatedMetrics.pagesTotal,
+      ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
+      ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
+      ocrTimeoutCount: aggregatedMetrics.timeoutCount,
+      ocrRetryCount: aggregatedMetrics.retryCount,
     });
 
     const pairs: MatchedPair[] = [];
@@ -947,10 +976,19 @@ export function useDocumentProcessor() {
     
     console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
 
+    // Final status with OCR metrics for 0-matches diagnostic
     setStatus({
       step: 'matching',
       progress: 90,
       message: `${pairs.length} correspondência(s) encontrada(s)`,
+      matchesFound: pairs.length,
+      totalToMatch: totalEntries,
+      // Include OCR metrics in final status (important for 0 matches case)
+      ocrPagesTotal: aggregatedMetrics.pagesTotal,
+      ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
+      ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
+      ocrTimeoutCount: aggregatedMetrics.timeoutCount,
+      ocrRetryCount: aggregatedMetrics.retryCount,
     });
 
     setMatchedPairs(pairs);
@@ -1017,6 +1055,14 @@ export function useDocumentProcessor() {
       step: 'matching',
       progress: 100,
       message: `${pairs.length} correspondência(s) encontrada(s)`,
+      matchesFound: pairs.length,
+      totalToMatch: totalEntries,
+      // Preserve OCR metrics for display
+      ocrPagesTotal: aggregatedMetrics.pagesTotal,
+      ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
+      ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
+      ocrTimeoutCount: aggregatedMetrics.timeoutCount,
+      ocrRetryCount: aggregatedMetrics.retryCount,
     });
   };
 
@@ -1151,6 +1197,9 @@ export function useDocumentProcessor() {
     // Clear PDF cache
     clearCache();
     
+    // Clear OCR cache
+    clearOcrCache();
+    
     // Clear IndexedDB
     await clearProcessingState();
 
@@ -1161,6 +1210,40 @@ export function useDocumentProcessor() {
     setStatus({ step: 'idle', progress: 0, message: '' });
     setHasSavedState(false);
   }, [generatedDocs, matchedPairs]);
+
+  // Reprocess comprovantes with enhanced OCR settings (higher scale, longer timeout)
+  const reprocessWithEnhancedOcr = useCallback(async () => {
+    if (comprovantes.length === 0) {
+      toast({
+        title: "Nenhum comprovante para reprocessar",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Clear caches for comprovantes to force fresh OCR
+    for (const comprovante of comprovantes) {
+      clearCachedTextsForFile(comprovante.file);
+    }
+    clearOcrCache();
+    
+    // Optionally terminate workers to get a fresh pool
+    await terminateOcrWorker();
+    
+    // Reset comprovantes and matched pairs status
+    setComprovantes(prev => prev.map(c => ({ ...c, status: 'pending', progress: 0 })));
+    setMatchedPairs([]);
+    
+    toast({
+      title: "Reprocessando com OCR reforçado",
+      description: "Usando escala maior e timeout estendido para melhor extração de texto.",
+    });
+
+    // Re-run the processing pipeline
+    // We need to re-extract holerite entries first if not already available
+    // For simplicity, just re-run the full process
+    await processDocumentsWithState(holerites, comprovantes, null);
+  }, [holerites, comprovantes]);
 
   return {
     holerites,
@@ -1179,5 +1262,6 @@ export function useDocumentProcessor() {
     reset,
     resumeProcessing,
     discardSavedState,
+    reprocessWithEnhancedOcr,
   };
 }

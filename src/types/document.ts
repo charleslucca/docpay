@@ -58,4 +58,10 @@ export interface ProcessingStatus {
   // Matching progress tracking
   matchesFound?: number;
   totalToMatch?: number;
+  // OCR diagnostic metrics (for comprovantes)
+  ocrPagesTotal?: number;
+  ocrPagesNeedingOcr?: number;
+  ocrPagesEmptyOrShort?: number; // text < 40 chars
+  ocrTimeoutCount?: number;
+  ocrRetryCount?: number;
 }
