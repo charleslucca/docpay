@@ -453,9 +453,16 @@ export function useDocumentProcessor() {
         // Queue of canvases ready for OCR
         const canvasQueue: { pageNum: number; canvas: HTMLCanvasElement }[] = [];
         let nextPageToRender = resumeFromPage;
-        let pagesProcessed = 0;
         let renderingComplete = false;
-        let ocrComplete = false;
+        
+        // FIX: Separate counters to avoid race condition
+        let cacheHits = 0;        // Pages processed from cache (in renderLoop)
+        let canvasesQueued = 0;   // Pages actually rendered and queued for OCR
+        let ocrCompleted = 0;     // Pages processed by OCR loop
+        
+        // Safety timeout to prevent infinite loops (5 minutes)
+        const MAX_LOOP_WAIT_MS = 300000;
+        const loopStartTime = Date.now();
         
         // Render loop: continuously render pages ahead of OCR
         const renderLoop = async () => {
@@ -478,13 +485,14 @@ export function useDocumentProcessor() {
                     pageNumber: pageNum,
                   });
                 }
-                pagesProcessed++;
+                cacheHits++; // FIX: Only count cache hits here
                 continue;
               }
               
               // OPTIMIZED: Use lower scale (1.5x) with grayscale
               const canvas = await renderPageForOCR(holerite.file, pageNum, OCR_SCALE_FAST, true);
               canvasQueue.push({ pageNum, canvas });
+              canvasesQueued++; // FIX: Count pages sent to OCR queue
             }
             
             // Small pause to let OCR loop catch up
@@ -493,11 +501,18 @@ export function useDocumentProcessor() {
             }
           }
           renderingComplete = true;
+          console.log(`[OCR] Render complete: ${cacheHits} cache hits, ${canvasesQueued} queued for OCR`);
         };
         
         // OCR loop: process batches as canvases become available
         const ocrLoop = async () => {
-          while (!ocrComplete && !cancelledRef.current) {
+          while (!cancelledRef.current) {
+            // Safety timeout check
+            if (Date.now() - loopStartTime > MAX_LOOP_WAIT_MS) {
+              console.error('[OCR] Loop timeout - forcing exit after 5 minutes');
+              break;
+            }
+            
             // Collect batch up to worker count
             const batch: { pageNum: number; canvas: HTMLCanvasElement }[] = [];
             
@@ -509,6 +524,7 @@ export function useDocumentProcessor() {
               // Update progress message
               const batchStart = batch[0].pageNum;
               const batchEnd = batch[batch.length - 1].pageNum;
+              const totalProcessed = cacheHits + ocrCompleted;
               
               setStatus(prev => ({
                 ...prev,
@@ -516,12 +532,12 @@ export function useDocumentProcessor() {
                 currentItemStartTime: Date.now(),
                 message: `OCR em ${holerite.name} (pág. ${batchStart}-${batchEnd} de ${totalPages})...`,
                 isOcrActive: true,
-                ocrProgress: Math.round((pagesProcessed / totalPages) * 100),
+                ocrProgress: Math.round((totalProcessed / totalPages) * 100),
               }));
               
               // Process OCR in parallel with the scheduler
               const texts = await extractTextBatch(batch.map(b => b.canvas), (done, total) => {
-                const overallProgress = ((pagesProcessed + done) / totalPages) * 100;
+                const overallProgress = ((totalProcessed + done) / totalPages) * 100;
                 setStatus(prev => ({
                   ...prev,
                   ocrProgress: Math.round(overallProgress),
@@ -546,11 +562,12 @@ export function useDocumentProcessor() {
                     pageNumber: pageNum,
                   });
                 }
-                pagesProcessed++;
+                ocrCompleted++; // FIX: Only count OCR processed pages here
               }
               
               // Update progress
-              const batchProgress = 10 + ((pagesProcessed / totalPages) * 80);
+              const totalDone = cacheHits + ocrCompleted;
+              const batchProgress = 10 + ((totalDone / totalPages) * 80);
               setHolerites((prev) =>
                 prev.map((h) =>
                   h.id === holerite.id ? { ...h, progress: batchProgress } : h
@@ -588,14 +605,14 @@ export function useDocumentProcessor() {
                 holeritesIds: holeriteList.map(h => h.id),
                 comprovantesIds: comprovanteList.map(c => c.id),
                 currentHoleriteIndex: index,
-                currentPageNumber: pagesProcessed + resumeFromPage,
+                currentPageNumber: totalDone + resumeFromPage,
                 totalPages,
                 extractedEntries: allExtracted,
                 matchedPairs: [],
               };
               
               // Use immediate save at the end of each file, debounced otherwise
-              if (pagesProcessed === totalPages) {
+              if (totalDone === totalPages) {
                 await saveStateImmediate(stateToSave);
               } else {
                 await saveStateDebounced(stateToSave);
@@ -605,10 +622,11 @@ export function useDocumentProcessor() {
               await pauseBetweenBatches();
             }
             
-            // FIXED: Simplified termination - when render is done and queue is empty, we're done
-            // The old condition failed when pages came from cache (pagesProcessed was updated in renderLoop)
-            if (renderingComplete && canvasQueue.length === 0) {
-              break; // Exit loop cleanly
+            // FIX: Correct termination condition using separate counters
+            // Exit when: render is complete AND queue is empty AND all queued items were OCR'd
+            if (renderingComplete && canvasQueue.length === 0 && ocrCompleted >= canvasesQueued) {
+              console.log(`[OCR] Processing complete: ${cacheHits} from cache, ${ocrCompleted} from OCR`);
+              break;
             } else if (canvasQueue.length === 0) {
               // Wait for more canvases from render loop
               await new Promise(r => setTimeout(r, 20));

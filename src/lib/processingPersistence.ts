@@ -55,10 +55,49 @@ let db: IDBDatabase | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
+ * Check if the database connection is still valid
+ */
+function isConnectionValid(): boolean {
+  if (!db) return false;
+  try {
+    // Test if connection is alive by accessing objectStoreNames
+    const _ = db.objectStoreNames;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Setup connection handlers for unexpected close/error
+ */
+function setupConnectionHandlers(database: IDBDatabase) {
+  database.onclose = () => {
+    console.log('[Persistence] Database connection closed unexpectedly');
+    db = null;
+    dbPromise = null;
+  };
+  
+  database.onerror = (event) => {
+    console.error('[Persistence] Database error:', event);
+  };
+}
+
+/**
  * Open/create the IndexedDB database
  */
 async function openDatabase(): Promise<IDBDatabase> {
-  if (db) return db;
+  // Check if existing connection is still valid
+  if (db) {
+    if (isConnectionValid()) {
+      return db;
+    }
+    // Connection was closed, reset references
+    console.log('[Persistence] Connection was closed, reopening...');
+    db = null;
+    dbPromise = null;
+  }
+  
   if (dbPromise) return dbPromise;
   
   dbPromise = new Promise((resolve, reject) => {
@@ -66,11 +105,13 @@ async function openDatabase(): Promise<IDBDatabase> {
     
     request.onerror = () => {
       console.error('[Persistence] Failed to open IndexedDB:', request.error);
+      dbPromise = null; // Reset promise on error
       reject(request.error);
     };
     
     request.onsuccess = () => {
       db = request.result;
+      setupConnectionHandlers(db);
       console.log('[Persistence] IndexedDB opened successfully');
       resolve(db);
     };
