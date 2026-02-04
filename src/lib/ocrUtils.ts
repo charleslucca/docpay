@@ -127,6 +127,9 @@ export async function extractTextBatch(
   return results;
 }
 
+// Timeout per page to prevent hangs
+const SINGLE_PAGE_TIMEOUT_MS = 30000; // 30 seconds
+
 /**
  * Extract text from a single image using the worker pool
  * @param imageSource - Canvas element or image data URL
@@ -138,19 +141,34 @@ export async function extractTextWithOCR(
 ): Promise<string> {
   const sched = await initOcrScheduler();
   
-  console.log('[OCR] Starting single page recognition...');
   const startTime = performance.now();
   
-  const result = await sched.addJob('recognize', imageSource);
+  // Timeout promise to prevent indefinite hangs
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('OCR timeout after 30s')), SINGLE_PAGE_TIMEOUT_MS);
+  });
   
-  const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-  console.log(`[OCR] Recognition completed in ${duration}s`);
-  console.log(`[OCR] Confidence: ${result.data.confidence}%`);
-  
-  // Call progress callback with 100% when done
-  onProgress?.(100);
-  
-  return result.data.text;
+  try {
+    const result = await Promise.race([
+      sched.addJob('recognize', imageSource),
+      timeoutPromise,
+    ]);
+    
+    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+    
+    // Only log slow pages (>2s) to reduce console spam
+    if (parseFloat(duration) > 2) {
+      console.log(`[OCR] Slow page: ${duration}s, confidence: ${result.data.confidence}%`);
+    }
+    
+    onProgress?.(100);
+    return result.data.text;
+  } catch (error) {
+    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+    console.error(`[OCR] Page failed after ${duration}s:`, error);
+    onProgress?.(100);
+    return ''; // Return empty string instead of hanging
+  }
 }
 
 /**
