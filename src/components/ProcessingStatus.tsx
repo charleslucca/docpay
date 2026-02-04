@@ -101,6 +101,18 @@ export function ProcessingStatus({ status }: ProcessingStatusProps) {
         </motion.div>
       )}
 
+      {/* Saving indicator */}
+      {status.isSaving && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex items-center gap-2 mb-3 px-2"
+        >
+          <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+          <span className="text-xs text-muted-foreground">Salvando progresso...</span>
+        </motion.div>
+      )}
+
       {status.step !== 'idle' && (
         <div className="space-y-2">
           <Progress value={status.progress} className="h-2" />

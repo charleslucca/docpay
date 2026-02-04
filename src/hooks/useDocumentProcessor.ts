@@ -92,6 +92,11 @@ export function useDocumentProcessor() {
   const slowOperationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const currentItemStartTimeRef = useRef<number>(0);
   const processStartTimeRef = useRef<number>(0);
+  
+  // Persistence refs for debounced saves
+  const lastSaveRef = useRef<number>(0);
+  const pendingStateRef = useRef<Omit<ProcessingState, 'id' | 'updatedAt'> | null>(null);
+  const SAVE_DEBOUNCE_MS = 500; // Maximum ~2 saves per second
 
   // Check for saved state on mount
   useEffect(() => {
@@ -110,6 +115,21 @@ export function useDocumentProcessor() {
     
     checkSavedState();
   }, []);
+
+  // Warn user when leaving during processing
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (status.step !== 'idle' && status.step !== 'completed') {
+        // Show browser warning
+        e.preventDefault();
+        e.returnValue = 'O processamento está em andamento. Se você sair, poderá retomar de onde parou ao voltar.';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [status.step]);
 
   // Clear slow operation timer on unmount or cancel
   useEffect(() => {
@@ -166,6 +186,40 @@ export function useDocumentProcessor() {
       estimatedTimeRemaining: estimatedRemaining,
       isSlowOperation: false, // Reset slow flag when item completes
     }));
+  };
+
+  // Debounced state save to reduce IndexedDB writes
+  const saveStateDebounced = async (state: Omit<ProcessingState, 'id' | 'updatedAt'>) => {
+    const now = Date.now();
+    pendingStateRef.current = state;
+    
+    if (now - lastSaveRef.current >= SAVE_DEBOUNCE_MS) {
+      lastSaveRef.current = now;
+      setStatus(prev => ({ ...prev, isSaving: true }));
+      
+      try {
+        await saveProcessingState(state);
+      } catch (error) {
+        console.error('[Persistence] Debounced save failed:', error);
+      } finally {
+        setStatus(prev => ({ ...prev, isSaving: false }));
+      }
+    }
+  };
+  
+  // Force save (for important checkpoints)
+  const saveStateImmediate = async (state: Omit<ProcessingState, 'id' | 'updatedAt'>) => {
+    lastSaveRef.current = Date.now();
+    pendingStateRef.current = null;
+    setStatus(prev => ({ ...prev, isSaving: true }));
+    
+    try {
+      await saveProcessingState(state);
+    } catch (error) {
+      console.error('[Persistence] Immediate save failed:', error);
+    } finally {
+      setStatus(prev => ({ ...prev, isSaving: false }));
+    }
   };
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
@@ -509,37 +563,42 @@ export function useDocumentProcessor() {
                 b.canvas.height = 0;
               });
               
-              // Save state periodically for persistence
-              if (pagesProcessed % (workerCount * 2) === 0 || pagesProcessed === totalPages) {
-                const allExtracted: ExtractedEntry[] = [
-                  ...existingEntries.map(e => ({
-                    holeriteId: e.originalHolerite.id,
-                    name: e.name,
-                    pageNumber: e.pageNumber,
-                  })),
-                  ...allHoleriteEntries.map(e => ({
-                    holeriteId: e.originalHolerite.id,
-                    name: e.name,
-                    pageNumber: e.pageNumber,
-                  })),
-                  ...entries.map(e => ({
-                    holeriteId: e.originalHolerite.id,
-                    name: e.name,
-                    pageNumber: e.pageNumber,
-                  })),
-                ];
+              // Save state after every batch using debounced save (max every 500ms)
+              const allExtracted: ExtractedEntry[] = [
+                ...existingEntries.map(e => ({
+                  holeriteId: e.originalHolerite.id,
+                  name: e.name,
+                  pageNumber: e.pageNumber,
+                })),
+                ...allHoleriteEntries.map(e => ({
+                  holeriteId: e.originalHolerite.id,
+                  name: e.name,
+                  pageNumber: e.pageNumber,
+                })),
+                ...entries.map(e => ({
+                  holeriteId: e.originalHolerite.id,
+                  name: e.name,
+                  pageNumber: e.pageNumber,
+                })),
+              ];
 
-                await saveProcessingState({
-                  startedAt: savedState?.startedAt || new Date(),
-                  status: 'extracting',
-                  holeritesIds: holeriteList.map(h => h.id),
-                  comprovantesIds: comprovanteList.map(c => c.id),
-                  currentHoleriteIndex: index,
-                  currentPageNumber: pagesProcessed + resumeFromPage,
-                  totalPages,
-                  extractedEntries: allExtracted,
-                  matchedPairs: [],
-                });
+              const stateToSave = {
+                startedAt: savedState?.startedAt || new Date(),
+                status: 'extracting' as const,
+                holeritesIds: holeriteList.map(h => h.id),
+                comprovantesIds: comprovanteList.map(c => c.id),
+                currentHoleriteIndex: index,
+                currentPageNumber: pagesProcessed + resumeFromPage,
+                totalPages,
+                extractedEntries: allExtracted,
+                matchedPairs: [],
+              };
+              
+              // Use immediate save at the end of each file, debounced otherwise
+              if (pagesProcessed === totalPages) {
+                await saveStateImmediate(stateToSave);
+              } else {
+                await saveStateDebounced(stateToSave);
               }
               
               // Small pause for UI responsiveness
