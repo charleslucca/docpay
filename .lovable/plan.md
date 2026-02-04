@@ -1,77 +1,77 @@
 
-# Plano: Persistência de Processamento Durante Navegação e Refresh
+# Plano: Melhorar Algoritmo de Matching para Aumentar Taxa de 27/70 para ~65/70
 
-## Problema Identificado
+## Análise do Problema
 
 ### Situação Atual
-O sistema já possui uma infraestrutura de persistência no IndexedDB (`processingPersistence.ts`), mas o processamento é perdido quando o usuário:
-1. **Muda de página/tab** no navegador
-2. **Fecha a aba** ou navegador
-3. **Executa refresh (F5)** na página
+- **Extração**: Funcionando (encontrou os nomes nos holerites)
+- **Matching**: Falhando (apenas 27 de 70 correspondências = 38%)
+- **Causa**: O algoritmo `findNameInPage` está muito restritivo
 
-### Causa Raiz
-O processamento OCR ocorre inteiramente em memória JavaScript. Quando a página é destruída (navegação/refresh):
-- Os workers do Tesseract.js são terminados
-- As Promises em andamento são canceladas
-- O estado React é perdido
-
-Embora exista código para salvar estado no IndexedDB periodicamente (linhas 512-543), há dois problemas:
-1. A persistência só ocorre durante o loop OCR - não há proteção para refresh/navegação
-2. Quando o usuário retorna, o dialog de resumo aparece, mas os workers precisam ser reinicializados
+### Problemas Identificados na Função `findNameInPage`
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│ PROBLEMA: Sem proteção contra fechamento da página         │
+│ PROBLEMA 1: Levenshtein muito restritivo                    │
 ├─────────────────────────────────────────────────────────────┤
+│ Permite apenas 1 erro por palavra, mas OCR "fast"           │
+│ pode introduzir 2-3 erros em palavras longas.               │
 │                                                             │
-│   [Usuário inicia processamento]                            │
-│              │                                              │
-│              ▼                                              │
-│   [Loop OCR em execução]                                    │
-│   └── Salva estado a cada X páginas ✓                       │
-│              │                                              │
-│              ▼                                              │
-│   [REFRESH ou FECHAMENTO DA ABA] ⚠️                          │
-│              │                                              │
-│              ▼                                              │
-│   - Workers terminados abruptamente                         │
-│   - Estado atual pode não ter sido salvo                    │
-│   - Usuário perde progresso desde último checkpoint         │
+│ Exemplo:                                                    │
+│   Holerite: "JOSENILDO"                                     │
+│   Comprovante (OCR): "JOSENIIDO" (2 erros)                  │
+│   Resultado: NÃO MATCH (deveria dar match)                  │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ PROBLEMA 2: Threshold de 80% muito alto                     │
+├─────────────────────────────────────────────────────────────┤
+│ Nome com 3 palavras: 80% = 2.4 → arredonda para 3           │
+│ Exige TODAS as palavras (deveria ser 2)                     │
 │                                                             │
+│ Exemplo:                                                    │
+│   Nome: "MARIA SILVA SANTOS" (3 palavras)                   │
+│   Encontrado: "MARIA" + "SANTOS" (2 palavras)               │
+│   Resultado: FALHA (precisa 3, encontrou 2)                 │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ PROBLEMA 3: Busca de proximidade usa só primeiro índice     │
+├─────────────────────────────────────────────────────────────┤
+│ indexOf() retorna só a primeira ocorrência                  │
+│ Nome pode aparecer em posição diferente                     │
+│                                                             │
+│ Exemplo:                                                    │
+│   Texto: "BANCO: MARIA ... (500 chars) ... FAVORECIDO: MARIA SILVA"
+│   indexOf("MARIA") = posição 7                              │
+│   indexOf("SILVA") = posição 550                            │
+│   Distância = 543 > 100 → FALHA                             │
+│   Mas há "MARIA SILVA" juntos na posição 530!               │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ PROBLEMA 4: Ignora palavras curtas importantes              │
+├─────────────────────────────────────────────────────────────┤
+│ Filtra palavras < 3 caracteres                              │
+│ "DA", "DE", "DOS" são descartados                           │
+│                                                             │
+│ Mas isso pode causar confusão:                              │
+│   "MARIA DA SILVA" → ["MARIA", "SILVA"]                     │
+│   "MARIA SILVA" → ["MARIA", "SILVA"]                        │
+│   Ambos podem dar match incorreto                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Solução Proposta
+## Solução: Reescrever `findNameInPage` com Matching Mais Tolerante
 
-### Estratégia Multi-Camada
+### Estratégia Multi-Nível
 
-1. **Salvar estado antes do fechamento** (`beforeunload` event)
-2. **Salvar estado mais frequentemente** (a cada página processada)
-3. **Implementar Web Worker para OCR isolado** (futuro - melhoria opcional)
-4. **Mostrar aviso ao sair durante processamento**
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ SOLUÇÃO: Proteção multi-camada                              │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   [beforeunload]                                            │
-│   └── Aviso: "Processamento em andamento, deseja sair?"     │
-│   └── Salvar estado atual imediatamente no IndexedDB        │
-│                                                             │
-│   [Salvar a cada página]                                    │
-│   └── Checkpoint granular (máximo ~2s de perda)             │
-│                                                             │
-│   [Ao retornar]                                             │
-│   └── Detectar estado salvo                                 │
-│   └── Mostrar dialog de resumo                              │
-│   └── Restaurar arquivos + progresso do IndexedDB           │
-│   └── Continuar do checkpoint                               │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+1. **Match exato** (mais rápido)
+2. **Match por primeiro + último nome** (com busca de todas ocorrências)
+3. **Match fuzzy proporcional** (erro permitido = ~20% do tamanho da palavra)
+4. **Match por substring significativa** (se >60% do nome está contido)
 
 ---
 
@@ -79,149 +79,149 @@ Embora exista código para salvar estado no IndexedDB periodicamente (linhas 512
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Adicionar `beforeunload` listener, salvar estado mais frequentemente |
-| `src/pages/Index.tsx` | Integrar listener de navegação |
-| `src/lib/processingPersistence.ts` | Adicionar função de salvamento síncrono para `beforeunload` |
+| `src/lib/pdfUtils.ts` | Reescrever `findNameInPage` com matching mais tolerante |
 
 ---
 
-## Detalhes Técnicos
+## Implementação Detalhada
 
-### 1. Listener `beforeunload` para Aviso e Salvamento
-
-Adicionar ao `useDocumentProcessor.ts`:
+### Nova Função `findNameInPage`
 
 ```typescript
-// Salvar estado imediatamente quando usuário tenta sair
-useEffect(() => {
-  const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-    if (status.step !== 'idle' && status.step !== 'completed') {
-      // Mostrar aviso do navegador
-      e.preventDefault();
-      e.returnValue = 'O processamento está em andamento. Deseja realmente sair?';
-      
-      // Tentar salvar estado (síncrono não é possível, mas podemos usar beacon)
-      // O estado mais recente já estará no IndexedDB devido aos checkpoints frequentes
-      return e.returnValue;
+export function findNameInPage(pageText: string, targetName: string): boolean {
+  // Normalização robusta
+  const normalize = (s: string) => s
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')  // Remove acentos
+    .replace(/[^A-Z\s]/g, '')          // Remove números/símbolos
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const normalizedTarget = normalize(targetName);
+  const normalizedPage = normalize(pageText);
+  
+  // 1. MATCH EXATO - mais rápido
+  if (normalizedPage.includes(normalizedTarget)) {
+    console.log('[Match] Exato:', targetName);
+    return true;
+  }
+  
+  // 2. MATCH PRIMEIRO + ÚLTIMO NOME com busca de TODAS ocorrências
+  const nameParts = normalizedTarget.split(' ').filter(p => p.length > 2);
+  if (nameParts.length >= 2) {
+    const firstName = nameParts[0];
+    const lastName = nameParts[nameParts.length - 1];
+    
+    // Encontrar TODAS as ocorrências do primeiro nome
+    const allFirstPositions = findAllOccurrences(normalizedPage, firstName);
+    const allLastPositions = findAllOccurrences(normalizedPage, lastName);
+    
+    // Verificar se algum par está próximo (dentro de 150 caracteres)
+    for (const firstPos of allFirstPositions) {
+      for (const lastPos of allLastPositions) {
+        if (Math.abs(firstPos - lastPos) < 150) {
+          console.log('[Match] Primeiro+Último nome:', targetName);
+          return true;
+        }
+      }
     }
-  };
+  }
+  
+  // 3. MATCH FUZZY com tolerância proporcional ao tamanho da palavra
+  const targetWords = normalizedTarget.split(' ').filter(w => w.length >= 3);
+  const pageWords = normalizedPage.split(' ').filter(w => w.length >= 3);
+  
+  let matchedWords = 0;
+  for (const targetWord of targetWords) {
+    // Tolerância: 1 erro para palavras curtas, 2 para médias, 3 para longas
+    const maxErrors = targetWord.length <= 5 ? 1 : 
+                      targetWord.length <= 8 ? 2 : 3;
+    
+    for (const pageWord of pageWords) {
+      // Primeiro tentar match exato (mais rápido)
+      if (pageWord === targetWord) {
+        matchedWords++;
+        break;
+      }
+      
+      // Só calcular Levenshtein se tamanhos são similares
+      if (Math.abs(pageWord.length - targetWord.length) <= maxErrors) {
+        if (levenshteinDistance(pageWord, targetWord) <= maxErrors) {
+          matchedWords++;
+          break;
+        }
+      }
+    }
+  }
+  
+  // Reduzir threshold de 80% para 70% (mais tolerante)
+  const requiredMatches = Math.max(2, Math.floor(targetWords.length * 0.7));
+  if (matchedWords >= requiredMatches) {
+    console.log(`[Match] Fuzzy ${matchedWords}/${targetWords.length}:`, targetName);
+    return true;
+  }
+  
+  // 4. MATCH POR SUBSTRING - se >60% do nome aparece como substring
+  const targetLength = normalizedTarget.replace(/\s/g, '').length;
+  let matchedChars = 0;
+  for (const word of targetWords) {
+    if (normalizedPage.includes(word)) {
+      matchedChars += word.length;
+    }
+  }
+  if (matchedChars / targetLength >= 0.6) {
+    console.log(`[Match] Substring ${matchedChars}/${targetLength}:`, targetName);
+    return true;
+  }
+  
+  return false;
+}
 
-  window.addEventListener('beforeunload', handleBeforeUnload);
-  return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-}, [status.step]);
-```
-
-### 2. Checkpoint Mais Frequente
-
-Modificar a lógica de salvamento no loop OCR para salvar **a cada página** (não a cada batch):
-
-```typescript
-// ANTES: if (pagesProcessed % (workerCount * 2) === 0 || pagesProcessed === totalPages)
-// DEPOIS: Salvar a cada página processada
-const shouldSave = true; // Sempre salvar (overhead mínimo no IndexedDB)
-
-if (shouldSave) {
-  await saveProcessingState({...});
+// Função auxiliar: encontrar TODAS as posições de uma substring
+function findAllOccurrences(text: string, search: string): number[] {
+  const positions: number[] = [];
+  let pos = 0;
+  while ((pos = text.indexOf(search, pos)) !== -1) {
+    positions.push(pos);
+    pos += 1;
+  }
+  return positions;
 }
 ```
 
-### 3. Salvamento Otimizado com Debounce
-
-Para evitar overhead excessivo, usar debounce de 500ms:
-
-```typescript
-// Debounced save - máximo 2 saves por segundo
-const lastSaveRef = useRef<number>(0);
-const SAVE_DEBOUNCE_MS = 500;
-
-const saveIfNeeded = async (state: ProcessingState) => {
-  const now = Date.now();
-  if (now - lastSaveRef.current >= SAVE_DEBOUNCE_MS) {
-    lastSaveRef.current = now;
-    await saveProcessingState(state);
-  }
-};
-```
-
-### 4. Indicador Visual de "Salvando..."
-
-Adicionar feedback visual quando o estado é salvo:
-
-```typescript
-// No ProcessingStatus.tsx ou similar
-{status.isSaving && (
-  <span className="text-xs text-muted-foreground animate-pulse">
-    Salvando progresso...
-  </span>
-)}
-```
-
-### 5. Resumo Automático ao Recarregar
-
-Melhorar a detecção de estado salvo para ser mais robusta:
-
-```typescript
-// No useEffect inicial
-useEffect(() => {
-  const checkAndPromptResume = async () => {
-    const savedState = await loadProcessingState();
-    if (savedState && savedState.status !== 'completed') {
-      // Estado incompleto encontrado - mostrar dialog
-      setHasSavedState(true);
-    }
-  };
-  
-  checkAndPromptResume();
-}, []);
-```
-
 ---
 
-## Fluxo de Recuperação
+## Mudanças Específicas
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Usuário fecha aba durante processamento                  │
-├─────────────────────────────────────────────────────────────┤
-│    beforeunload → Aviso exibido                             │
-│    Estado já está salvo (checkpoint recente)                │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 2. Usuário retorna ao site                                  │
-├─────────────────────────────────────────────────────────────┤
-│    useEffect detecta estado salvo no IndexedDB              │
-│    Dialog "Processamento Pendente" é exibido                │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 3. Usuário clica "Retomar"                                  │
-├─────────────────────────────────────────────────────────────┤
-│    Arquivos carregados do IndexedDB                         │
-│    Workers OCR reinicializados                              │
-│    Processamento continua da página salva                   │
-│    Cache de OCR evita reprocessar páginas já feitas         │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Resumo das Mudanças
-
-| Mudança | Impacto |
-|---------|---------|
-| Listener `beforeunload` | Avisa usuário e garante checkpoint final |
-| Checkpoint por página com debounce | Máximo ~500ms de perda ao fechar |
-| Indicador de salvamento | Feedback visual de persistência |
-| Detecção melhorada no mount | Sempre detecta estado incompleto |
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Levenshtein | Máximo 1 erro sempre | 1-3 erros proporcional ao tamanho |
+| Threshold | 80% (muito alto) | 70% (mais tolerante) |
+| Proximidade | Primeira ocorrência | Todas as ocorrências |
+| Mínimo de matches | 2 palavras | 2 palavras (mantido) |
+| Match substring | Não tinha | 60% do nome como substring |
+| Logging | Sem log | Logs para debug |
 
 ---
 
 ## Resultado Esperado
 
-- **Refresh (F5)**: Perda máxima de ~500ms de progresso, resumo automático disponível
-- **Fechar aba**: Aviso exibido, estado preservado
-- **Mudança de página**: Mesmo comportamento de refresh
-- **Retornar após horas**: Estado válido por 24h (já implementado em `cleanupOldData`)
+| Métrica | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 27/70 (38%) | ~60-65/70 (85-93%) |
+| Falsos positivos | ~0% | ~1-2% (risco aceitável) |
+
+---
+
+## Observações Técnicas
+
+1. **Performance**: As mudanças são apenas em comparações de string (operações O(n)), sem impacto significativo no tempo total.
+
+2. **Logging para Debug**: Adicionei logs `[Match]` para identificar qual estratégia está funcionando, útil para ajuste fino.
+
+3. **Risco de Falso Positivo**: Com matching mais tolerante, pode haver matches incorretos em casos de nomes muito similares. Se isso ocorrer, podemos adicionar validação por CPF como fallback.
+
+4. **Próximos Passos (se necessário)**: Se o matching ainda não for suficiente, podemos:
+   - Usar match por CPF (mais preciso que nome)
+   - Implementar score de confiança e mostrar matches "incertos" para revisão manual
