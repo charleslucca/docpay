@@ -4,10 +4,47 @@ let scheduler: Scheduler | null = null;
 let isInitializing = false;
 let initPromise: Promise<Scheduler> | null = null;
 
-// Dynamically set worker count based on available cores (min 2, max 6)
-const WORKER_COUNT = Math.min(6, Math.max(2, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
+// OPTIMIZED: Increase worker pool (min 4, max 8) for better parallelism
+const WORKER_COUNT = Math.min(8, Math.max(4, Math.floor((navigator.hardwareConcurrency || 4) * 0.75)));
 
 export type OcrProgressCallback = (progress: number) => void;
+
+// OCR result cache to avoid reprocessing pages
+const ocrResultCache = new Map<string, string>();
+const OCR_CACHE_MAX_SIZE = 1000;
+
+/**
+ * Generate a unique cache key for a page
+ */
+export function getOcrCacheKey(fileName: string, fileSize: number, pageNum: number): string {
+  return `${fileName}_${fileSize}_${pageNum}`;
+}
+
+/**
+ * Get cached OCR result if available
+ */
+export function getCachedOcrResult(key: string): string | undefined {
+  return ocrResultCache.get(key);
+}
+
+/**
+ * Store OCR result in cache with LRU eviction
+ */
+export function setCachedOcrResult(key: string, text: string): void {
+  // Evict oldest if over limit
+  if (ocrResultCache.size >= OCR_CACHE_MAX_SIZE) {
+    const firstKey = ocrResultCache.keys().next().value;
+    if (firstKey) ocrResultCache.delete(firstKey);
+  }
+  ocrResultCache.set(key, text);
+}
+
+/**
+ * Clear OCR result cache
+ */
+export function clearOcrCache(): void {
+  ocrResultCache.clear();
+}
 
 /**
  * Initialize OCR scheduler with worker pool (singleton pattern)
