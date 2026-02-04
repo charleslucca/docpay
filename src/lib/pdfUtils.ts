@@ -131,10 +131,16 @@ export function extractEmployeeName(text: string): string | null {
     // 4. Recibo de pagamento padrão
     /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CARGO))/,
     
-    // 5. Nome imediatamente antes de CPF
+    // 5. Padrão para "FAVORECIDO" em comprovantes bancários
+    /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
+    
+    // 6. Nome imediatamente antes de CPF
     /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
     
-    // 6. Linha com nome completo isolado
+    // 7. Nomes completos em maiúscula (2-5 palavras, 8-50 chars)
+    /\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b/,
+    
+    // 8. Linha com nome completo isolado
     /^([A-Z][A-Z\s]{8,40})$/m,
   ];
 
@@ -198,22 +204,85 @@ export function extractCPF(text: string): string | null {
   return null;
 }
 
-export function findNameInPage(pageText: string, targetName: string): boolean {
-  const normalizedTarget = targetName.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const normalizedPage = pageText.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+// Levenshtein distance for fuzzy matching (tolerates OCR errors)
+function levenshteinDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
   
+  const matrix: number[][] = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(0));
+  
+  for (let i = 0; i <= a.length; i++) matrix[0][i] = i;
+  for (let j = 0; j <= b.length; j++) matrix[j][0] = j;
+  
+  for (let j = 1; j <= b.length; j++) {
+    for (let i = 1; i <= a.length; i++) {
+      const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[j][i] = Math.min(
+        matrix[j][i - 1] + 1,
+        matrix[j - 1][i] + 1,
+        matrix[j - 1][i - 1] + indicator
+      );
+    }
+  }
+  
+  return matrix[b.length][a.length];
+}
+
+export function findNameInPage(pageText: string, targetName: string): boolean {
+  // Robust normalization: remove accents, symbols, normalize spaces
+  const normalize = (s: string) => s
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z\s]/g, '') // Remove everything except letters and spaces
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const normalizedTarget = normalize(targetName);
+  const normalizedPage = normalize(pageText);
+  
+  // 1. Exact match
   if (normalizedPage.includes(normalizedTarget)) {
     return true;
   }
   
-  // Partial match (first and last name)
-  const nameParts = normalizedTarget.split(/\s+/);
+  // 2. Match by first + last name with proximity check
+  const nameParts = normalizedTarget.split(' ').filter(p => p.length > 2);
   if (nameParts.length >= 2) {
     const firstName = nameParts[0];
     const lastName = nameParts[nameParts.length - 1];
+    
     if (normalizedPage.includes(firstName) && normalizedPage.includes(lastName)) {
-      return true;
+      // Verify proximity (first + last name should be close together)
+      const firstIdx = normalizedPage.indexOf(firstName);
+      const lastIdx = normalizedPage.indexOf(lastName);
+      if (Math.abs(firstIdx - lastIdx) < 100) {
+        return true;
+      }
     }
+  }
+  
+  // 3. Fuzzy match with 1-character tolerance per word (handles OCR errors)
+  const targetWords = normalizedTarget.split(' ').filter(w => w.length >= 3);
+  const pageWords = normalizedPage.split(' ').filter(w => w.length >= 3);
+  
+  let matchedWords = 0;
+  for (const targetWord of targetWords) {
+    for (const pageWord of pageWords) {
+      // Exact match or 1-character difference (Levenshtein)
+      if (pageWord === targetWord || 
+          (Math.abs(pageWord.length - targetWord.length) <= 1 && 
+           levenshteinDistance(pageWord, targetWord) <= 1)) {
+        matchedWords++;
+        break;
+      }
+    }
+  }
+  
+  // If 80% of name words were found, consider it a match
+  const requiredMatches = Math.ceil(targetWords.length * 0.8);
+  if (matchedWords >= requiredMatches && matchedWords >= 2) {
+    return true;
   }
   
   return false;
