@@ -204,6 +204,9 @@ export function extractCPF(text: string): string | null {
   return null;
 }
 
+// Debug flag - disable logs for performance
+const DEBUG_MATCH = false;
+
 // Levenshtein distance for fuzzy matching (tolerates OCR errors)
 function levenshteinDistance(a: string, b: string): number {
   if (a.length === 0) return b.length;
@@ -239,94 +242,183 @@ function findAllOccurrences(text: string, search: string): number[] {
   return positions;
 }
 
-export function findNameInPage(pageText: string, targetName: string): boolean {
-  // Robust normalization: remove accents, symbols, normalize spaces
-  const normalize = (s: string) => s
+// ============= OPTIMIZED MATCHING WITH PRE-PROCESSING =============
+
+/**
+ * Normalize text for matching: remove accents, convert to uppercase, keep only letters and spaces
+ */
+export function normalizeForMatch(text: string): string {
+  return text
     .toUpperCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Z\s]/g, '') // Remove everything except letters and spaces
+    .replace(/[^A-Z\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
 
-  const normalizedTarget = normalize(targetName);
-  const normalizedPage = normalize(pageText);
+/**
+ * Pre-processed page data for fast matching
+ */
+export interface PreparedPage {
+  normalized: string;
+  wordSet: Set<string>;
+  wordsByLength: Map<number, string[]>;
+}
+
+/**
+ * Pre-processed target name for fast matching
+ */
+export interface PreparedTarget {
+  original: string;
+  normalized: string;
+  words: string[];
+  firstName: string;
+  lastName: string;
+  requiredMatches: number;
+  charCount: number;
+}
+
+/**
+ * Prepare a page text for fast matching - call ONCE per page
+ */
+export function preparePageForMatch(pageText: string): PreparedPage {
+  const normalized = normalizeForMatch(pageText);
+  const words = normalized.split(' ').filter(w => w.length >= 3);
   
-  // 1. EXACT MATCH - fastest path
-  if (normalizedPage.includes(normalizedTarget)) {
-    console.log('[Match] Exato:', targetName);
+  const wordSet = new Set(words);
+  const wordsByLength = new Map<number, string[]>();
+  
+  for (const word of words) {
+    const len = word.length;
+    if (!wordsByLength.has(len)) {
+      wordsByLength.set(len, []);
+    }
+    wordsByLength.get(len)!.push(word);
+  }
+  
+  return { normalized, wordSet, wordsByLength };
+}
+
+/**
+ * Prepare a target name for fast matching - call ONCE per employee
+ */
+export function prepareTargetNameForMatch(name: string): PreparedTarget {
+  const normalized = normalizeForMatch(name);
+  const words = normalized.split(' ').filter(w => w.length >= 3);
+  
+  return {
+    original: name,
+    normalized,
+    words,
+    firstName: words[0] || '',
+    lastName: words.length >= 2 ? words[words.length - 1] : '',
+    requiredMatches: Math.max(2, Math.floor(words.length * 0.7)),
+    charCount: normalized.replace(/\s/g, '').length,
+  };
+}
+
+/**
+ * Fast matching using pre-processed data
+ * Returns true if target name is found in page
+ */
+export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): boolean {
+  // 1. EXACT MATCH - fastest path (using pre-normalized strings)
+  if (page.normalized.includes(target.normalized)) {
+    if (DEBUG_MATCH) console.log('[Match] Exato:', target.original);
     return true;
   }
   
-  // 2. FIRST + LAST NAME with ALL occurrences search (fixes indexOf limitation)
-  const nameParts = normalizedTarget.split(' ').filter(p => p.length > 2);
-  if (nameParts.length >= 2) {
-    const firstName = nameParts[0];
-    const lastName = nameParts[nameParts.length - 1];
+  // 2. FIRST + LAST NAME proximity check
+  if (target.firstName && target.lastName) {
+    const allFirstPositions = findAllOccurrences(page.normalized, target.firstName);
+    const allLastPositions = findAllOccurrences(page.normalized, target.lastName);
     
-    // Find ALL occurrences of first and last name
-    const allFirstPositions = findAllOccurrences(normalizedPage, firstName);
-    const allLastPositions = findAllOccurrences(normalizedPage, lastName);
-    
-    // Check if any pair is within 150 characters (increased from 100)
+    // Check if any pair is within 150 characters
     for (const firstPos of allFirstPositions) {
       for (const lastPos of allLastPositions) {
         if (Math.abs(firstPos - lastPos) < 150) {
-          console.log('[Match] Primeiro+Último nome:', targetName);
+          if (DEBUG_MATCH) console.log('[Match] Primeiro+Último nome:', target.original);
           return true;
         }
       }
     }
   }
   
-  // 3. FUZZY MATCH with proportional tolerance (handles OCR errors better)
-  const targetWords = normalizedTarget.split(' ').filter(w => w.length >= 3);
-  const pageWords = normalizedPage.split(' ').filter(w => w.length >= 3);
-  
+  // 3. FUZZY MATCH with optimized word lookup
   let matchedWords = 0;
-  for (const targetWord of targetWords) {
-    // Proportional tolerance: 1 error for short, 2 for medium, 3 for long words
+  const targetWordCount = target.words.length;
+  
+  for (let i = 0; i < targetWordCount; i++) {
+    const targetWord = target.words[i];
+    
+    // Early exit: if remaining words can't reach required matches
+    const remainingWords = targetWordCount - i;
+    if (matchedWords + remainingWords < target.requiredMatches) {
+      break;
+    }
+    
+    // Exact match using Set (O(1) lookup)
+    if (page.wordSet.has(targetWord)) {
+      matchedWords++;
+      if (matchedWords >= target.requiredMatches) {
+        if (DEBUG_MATCH) console.log(`[Match] Fuzzy exato ${matchedWords}/${targetWordCount}:`, target.original);
+        return true;
+      }
+      continue;
+    }
+    
+    // Fuzzy: proportional tolerance
     const maxErrors = targetWord.length <= 5 ? 1 : 
                       targetWord.length <= 8 ? 2 : 3;
     
-    for (const pageWord of pageWords) {
-      // First try exact match (fastest)
-      if (pageWord === targetWord) {
-        matchedWords++;
-        break;
-      }
-      
-      // Only calculate Levenshtein if sizes are similar
-      if (Math.abs(pageWord.length - targetWord.length) <= maxErrors) {
-        if (levenshteinDistance(pageWord, targetWord) <= maxErrors) {
-          matchedWords++;
-          break;
+    // Search only in buckets of similar length (HUGE optimization)
+    let foundFuzzy = false;
+    for (let lenDiff = 0; lenDiff <= maxErrors && !foundFuzzy; lenDiff++) {
+      for (const len of [targetWord.length - lenDiff, targetWord.length + lenDiff]) {
+        if (len < 3) continue;
+        const candidates = page.wordsByLength.get(len);
+        if (!candidates) continue;
+        
+        for (const pageWord of candidates) {
+          if (levenshteinDistance(pageWord, targetWord) <= maxErrors) {
+            matchedWords++;
+            foundFuzzy = true;
+            break;
+          }
         }
+        if (foundFuzzy) break;
       }
     }
-  }
-  
-  // Reduced threshold from 80% to 70% (more tolerant)
-  const requiredMatches = Math.max(2, Math.floor(targetWords.length * 0.7));
-  if (matchedWords >= requiredMatches) {
-    console.log(`[Match] Fuzzy ${matchedWords}/${targetWords.length}:`, targetName);
-    return true;
+    
+    if (matchedWords >= target.requiredMatches) {
+      if (DEBUG_MATCH) console.log(`[Match] Fuzzy ${matchedWords}/${targetWordCount}:`, target.original);
+      return true;
+    }
   }
   
   // 4. SUBSTRING MATCH - if >60% of name characters are present
-  const targetLength = normalizedTarget.replace(/\s/g, '').length;
-  let matchedChars = 0;
-  for (const word of targetWords) {
-    if (normalizedPage.includes(word)) {
-      matchedChars += word.length;
+  if (target.charCount > 0) {
+    let matchedChars = 0;
+    for (const word of target.words) {
+      if (page.normalized.includes(word)) {
+        matchedChars += word.length;
+      }
     }
-  }
-  if (targetLength > 0 && matchedChars / targetLength >= 0.6) {
-    console.log(`[Match] Substring ${matchedChars}/${targetLength}:`, targetName);
-    return true;
+    if (matchedChars / target.charCount >= 0.6) {
+      if (DEBUG_MATCH) console.log(`[Match] Substring ${matchedChars}/${target.charCount}:`, target.original);
+      return true;
+    }
   }
   
   return false;
+}
+
+// Legacy function - wrapper for compatibility
+export function findNameInPage(pageText: string, targetName: string): boolean {
+  const preparedPage = preparePageForMatch(pageText);
+  const preparedTarget = prepareTargetNameForMatch(targetName);
+  return findNameInPreparedPage(preparedPage, preparedTarget);
 }
 
 export async function createCombinedPdf(
