@@ -1,108 +1,161 @@
 
-# Plano: Correção de Travamento com Arquivos Menores
 
-## Problemas Identificados
+# Plano: Correção de Travamento no Processamento de Comprovantes de 70 Páginas
 
-### 1. Race Condition na Contagem de Páginas Processadas
+## Problema Identificado
 
-O arquivo de amostra tem apenas 6 páginas. O problema é que quando páginas vêm do cache:
+A análise do código revelou que quando o comprovante tem 70 páginas que **todas precisam de OCR** (é um PDF escaneado), o processamento trava na barra de progresso ~60%.
+
+### Causa Raiz: Conflito entre Pipelines de OCR
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│ PROBLEMA: Contagem duplicada de pagesProcessed              │
+│ PROCESSAMENTO DE HOLERITES (Funciona bem)                   │
 ├─────────────────────────────────────────────────────────────┤
-│ renderLoop (linha 471-481):                                 │
-│   if (cachedText !== undefined) {                           │
-│     // Processa do cache                                    │
-│     pagesProcessed++;  ← Incrementa aqui                    │
-│     continue;          ← Não adiciona à queue               │
-│   }                                                         │
+│ Usa pipeline paralelo sofisticado:                          │
+│   renderLoop() ←→ ocrLoop()                                 │
+│   - Fila de canvases                                        │
+│   - Progresso atualizado a cada batch                       │
+│   - Workers usados eficientemente                           │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ PROCESSAMENTO DE COMPROVANTES (Problema)                    │
+├─────────────────────────────────────────────────────────────┤
+│ Usa abordagem mais simples:                                 │
+│   for each batch:                                           │
+│     1. Render 4 canvases                                    │
+│     2. OCR 4 canvases (usa extractTextWithOCR)              │
+│     3. onProgress(...)  ← Chamado após TODOS os 4           │
 │                                                             │
-│ ocrLoop (linha 549):                                        │
-│   pagesProcessed++;    ← Também incrementa aqui             │
+│ PROBLEMA: extractTextWithOCR loga para CADA página          │
+│ console.log('[OCR] Starting single page recognition...');   │
+│ = 70 logs!                                                  │
 │                                                             │
-│ RESULTADO: pagesProcessed pode ser incrementado 2x!         │
-│ OU: ocrLoop nunca incrementa se tudo veio do cache          │
+│ PROBLEMA: O progresso só atualiza após o batch completo     │
+│ Com batches de 4 páginas e 70 páginas = 18 batches          │
+│ Cada batch pode levar 4-8 segundos sem feedback visual      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 2. IndexedDB Connection Closing
+### Causas Secundárias
 
-O erro "database connection is closing" ocorre porque:
-- A variável `db` é compartilhada como singleton
-- Quando o componente é desmontado/remontado rapidamente, o DB pode ser fechado enquanto transações estão pendentes
-
-### 3. OCR "Fast" Model Produz Resultados Ruins
-
-O console mostra:
-```
-[DEBUG] Nome extraído: DESNCAO OT RETRENCA
-```
-Que deveria ser um nome como "CARLOS HENRIQUE DA SILVA MARIANO". O modelo "fast" está falhando com a qualidade dos PDFs escaneados.
+1. **Logging excessivo**: 70 páginas = 70 logs "[OCR] Starting single page recognition..." que podem sobrecarregar o console
+2. **Feedback visual insuficiente**: O progresso só atualiza após cada batch de 4 páginas
+3. **Timeout potencial**: O scheduler pode demorar para processar 70 páginas (~1-2s cada = 70-140s total)
 
 ---
 
-## Soluções
+## Solução Proposta
 
-### Correção 1: Separar Contadores de Render vs OCR
+### 1. Adicionar Timeout de Segurança no OCR
 
-Usar contadores separados para evitar race condition:
+Adicionar um timeout para evitar que o processamento trave indefinidamente:
 
 ```typescript
-// Em useDocumentProcessor.ts
-let renderedPages = 0;      // Páginas que o renderLoop processou
-let ocrProcessedPages = 0;  // Páginas que o ocrLoop processou
-let cacheHitPages = 0;      // Páginas que vieram do cache
+// Em ocrUtils.ts - extractTextWithOCR
+const SINGLE_PAGE_TIMEOUT_MS = 30000; // 30 segundos por página
 
-// renderLoop:
-if (cachedText !== undefined) {
-  cacheHitPages++;
-  // Extrair nome diretamente, sem adicionar à queue
-  continue;
-}
-renderedPages++; // Só incrementa se realmente renderizou
-
-// ocrLoop termination check:
-const totalProcessed = ocrProcessedPages + cacheHitPages;
-if (renderingComplete && canvasQueue.length === 0 && totalProcessed >= totalPages) {
-  break;
+export async function extractTextWithOCR(
+  imageSource: string | HTMLCanvasElement,
+  onProgress?: OcrProgressCallback
+): Promise<string> {
+  const sched = await initOcrScheduler();
+  
+  const startTime = performance.now();
+  
+  // Adicionar timeout para evitar travamento
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('OCR timeout')), SINGLE_PAGE_TIMEOUT_MS);
+  });
+  
+  try {
+    const result = await Promise.race([
+      sched.addJob('recognize', imageSource),
+      timeoutPromise,
+    ]);
+    
+    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+    console.log(`[OCR] Page done in ${duration}s, confidence: ${result.data.confidence}%`);
+    
+    onProgress?.(100);
+    return result.data.text;
+  } catch (error) {
+    console.error('[OCR] Page failed:', error);
+    return ''; // Retornar string vazia em vez de travar
+  }
 }
 ```
 
-### Correção 2: IndexedDB Connection Handling
+### 2. Progresso Mais Granular no Processamento de Comprovantes
 
-Reabrir conexão se estiver fechada:
+Modificar `getCachedPageTextsWithOCR` para atualizar progresso **a cada página**, não a cada batch:
 
 ```typescript
-// Em processingPersistence.ts
-async function openDatabase(): Promise<IDBDatabase> {
-  // Se a conexão anterior foi fechada, limpar referência
-  if (db && db.name === '') {
-    db = null;
-    dbPromise = null;
+// Em pdfCache.ts - getCachedPageTextsWithOCR
+
+// STEP 2: Process OCR pages in parallel batches (if any)
+if (pagesNeedingOcr.length > 0) {
+  onProgress?.(0, totalPages, true);
+  
+  const OCR_BATCH_SIZE = 4;
+  let ocrCompleted = 0;
+  
+  for (let i = 0; i < pagesNeedingOcr.length; i += OCR_BATCH_SIZE) {
+    if (shouldCancel?.()) break;
+    
+    const batch = pagesNeedingOcr.slice(i, i + OCR_BATCH_SIZE);
+    
+    // Render and OCR batch in parallel, mas atualizar progresso individualmente
+    const batchPromises = batch.map(async (pageNum) => {
+      const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_HIGH, true);
+      const text = await ocrExtractor(canvas);
+      
+      // Atualizar progresso imediatamente após cada página (não após batch)
+      ocrCompleted++;
+      onProgress?.(nativeCount + ocrCompleted, totalPages, true);
+      
+      return { pageNum, text };
+    });
+    
+    const batchResults = await Promise.all(batchPromises);
+    
+    for (const { pageNum, text } of batchResults) {
+      pageTexts[pageNum - 1] = text;
+    }
+    
+    // Pause para UI
+    if (i + OCR_BATCH_SIZE < pagesNeedingOcr.length) {
+      await new Promise(r => setTimeout(r, 10));
+    }
+  }
+}
+```
+
+### 3. Reduzir Logging Excessivo
+
+Remover log por página individual, manter apenas log de batch:
+
+```typescript
+// Em ocrUtils.ts
+export async function extractTextWithOCR(
+  imageSource: string | HTMLCanvasElement,
+  onProgress?: OcrProgressCallback
+): Promise<string> {
+  const sched = await initOcrScheduler();
+  
+  const startTime = performance.now();
+  const result = await sched.addJob('recognize', imageSource);
+  
+  // Log condensado (sem "Starting...")
+  const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+  // Só logar se demorar mais de 2s (evita spam)
+  if (parseFloat(duration) > 2) {
+    console.log(`[OCR] Slow page: ${duration}s, confidence: ${result.data.confidence}%`);
   }
   
-  if (db) return db;
-  // ... resto do código
-}
-```
-
-### Correção 3: Timeout de Segurança no Loop OCR
-
-Adicionar timeout máximo para evitar loops infinitos:
-
-```typescript
-// Timeout de 5 minutos para arquivos pequenos
-const MAX_LOOP_WAIT_MS = 300000; // 5 minutos
-const loopStartTime = Date.now();
-
-while (!ocrComplete && !cancelledRef.current) {
-  // Check timeout
-  if (Date.now() - loopStartTime > MAX_LOOP_WAIT_MS) {
-    console.error('[OCR] Loop timeout - forcing exit');
-    break;
-  }
-  // ... resto do loop
+  onProgress?.(100);
+  return result.data.text;
 }
 ```
 
@@ -112,128 +165,8 @@ while (!ocrComplete && !cancelledRef.current) {
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Corrigir contadores e adicionar timeout |
-| `src/lib/processingPersistence.ts` | Melhorar handling de conexão fechada |
-
----
-
-## Detalhes da Implementação
-
-### useDocumentProcessor.ts - Correção de Contadores
-
-**Linhas ~452-620:**
-
-Mudar a lógica para usar sinais mais claros:
-
-```typescript
-// ANTES: usando pagesProcessed compartilhado
-let pagesProcessed = 0;
-
-// DEPOIS: sinais separados
-let cacheHits = 0;
-let canvasesQueued = 0;
-let ocrCompleted = 0;
-
-// renderLoop agora só conta o que faz
-const renderLoop = async () => {
-  while (nextPageToRender <= totalPages && !cancelledRef.current) {
-    const pageNum = nextPageToRender++;
-    
-    const cacheKey = getOcrCacheKey(...);
-    const cachedText = getCachedOcrResult(cacheKey);
-    
-    if (cachedText !== undefined) {
-      // Cache hit - process directly
-      cacheHits++;
-      const extractedName = extractEmployeeName(cachedText);
-      if (extractedName) {
-        entries.push({...});
-      }
-      continue; // Não adiciona à queue
-    }
-    
-    // Cache miss - render and queue
-    const canvas = await renderPageForOCR(...);
-    canvasQueue.push({ pageNum, canvas });
-    canvasesQueued++;
-  }
-  renderingComplete = true;
-};
-
-// ocrLoop só conta o que processa da queue
-const ocrLoop = async () => {
-  while (!cancelledRef.current) {
-    // Collect batch
-    const batch = [];
-    while (batch.length < workerCount && canvasQueue.length > 0) {
-      batch.push(canvasQueue.shift()!);
-    }
-    
-    if (batch.length > 0) {
-      // Process OCR...
-      ocrCompleted += batch.length;
-    }
-    
-    // Termination: render done + queue empty + all OCR done
-    if (renderingComplete && canvasQueue.length === 0) {
-      // Double check: all queued canvases were processed
-      if (ocrCompleted >= canvasesQueued) {
-        break;
-      }
-    }
-    
-    if (canvasQueue.length === 0) {
-      await new Promise(r => setTimeout(r, 20));
-    }
-  }
-};
-```
-
-### processingPersistence.ts - Conexão Robusta
-
-**Linhas ~54-96:**
-
-```typescript
-let db: IDBDatabase | null = null;
-let dbPromise: Promise<IDBDatabase> | null = null;
-
-async function openDatabase(): Promise<IDBDatabase> {
-  // Check if existing connection is still valid
-  if (db) {
-    try {
-      // Test if connection is alive by checking objectStoreNames
-      const _ = db.objectStoreNames;
-      return db;
-    } catch {
-      // Connection closed, reset
-      console.log('[Persistence] Connection was closed, reopening...');
-      db = null;
-      dbPromise = null;
-    }
-  }
-  
-  if (dbPromise) return dbPromise;
-  
-  dbPromise = new Promise((resolve, reject) => {
-    // ... código existente
-  });
-  
-  return dbPromise;
-}
-
-// Adicionar handler para conexão fechada inesperadamente
-function setupConnectionHandler(database: IDBDatabase) {
-  database.onclose = () => {
-    console.log('[Persistence] Database connection closed unexpectedly');
-    db = null;
-    dbPromise = null;
-  };
-  
-  database.onerror = (event) => {
-    console.error('[Persistence] Database error:', event);
-  };
-}
-```
+| `src/lib/ocrUtils.ts` | Adicionar timeout e reduzir logging |
+| `src/lib/pdfCache.ts` | Progresso mais granular por página |
 
 ---
 
@@ -241,15 +174,17 @@ function setupConnectionHandler(database: IDBDatabase) {
 
 | Problema | Solução |
 |----------|---------|
-| Contadores dessincronizados | Usar `cacheHits`, `canvasesQueued`, `ocrCompleted` separados |
-| Loop infinito | Terminar quando `renderingComplete && ocrCompleted >= canvasesQueued` |
-| IndexedDB fechado | Verificar conexão antes de usar, reabrir se necessário |
-| Timeout de segurança | Adicionar MAX_LOOP_WAIT de 5 minutos |
+| Travamento sem feedback | Timeout de 30s por página com fallback |
+| Progresso atualiza só após batch | Atualizar após cada página individual |
+| 70 logs "Starting..." | Só logar páginas lentas (>2s) |
+| Sem indicação de progresso real | Mostrar "pág. X/70" durante OCR |
 
 ---
 
 ## Resultado Esperado
 
-- **Arquivos pequenos (6 páginas):** Processados em ~10-15 segundos sem travamento
-- **IndexedDB:** Conexão resiliente a remontagens de componente
-- **Fallback:** Timeout impede loop infinito mesmo em edge cases
+- **70 páginas de comprovante**: Processadas em ~70-120 segundos (1-2 min)
+- **Feedback visual**: Barra atualiza a cada página processada
+- **Sem travamento**: Timeout garante que páginas problemáticas não bloqueiam
+- **Console limpo**: Apenas logs significativos (páginas lentas)
+
