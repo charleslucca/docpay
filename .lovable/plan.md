@@ -1,190 +1,118 @@
 
-
-# Plano: Correção de Travamento no Processamento de Comprovantes de 70 Páginas
-
-## Problema Identificado
-
-A análise do código revelou que quando o comprovante tem 70 páginas que **todas precisam de OCR** (é um PDF escaneado), o processamento trava na barra de progresso ~60%.
-
-### Causa Raiz: Conflito entre Pipelines de OCR
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ PROCESSAMENTO DE HOLERITES (Funciona bem)                   │
-├─────────────────────────────────────────────────────────────┤
-│ Usa pipeline paralelo sofisticado:                          │
-│   renderLoop() ←→ ocrLoop()                                 │
-│   - Fila de canvases                                        │
-│   - Progresso atualizado a cada batch                       │
-│   - Workers usados eficientemente                           │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│ PROCESSAMENTO DE COMPROVANTES (Problema)                    │
-├─────────────────────────────────────────────────────────────┤
-│ Usa abordagem mais simples:                                 │
-│   for each batch:                                           │
-│     1. Render 4 canvases                                    │
-│     2. OCR 4 canvases (usa extractTextWithOCR)              │
-│     3. onProgress(...)  ← Chamado após TODOS os 4           │
-│                                                             │
-│ PROBLEMA: extractTextWithOCR loga para CADA página          │
-│ console.log('[OCR] Starting single page recognition...');   │
-│ = 70 logs!                                                  │
-│                                                             │
-│ PROBLEMA: O progresso só atualiza após o batch completo     │
-│ Com batches de 4 páginas e 70 páginas = 18 batches          │
-│ Cada batch pode levar 4-8 segundos sem feedback visual      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Causas Secundárias
-
-1. **Logging excessivo**: 70 páginas = 70 logs "[OCR] Starting single page recognition..." que podem sobrecarregar o console
-2. **Feedback visual insuficiente**: O progresso só atualiza após cada batch de 4 páginas
-3. **Timeout potencial**: O scheduler pode demorar para processar 70 páginas (~1-2s cada = 70-140s total)
+## Objetivo
+Destravar a etapa **“match / Buscando correspondências em memória…”** após o OCR do recibo, evitando que o navegador fique “congelado” e reduzindo drasticamente o tempo de matching.
 
 ---
 
-## Solução Proposta
+## Diagnóstico (causa mais provável)
+Hoje o matching faz um “triplo loop” totalmente **CPU-bound** (sem `await` dentro):
 
-### 1. Adicionar Timeout de Segurança no OCR
+- Para cada **comprovante**  
+  - Para cada **funcionário extraído dos holerites**  
+    - Para cada **página do comprovante (70 páginas)**  
+      - chama `findNameInPage(pageText, entry.name)`
 
-Adicionar um timeout para evitar que o processamento trave indefinidamente:
+E `findNameInPage` atualmente:
+- normaliza **o texto inteiro da página** (`normalize(pageText)`) *toda vez*  
+- faz `split` em palavras *toda vez*  
+- pode calcular Levenshtein em vários pares de palavras
 
-```typescript
-// Em ocrUtils.ts - extractTextWithOCR
-const SINGLE_PAGE_TIMEOUT_MS = 30000; // 30 segundos por página
-
-export async function extractTextWithOCR(
-  imageSource: string | HTMLCanvasElement,
-  onProgress?: OcrProgressCallback
-): Promise<string> {
-  const sched = await initOcrScheduler();
-  
-  const startTime = performance.now();
-  
-  // Adicionar timeout para evitar travamento
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('OCR timeout')), SINGLE_PAGE_TIMEOUT_MS);
-  });
-  
-  try {
-    const result = await Promise.race([
-      sched.addJob('recognize', imageSource),
-      timeoutPromise,
-    ]);
-    
-    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-    console.log(`[OCR] Page done in ${duration}s, confidence: ${result.data.confidence}%`);
-    
-    onProgress?.(100);
-    return result.data.text;
-  } catch (error) {
-    console.error('[OCR] Page failed:', error);
-    return ''; // Retornar string vazia em vez de travar
-  }
-}
-```
-
-### 2. Progresso Mais Granular no Processamento de Comprovantes
-
-Modificar `getCachedPageTextsWithOCR` para atualizar progresso **a cada página**, não a cada batch:
-
-```typescript
-// Em pdfCache.ts - getCachedPageTextsWithOCR
-
-// STEP 2: Process OCR pages in parallel batches (if any)
-if (pagesNeedingOcr.length > 0) {
-  onProgress?.(0, totalPages, true);
-  
-  const OCR_BATCH_SIZE = 4;
-  let ocrCompleted = 0;
-  
-  for (let i = 0; i < pagesNeedingOcr.length; i += OCR_BATCH_SIZE) {
-    if (shouldCancel?.()) break;
-    
-    const batch = pagesNeedingOcr.slice(i, i + OCR_BATCH_SIZE);
-    
-    // Render and OCR batch in parallel, mas atualizar progresso individualmente
-    const batchPromises = batch.map(async (pageNum) => {
-      const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_HIGH, true);
-      const text = await ocrExtractor(canvas);
-      
-      // Atualizar progresso imediatamente após cada página (não após batch)
-      ocrCompleted++;
-      onProgress?.(nativeCount + ocrCompleted, totalPages, true);
-      
-      return { pageNum, text };
-    });
-    
-    const batchResults = await Promise.all(batchPromises);
-    
-    for (const { pageNum, text } of batchResults) {
-      pageTexts[pageNum - 1] = text;
-    }
-    
-    // Pause para UI
-    if (i + OCR_BATCH_SIZE < pagesNeedingOcr.length) {
-      await new Promise(r => setTimeout(r, 10));
-    }
-  }
-}
-```
-
-### 3. Reduzir Logging Excessivo
-
-Remover log por página individual, manter apenas log de batch:
-
-```typescript
-// Em ocrUtils.ts
-export async function extractTextWithOCR(
-  imageSource: string | HTMLCanvasElement,
-  onProgress?: OcrProgressCallback
-): Promise<string> {
-  const sched = await initOcrScheduler();
-  
-  const startTime = performance.now();
-  const result = await sched.addJob('recognize', imageSource);
-  
-  // Log condensado (sem "Starting...")
-  const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-  // Só logar se demorar mais de 2s (evita spam)
-  if (parseFloat(duration) > 2) {
-    console.log(`[OCR] Slow page: ${duration}s, confidence: ${result.data.confidence}%`);
-  }
-  
-  onProgress?.(100);
-  return result.data.text;
-}
-```
+Isso explode o custo (ex.: 1 comprovante * 70 funcionários * 70 páginas = 4900 chamadas), e como é tudo síncrono no main-thread, a UI aparenta travada no “match”.
 
 ---
 
-## Arquivos a Modificar
+## Correção proposta (alto impacto, baixo risco)
+### A) Pré-processar os textos do comprovante (uma única vez por página)
+Em vez de normalizar e tokenizar a mesma página 70 vezes, vamos preparar cada página 1x:
 
-| Arquivo | Alteração |
-|---------|-----------|
-| `src/lib/ocrUtils.ts` | Adicionar timeout e reduzir logging |
-| `src/lib/pdfCache.ts` | Progresso mais granular por página |
+- `normalizedPage` (string normalizada)
+- `pageWords` (lista de palavras)
+- `pageWordSet` (Set para match exato)
+- `pageWordsByLength` (Map para reduzir candidatos no fuzzy)
+
+Isso reduz o trabalho de “normalização de página” de **4900x** para **70x**.
+
+### B) Pré-processar os nomes dos holerites (uma única vez por funcionário)
+Preparar `normalizedTarget`, `targetWords`, `firstName`, `lastName` uma única vez por entrada.
+
+### C) Fazer o loop de matching “cooperativo” (não travar UI)
+Adicionar “yields” no matching (ex.: a cada 200–500 comparações):
+- `await pauseBetweenBatches()` (já existe e usa `requestIdleCallback` quando possível)
+
+Além disso, atualizar o status de forma **throttled** (ex.: no máximo 4x/seg) para não gerar re-render excessivo.
+
+### D) Reduzir logs no match
+Os `console.log('[Match] ...')` dentro de `findNameInPage` podem gerar volume alto em caso de falso positivo. Vamos colocar logs atrás de um `DEBUG_MATCH = false` (ou remover logs).
 
 ---
 
-## Resumo das Correções
+## Mudanças de código (arquivos)
+### 1) `src/lib/pdfUtils.ts` — separar “preparo” e “match”
+Adicionar:
+- `normalizeForMatch(text: string): string`
+- `preparePageForMatch(pageText: string): PreparedPage`
+- `prepareTargetNameForMatch(name: string): PreparedTarget`
+- `findNameInPreparedPage(preparedPage, preparedTarget): boolean`
 
-| Problema | Solução |
-|----------|---------|
-| Travamento sem feedback | Timeout de 30s por página com fallback |
-| Progresso atualiza só após batch | Atualizar após cada página individual |
-| 70 logs "Starting..." | Só logar páginas lentas (>2s) |
-| Sem indicação de progresso real | Mostrar "pág. X/70" durante OCR |
+Manter `findNameInPage(pageText, targetName)` como wrapper para compatibilidade (chamando as funções novas), mas o matching principal vai usar as versões “prepared”.
+
+**Otimizações dentro do fuzzy:**
+- usar `pageWordSet` para match exato sem loop
+- buscar candidatos só em buckets de tamanho `len ± maxErrors` antes de calcular Levenshtein
+- early-exit: se já atingiu `requiredMatches`, retorna; se não há como atingir (restante insuficiente), encerra
+
+### 2) `src/hooks/useDocumentProcessor.ts` — refatorar etapa “Step 3: matching”
+Alterar o mapa `comprovanteTextsMap` para armazenar também o pré-processado:
+- `pageTexts` (opcional, para debug)
+- `preparedPages: PreparedPage[]`
+
+Fluxo:
+1. Após `getCachedPageTextsWithOCR`, construir `preparedPages = pageTexts.map(preparePageForMatch)`
+2. Preparar todas as entradas de holerite uma vez:
+   - `preparedEntries = allHoleriteEntries.map(e => ({...e, prepared: prepareTargetNameForMatch(e.name)}))`
+3. Matching usando `findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)`
+
+**Não travar UI:**
+- adicionar contador `comparisons`
+- a cada `YIELD_EVERY = 250` comparações: `await pauseBetweenBatches()`
+- atualizar status com throttle:
+  - mensagem: `Matching comprovante X/Y - funcionário A/B - página p/q`
+  - progresso: de 60 → 90 baseado em `(comprovanteIndex + entryIndex/entriesTotal) / comprovantesTotal`
+
+**Atalho opcional simples (sem mudar a regra de negócio):**
+- se `matchedEntryKeys.size === allHoleriteEntries.length`, parar o matching (já achou todos)
+
+### 3) (Opcional) Timeout de segurança do matching
+Assim como no OCR, adicionar um limite (ex.: 5 minutos) para evitar loop “parecendo infinito” em edge cases:
+- se exceder: abortar matching e mostrar toast/erro com instrução “tente novamente / reduza lote / verifique OCR”.
 
 ---
 
-## Resultado Esperado
+## Critérios de aceite (o que deve melhorar)
+1. Ao entrar em “Buscando correspondências…”, a UI **continua atualizando** (mensagem e barra de progresso se movem).
+2. Para 70 páginas, o matching deixa de “congelar” e passa a:
+   - concluir em tempo significativamente menor (normalmente segundos a dezenas de segundos, dependendo do texto)
+   - permitir cancelar imediatamente (botão de cancelar responde)
+3. Sem spam de logs de match.
 
-- **70 páginas de comprovante**: Processadas em ~70-120 segundos (1-2 min)
-- **Feedback visual**: Barra atualiza a cada página processada
-- **Sem travamento**: Timeout garante que páginas problemáticas não bloqueiam
-- **Console limpo**: Apenas logs significativos (páginas lentas)
+---
+
+## Plano de implementação (passo a passo)
+1. Ler e ajustar `findNameInPage` em `pdfUtils.ts` para extrair normalização/tokenização e criar as funções “prepare”.
+2. Implementar `findNameInPreparedPage` com as mesmas 4 camadas (exato / primeiro+último / fuzzy / substring), mas usando dados pré-processados e buckets.
+3. Refatorar a etapa de matching em `useDocumentProcessor.ts` para:
+   - preparar páginas do comprovante 1x
+   - preparar nomes 1x
+   - inserir `await pauseBetweenBatches()` periodicamente
+   - inserir updates de status throttled
+4. Testar com:
+   - comprovante 70 páginas (escaneado)
+   - lote pequeno (poucos holerites) para garantir que não “pare” no match
+5. Se ainda estiver lento: avaliar “indexação” por tokens (map de palavra → lista de entries) ou mover matching para Web Worker (plano B).
+
+---
+
+## Riscos / trade-offs
+- Pré-processar páginas cria estruturas em memória (Set/Map). Para ~70 páginas é aceitável; para centenas, pode crescer. Vamos manter estruturas enxutas e, se necessário, usar apenas `normalizedPage` + `pageWordsByLength`.
+- Throttle de status evita re-render excessivo; sem throttle pode ficar mais lento do que o ganho do matching.
 
