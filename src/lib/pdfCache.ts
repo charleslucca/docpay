@@ -100,7 +100,7 @@ async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Pr
 }
 
 const PAGE_BATCH_SIZE = 5; // Process 5 pages in parallel
-const MIN_TEXT_LENGTH_FOR_OCR = 50; // If native text extraction yields less than this, use OCR
+const MIN_TEXT_LENGTH_FOR_OCR = 100; // OPTIMIZED: Higher threshold to avoid unnecessary OCR
 const MIN_ACCEPTABLE_OCR_TEXT = 40; // If OCR yields less than this, retry with higher scale
 export const OCR_SCALE_ENHANCED = 3.0; // Higher scale for retry/enhanced mode
 
@@ -199,7 +199,7 @@ export function getCacheStats() {
 
 // OPTIMIZED: Lower scale for faster OCR (1.5x instead of 2.5x = 3x less pixels)
 export const OCR_SCALE_FAST = 1.5;  // For holerites (large text)
-export const OCR_SCALE_HIGH = 2.0;  // For comprovantes (smaller text)
+export const OCR_SCALE_HIGH = 1.8;  // OPTIMIZED: Reduced from 2.0 for ~20% faster OCR with minimal quality loss
 
 /**
  * Convert canvas to grayscale for faster OCR processing
@@ -301,7 +301,7 @@ export async function getCachedPageTextsWithOCREnhanced(
     timeoutPrimaryMs: options?.enhancedMode ? 45000 : (options?.timeoutPrimaryMs ?? 30000),
     timeoutRetryMs: options?.timeoutRetryMs ?? 45000,
     minAcceptableTextLen: options?.minAcceptableTextLen ?? MIN_ACCEPTABLE_OCR_TEXT,
-    retryOnShortText: options?.retryOnShortText ?? true,
+    retryOnShortText: options?.retryOnShortText ?? false, // OPTIMIZED: Disabled by default for performance
     enhancedMode: options?.enhancedMode ?? false,
   };
   
@@ -365,8 +365,9 @@ export async function getCachedPageTextsWithOCREnhanced(
   if (pagesNeedingOcr.length > 0) {
     onProgress?.(nativeCount, totalPages, true);
     
-    // Process OCR in batches to avoid memory issues
-    const OCR_BATCH_SIZE = 4; // Process 4 pages at a time
+    // OPTIMIZED: Dynamic batch size based on worker count (4-8 workers)
+    const { getWorkerCount } = await import('@/lib/ocrUtils');
+    const OCR_BATCH_SIZE = Math.max(4, getWorkerCount()); // Use all available workers
     let ocrCompleted = 0;
     
     for (let i = 0; i < pagesNeedingOcr.length; i += OCR_BATCH_SIZE) {
