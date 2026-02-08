@@ -944,7 +944,6 @@ export function useDocumentProcessor() {
 
     matchingLoop: for (let compIdx = 0; compIdx < totalComprovantes; compIdx++) {
       const comprovante = comprovanteList[compIdx];
-      let matchedThisComprovante = false;
 
       // Check cancellation and timeout
       if (cancelledRef.current) break matchingLoop;
@@ -963,6 +962,7 @@ export function useDocumentProcessor() {
 
       const { preparedPages } = extracted;
       const totalPages = preparedPages.length;
+      const matchedPages = new Set<number>(); // avoid multiple holerites on same comprovante page
 
       // Early exit: if all employees already matched, stop
       if (matchedEntryKeys.size === totalEntries) {
@@ -1009,6 +1009,10 @@ export function useDocumentProcessor() {
         }
 
         if (foundPage > 0) {
+          if (matchedPages.has(foundPage)) {
+            continue;
+          }
+          matchedPages.add(foundPage);
           matchedEntryKeys.add(entryKey);
 
           const updatedComprovante: UploadedFile = {
@@ -1036,14 +1040,7 @@ export function useDocumentProcessor() {
             comprovante: { ...updatedComprovante, pageNumber: foundPage },
             status: "pending",
           });
-
-          matchedThisComprovante = true;
-          break; // Do not match multiple holerites to the same comprovante
         }
-      }
-
-      if (matchedThisComprovante) {
-        continue; // Move to next comprovante
       }
     }
 
