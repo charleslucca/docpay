@@ -142,7 +142,8 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
 
   // Padrões que indicam presença de nome de funcionário
   const employeePatterns = [
-    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR)\s*:/i,
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR)\s*:?\s*/i,
+    /NOME\s+DO\s+FUNCIONARIO/i,
     /RECIBO\s+DE\s+PAGAMENTO/i,
     /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
   ];
@@ -157,13 +158,13 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
     if (pageNum > totalPages) continue;
 
     const pageText = await extractTextFromPage(file, pageNum, pdf);
+    // Verificar se tem PADRÃO de funcionário (não apenas texto genérico)
+    const hasName = !!extractEmployeeName(pageText, false);
     const normalizedText = pageText
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toUpperCase();
-
-    // Verificar se tem PADRÃO de funcionário (não apenas texto genérico)
-    const hasEmployee = employeePatterns.some((pattern) => pattern.test(normalizedText));
+    const hasEmployee = hasName || employeePatterns.some((pattern) => pattern.test(normalizedText));
     if (hasEmployee) {
       pagesWithEmployeePattern++;
       console.log(`[countEmployees] Página ${pageNum}: padrão de funcionário encontrado no texto nativo`);
@@ -176,12 +177,13 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
     let count = 0;
     for (let i = 1; i <= totalPages; i++) {
       const pageText = await extractTextFromPage(file, i, pdf);
+      const hasName = !!extractEmployeeName(pageText, false);
       const normalizedText = pageText
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .toUpperCase();
 
-      const hasEmployee = employeePatterns.some((pattern) => pattern.test(normalizedText));
+      const hasEmployee = hasName || employeePatterns.some((pattern) => pattern.test(normalizedText));
       if (hasEmployee) {
         count++;
       }
@@ -281,7 +283,7 @@ export async function countEmployeesInDocument(
   }
 }
 
-export function extractEmployeeName(text: string): string | null {
+export function extractEmployeeName(text: string, debug: boolean = true): string | null {
   // Normalizar texto: remover acentos e converter para maiúscula
   const normalizedText = text
     .normalize("NFD")
@@ -293,7 +295,9 @@ export function extractEmployeeName(text: string): string | null {
     .replace(/([A-Z])5([A-Z])/g, "$1S$2") // OCR: 5 -> S em nomes
     .replace(/\s+/g, " "); // Normalizar espaços múltiplos
 
-  console.log("[DEBUG] Texto normalizado (primeiros 300 chars):", normalizedText.substring(0, 300));
+  if (debug) {
+    console.log("[DEBUG] Texto normalizado (primeiros 300 chars):", normalizedText.substring(0, 300));
+  }
 
   // Padrões ordenados do mais específico ao mais genérico
   const namePatterns = [
@@ -386,23 +390,31 @@ export function extractEmployeeName(text: string): string | null {
       // Validação 2: detectar palavras muito longas (OCR incorreto/junção de palavras)
       const hasVeryLongWord = words.some((w) => w.length > 15);
       if (hasVeryLongWord) {
-        console.log("[DEBUG] Ignorando - palavra OCR malformada:", name);
+        if (debug) {
+          console.log("[DEBUG] Ignorando - palavra OCR malformada:", name);
+        }
         continue;
       }
 
       // Validação 3: não contém palavras inválidas
       const hasInvalidWord = words.some((w) => invalidWords.includes(w));
       if (hasInvalidWord) {
-        console.log("[DEBUG] Ignorando - contém palavra inválida:", name);
+        if (debug) {
+          console.log("[DEBUG] Ignorando - contém palavra inválida:", name);
+        }
         continue;
       }
 
-      console.log("[DEBUG] Nome extraído:", name);
+      if (debug) {
+        console.log("[DEBUG] Nome extraído:", name);
+      }
       return name;
     }
   }
 
-  console.log("[DEBUG] Nenhum nome encontrado");
+  if (debug) {
+    console.log("[DEBUG] Nenhum nome encontrado");
+  }
   return null;
 }
 
