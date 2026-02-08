@@ -142,35 +142,44 @@ function looksLikeCity(value: string): boolean {
 function looksLikeCompany(value: string): boolean {
   const normalized = value.trim().toUpperCase();
   const knownCompanies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
-  return knownCompanies.some((c) => normalized.startsWith(c) || normalized === c);
+  return knownCompanies.some(c => normalized.startsWith(c) || normalized === c);
 }
 
 /**
  * Extract city from a municipality line in format:
  * "[CITY] - [FUNCTION] - [BANK]" or "[PREFIX] - [CITY] - [BANK]"
- *
+ * 
  * Examples:
  * - "GRAMADO - PORTEIROS - ITAÚ" → "GRAMADO" (city in 1st position)
  * - "IPAM - CAXIAS DO SUL - ITAÚ" → "CAXIAS DO SUL" (city in 2nd position, IPAM is prefix)
  */
 function extractCityFromLine(line: string): string {
   const parts = line.split(/\s*-\s*/);
-
+  
   if (parts.length < 2) {
     return parts[0]?.trim() || "";
   }
-
+  
   const firstPart = normalizeForComparison(parts[0] || "");
   const secondPart = parts[1]?.trim() || "";
-
+  
   // Known prefixes (NOT cities) - when first part matches, city is in second part
-  const knownPrefixes = ["IPAM", "IFRS", "SESI", "MIN AGRIC", "MINISTERIO", "FARMACIA", "METROPOLITANA", "SS CAI"];
-
+  const knownPrefixes = [
+    "IPAM",
+    "IFRS",
+    "SESI",
+    "MIN AGRIC",
+    "MINISTERIO",
+    "FARMACIA",
+    "METROPOLITANA",
+    "SS CAI",
+  ];
+  
   // If first part is a known prefix, city is in second part
-  if (knownPrefixes.some((prefix) => firstPart.startsWith(prefix) || firstPart === prefix)) {
+  if (knownPrefixes.some(prefix => firstPart.startsWith(prefix) || firstPart === prefix)) {
     return secondPart;
   }
-
+  
   // Known functions/roles - when second part matches, city is in first part
   const knownFunctions = [
     "PORTEIRO",
@@ -185,21 +194,21 @@ function extractCityFromLine(line: string): string {
     "ASSISTENCIA",
     "ZELADOR",
   ];
-
+  
   // If second part is a function, city is in first part
   const secondNorm = normalizeForComparison(secondPart);
-  if (knownFunctions.some((func) => secondNorm.startsWith(func) || secondNorm.includes(func))) {
+  if (knownFunctions.some(func => secondNorm.startsWith(func) || secondNorm.includes(func))) {
     return parts[0]?.trim() || "";
   }
-
+  
   // Known banks (appear in last position)
   const knownBanks = ["ITAU", "SICREDI", "BRADESCO", "CAIXA", "BB", "SANTANDER", "BANRISUL", "PREFEITURA"];
-
+  
   // If second part is a bank, city is in first part
-  if (knownBanks.some((bank) => secondNorm.includes(bank))) {
+  if (knownBanks.some(bank => secondNorm.includes(bank))) {
     return parts[0]?.trim() || "";
   }
-
+  
   // Default: first part is the city
   return parts[0]?.trim() || "";
 }
@@ -209,13 +218,13 @@ function extractCityFromLine(line: string): string {
  */
 function inferCompany(sheetName: string, contextHint: string = ""): string {
   const combined = `${sheetName} ${contextHint}`.toUpperCase();
-
+  
   // Check for known companies in order of specificity
   if (/FORTCLEAN/i.test(combined)) return "FORTCLEAN";
   if (/INTERCLEAN/i.test(combined)) return "INTERCLEAN";
   if (/SPACE/i.test(combined)) return "SPACE";
   if (/B\s*SERVICE/i.test(combined)) return "B SERVICE";
-
+  
   // SPACE company sheets typically have these patterns
   const spacePatterns = [
     /CANOAS\s*TEC/i,
@@ -229,11 +238,11 @@ function inferCompany(sheetName: string, contextHint: string = ""): string {
     /PANAMBI/i,
     /PASSO\s*FUNDO/i,
   ];
-
+  
   if (spacePatterns.some((p) => p.test(sheetName))) {
     return "SPACE";
   }
-
+  
   // Default to B SERVICE
   return "B SERVICE";
 }
@@ -252,28 +261,11 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
   const cidadesSet = new Set<string>();
   const sheetStats: { name: string; employees: number; cidade: string; empresa: string }[] = [];
 
-  const skipHeaders = [
-    "NOME",
-    "FUNCIONARIO",
-    "COLABORADOR",
-    "MATRICULA",
-    "CODIGO",
-    "EMPRESA",
-    "CIDADE",
-    "B SERVICE",
-    "SPACE",
-    "FORTCLEAN",
-    "INTERCLEAN",
-    "SALARIO",
-    "SALÁRIO",
-  ];
+  const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO", "EMPRESA", "CIDADE", "B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN", "SALARIO", "SALÁRIO"];
 
   const isNumeric = (value: unknown): boolean => {
     if (typeof value === "number") return true;
-    const str = String(value ?? "")
-      .trim()
-      .replace(/\./g, "")
-      .replace(",", ".");
+    const str = String(value ?? "").trim().replace(/\./g, "").replace(",", ".");
     if (!str) return false;
     return !Number.isNaN(Number(str));
   };
@@ -296,28 +288,25 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     if (!trimmed) return false;
     const norm = normalizeForComparison(trimmed);
     if (skipHeaders.includes(norm)) return false;
-    if (/^TOTAL/i.test(trimmed) || /^SUBTOTAL/i.test(trimmed) || /^SOMA/i.test(trimmed) || /^COLUNA/i.test(trimmed))
-      return false;
+    if (/^TOTAL/i.test(trimmed) || /^SUBTOTAL/i.test(trimmed) || /^SOMA/i.test(trimmed) || /^COLUNA/i.test(trimmed)) return false;
     if (/^R\$\s*[\d.,]/i.test(trimmed)) return false;
-    // Must contain letters
+    if (looksLikeCompany(trimmed) || looksLikeCity(trimmed)) return false;
     if (!/[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ]/i.test(trimmed)) return false;
     return true;
   };
 
   const getCandidateName = (row: unknown[]): string => {
-    // Scan first 6 cells for a plausible name
+    // Scan first 6 cells for any plausible name (not just the first string)
     for (let i = 0; i < 6; i++) {
       const value = row[i];
       if (typeof value === "string") {
         const trimmed = value.trim();
-        if (trimmed && !isNumeric(trimmed) && isLikelyName(trimmed)) {
-          return trimmed;
-        }
+        if (!trimmed) continue;
+        if (isNumeric(trimmed)) continue;
+        if (isLikelyName(trimmed)) return trimmed;
       }
     }
-    // Fallback: first cell string (if any)
-    const v0 = row[0];
-    return typeof v0 === "string" ? v0.trim() : "";
+    return "";
   };
 
   for (const sheetName of workbook.SheetNames) {
@@ -414,12 +403,6 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
       if (!isLikelyName(rawName)) continue;
 
-      const colB = row[1];
-      const colC = row[2];
-      const hasSalary = isNumeric(colB) || isNumeric(colC);
-
-      if (looksLikeCity(rawName) && !hasSalary) continue;
-
       const name = cleanEmployeeName(rawName);
       if (!name) continue;
       if (name.length < 3) continue;
@@ -432,6 +415,167 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
         cidade,
         contrato: sheetName,
         colaborador: name,
+      });
+      sheetEmployeeCount++;
+    }
+
+    sheetStats.push({ name: sheetName, employees: sheetEmployeeCount, cidade, empresa });
+  }
+
+  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities, ${empresasSet.size} companies`);
+
+  const funcionariosPorCidade: Record<string, number> = {};
+  for (const record of records) {
+    funcionariosPorCidade[record.cidade] = (funcionariosPorCidade[record.cidade] || 0) + 1;
+  }
+
+  return {
+    records,
+    empresas: Array.from(empresasSet).sort(),
+    cidades: Array.from(cidadesSet).sort(),
+    funcionariosPorCidade,
+    fileName,
+  };
+}
+
+/**
+ * Parse an Excel file and extract employee records
+ * Strategy: First try "Todos" tab, fallback to individual municipality sheets
+ */
+export async function parseExcelFile(file: File): Promise<SpreadsheetData> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+
+        if (workbook.SheetNames.length === 0) {
+          throw new Error("Nenhuma aba encontrada na planilha");
+        }
+
+        // 1. Prefer municipality sheets (row 1 company, row 2 city)
+        const result = parseMunicipalitySheets(workbook, file.name);
+
+        if (result.records.length === 0) {
+          // 2. Fallback: try "Todos" sheet (tabular structure)
+          const todosSheet = workbook.SheetNames.find((name) => normalizeForComparison(name) === "TODOS");
+
+          if (todosSheet) {
+            const todosResult = parseTodosSheet(workbook, todosSheet, file.name);
+            if (todosResult.records.length > 0) {
+              console.log(`[Excel] Using "Todos" sheet with ${todosResult.records.length} records`);
+              resolve(todosResult);
+              return;
+            }
+          }
+
+          throw new Error("Nenhum funcionário encontrado na planilha");
+        }
+
+        resolve(result);
+      } catch (error) {
+        console.error("[Excel] Parse error:", error);
+        reject(error);
+      }
+    };
+
+    reader.onerror = () => {
+      reject(new Error("Erro ao ler arquivo Excel"));
+    };
+
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/**
+ * Find an employee record in the spreadsheet by name
+ * Uses flexible matching: exact, partial (first+last name), and similarity
+ */
+export function findEmployeeInSpreadsheet(name: string, records: EmployeeRecord[]): EmployeeRecord | null {
+  if (!name || records.length === 0) return null;
+
+  const normalizedName = normalizeForComparison(name);
+  const nameWords = normalizedName.split(" ").filter((w) => w.length >= 2);
+
+  if (nameWords.length === 0) return null;
+
+  // 1. Exact match
+  const exact = records.find((r) => normalizeForComparison(r.colaborador) === normalizedName);
+  if (exact) return exact;
+
+  // 2. First and last name match
+  const firstName = nameWords[0];
+  const lastName = nameWords[nameWords.length - 1];
+
+  const firstLastMatch = records.find((r) => {
+    const rNorm = normalizeForComparison(r.colaborador);
+    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
+    if (rWords.length < 2) return false;
+
+    const rFirst = rWords[0];
+    const rLast = rWords[rWords.length - 1];
+
+    return rFirst === firstName && rLast === lastName;
+  });
+  if (firstLastMatch) return firstLastMatch;
+
+  // 3. High word overlap (60%+ of words match)
+  const overlapMatch = records.find((r) => {
+    const rNorm = normalizeForComparison(r.colaborador);
+    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
+
+    const sharedWords = nameWords.filter((w) => rWords.includes(w));
+    const minWords = Math.min(nameWords.length, rWords.length);
+
+    return sharedWords.length >= 2 && sharedWords.length >= Math.ceil(minWords * 0.6);
+  });
+  if (overlapMatch) return overlapMatch;
+
+  // 4. First name + partial last name (handles abbreviations)
+  const partialMatch = records.find((r) => {
+    const rNorm = normalizeForComparison(r.colaborador);
+    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
+    if (rWords.length === 0) return false;
+
+    const rFirst = rWords[0];
+    const rLast = rWords[rWords.length - 1];
+
+    // First name must match
+    if (rFirst !== firstName) return false;
+
+    // Last name should start with same 3 chars
+    if (lastName.length >= 3 && rLast.length >= 3) {
+      return rLast.substring(0, 3) === lastName.substring(0, 3);
+    }
+
+    return false;
+  });
+
+  return partialMatch || null;
+}
+
+/**
+ * Enrich a list of names with company and city info from spreadsheet
+ */
+export function enrichNamesWithSpreadsheet(
+  names: string[],
+  records: EmployeeRecord[],
+): Map<string, { empresa: string; cidade: string } | null> {
+  const result = new Map<string, { empresa: string; cidade: string } | null>();
+
+  for (const name of names) {
+    const match = findEmployeeInSpreadsheet(name, records);
+    if (match) {
+      result.set(name, { empresa: match.empresa, cidade: match.cidade });
+    } else {
+      result.set(name, null);
+    }
+  }
+
+  return result;
+}
       });
       sheetEmployeeCount++;
     }
