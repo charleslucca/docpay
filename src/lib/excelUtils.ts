@@ -72,7 +72,7 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
 
   const records: EmployeeRecord[] = [];
   const empresasSet = new Set<string>();
-  const cidadesSet = new Set<string>();
+  const cidadesList: string[] = [];
 
   // Parse data rows
   for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
@@ -112,7 +112,8 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
 function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
   const records: EmployeeRecord[] = [];
   const empresasSet = new Set<string>();
-  const cidadesSet = new Set<string>();
+  const cidadesList: string[] = [];
+  const MAX_HEADER_ROWS = 8;
 
   const getFirstCellText = (row: unknown[] | undefined): string => {
     if (!row) return "";
@@ -130,6 +131,24 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     return parts[0]?.trim() ?? "";
   };
 
+  const isLikelyCompany = (text: string): boolean => {
+    if (!text) return false;
+    const norm = normalizeForComparison(text);
+    if (!norm) return false;
+    if (norm.includes("COLUNA") || norm.includes("TOTAL")) return false;
+    if (/\d/.test(text)) return false;
+    if (text.includes("-")) return false;
+    return true;
+  };
+
+  const isLikelyMunicipioLine = (text: string): boolean => {
+    if (!text) return false;
+    const norm = normalizeForComparison(text);
+    if (!text.includes("-")) return false;
+    if (norm.includes("TOTAL")) return false;
+    return true;
+  };
+
   for (const sheetName of workbook.SheetNames) {
     // Skip "Todos" sheet
     if (normalizeForComparison(sheetName) === "TODOS") continue;
@@ -139,21 +158,34 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     if (jsonData.length < 3) continue;
 
-    // Row 1: Company name (first non-empty cell)
-    const empresa = getFirstCellText(jsonData[0] as unknown[]);
-    // Row 2: Municipality + Function + Bank (first non-empty cell)
-    const cidadeRaw = getFirstCellText(jsonData[1] as unknown[]);
+    let empresa = "";
+    let cidade = "";
+    let municipioRowIndex = -1;
 
-    // Extract municipality (before the hyphen)
-    const cidade = extractMunicipio(cidadeRaw);
+    for (let i = 0; i < Math.min(MAX_HEADER_ROWS, jsonData.length); i++) {
+      const rowText = getFirstCellText(jsonData[i] as unknown[]);
+      if (!rowText) continue;
+      if (!empresa && isLikelyCompany(rowText)) {
+        empresa = rowText;
+      }
+      if (!cidade && isLikelyMunicipioLine(rowText)) {
+        cidade = extractMunicipio(rowText);
+        municipioRowIndex = i;
+      }
+    }
+
+    if (!cidade && sheetName.includes("-")) {
+      cidade = extractMunicipio(sheetName);
+    }
 
     if (!empresa || !cidade) continue;
 
     empresasSet.add(empresa);
-    cidadesSet.add(cidade);
+    cidadesList.push(cidade);
 
-    // Row 3+: Employee names (skip header row "NOME")
-    for (let i = 2; i < jsonData.length; i++) {
+    // Row after municipality line: Employee names (skip header row "NOME")
+    const startRow = municipioRowIndex >= 0 ? municipioRowIndex + 1 : 2;
+    for (let i = startRow; i < jsonData.length; i++) {
       const row = jsonData[i] as unknown[];
       if (!row) continue;
 
@@ -164,6 +196,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       if (normalizeForComparison(colaborador) === "NOME") continue;
       if (colaborador.startsWith("R$")) continue;
       if (colaborador.toUpperCase().includes("TOTAL")) continue;
+      if (normalizeForComparison(colaborador).includes("COLUNA")) continue;
 
       // Check if it looks like a name (at least 2 words, no monetary values)
       const words = colaborador.split(" ").filter((w) => w.length >= 2);
@@ -186,7 +219,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
   return {
     records,
     empresas: Array.from(empresasSet).sort(),
-    cidades: Array.from(cidadesSet).sort(),
+    cidades: cidadesList,
     fileName,
   };
 }
