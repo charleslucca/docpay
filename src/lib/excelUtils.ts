@@ -11,6 +11,7 @@ export interface SpreadsheetData {
   records: EmployeeRecord[];
   empresas: string[];
   cidades: string[];
+  funcionariosPorCidade: Record<string, number>;
   fileName: string;
 }
 
@@ -66,6 +67,7 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
       records: [],
       empresas: [],
       cidades: [],
+      funcionariosPorCidade: {},
       fileName,
     };
   }
@@ -97,10 +99,17 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
     if (cidade) cidadesSet.add(cidade);
   }
 
+  // Calculate employees per city
+  const funcionariosPorCidade: Record<string, number> = {};
+  for (const record of records) {
+    funcionariosPorCidade[record.cidade] = (funcionariosPorCidade[record.cidade] || 0) + 1;
+  }
+
   return {
     records,
     empresas: Array.from(empresasSet).sort(),
     cidades: Array.from(cidadesSet).sort(),
+    funcionariosPorCidade,
     fileName,
   };
 }
@@ -171,10 +180,17 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
   console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
   console.log(`[Excel] Cities found: ${Array.from(cidadesSet).join(", ")}`);
 
+  // Calculate employees per city
+  const funcionariosPorCidade: Record<string, number> = {};
+  for (const record of records) {
+    funcionariosPorCidade[record.cidade] = (funcionariosPorCidade[record.cidade] || 0) + 1;
+  }
+
   return {
     records,
     empresas: Array.from(empresasSet).sort(),
     cidades: Array.from(cidadesSet).sort(),
+    funcionariosPorCidade,
     fileName,
   };
 }

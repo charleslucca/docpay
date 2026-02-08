@@ -152,7 +152,7 @@ export function ExcelDropzone({
                             variant="secondary"
                             className="text-xs font-normal"
                           >
-                            {cidade}
+                            {cidade} ({spreadsheetData.funcionariosPorCidade[cidade] || 0})
                           </Badge>
                         ))}
                       </div>
