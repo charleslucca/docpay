@@ -7,6 +7,9 @@ export interface GeneratedDocument {
   createdAt: Date;
   blobUrl: string;
   fileName: string;
+  // Spreadsheet enrichment fields
+  empresa?: string;
+  municipio?: string;
 }
 
 export interface UploadedFile {

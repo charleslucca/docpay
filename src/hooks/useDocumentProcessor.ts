@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import JSZip from "jszip";
 import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from "@/types/document";
+import { type SpreadsheetData, findEmployeeInSpreadsheet } from "@/lib/excelUtils";
 import {
   extractEmployeeName,
   findNameInPage,
@@ -124,6 +125,7 @@ export function useDocumentProcessor() {
   const [comprovantes, setComprovantes] = useState<UploadedFile[]>([]);
   const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
   const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocument[]>([]);
+  const [spreadsheetData, setSpreadsheetData] = useState<SpreadsheetData | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>({
     step: "idle",
     progress: 0,
@@ -1243,6 +1245,18 @@ export function useDocumentProcessor() {
           message: `Gerando e baixando PDF ${index + 1} de ${matchedPairs.length}...`,
         }));
 
+        // Look up employee in spreadsheet for enrichment
+        let empresa: string | undefined;
+        let municipio: string | undefined;
+        
+        if (spreadsheetData?.records) {
+          const record = findEmployeeInSpreadsheet(pair.employeeName, spreadsheetData.records);
+          if (record) {
+            empresa = record.empresa;
+            municipio = record.cidade;
+          }
+        }
+
         generatedDocuments.push({
           id: generateId(),
           employeeName: pair.employeeName,
@@ -1252,6 +1266,8 @@ export function useDocumentProcessor() {
           createdAt: now,
           blobUrl,
           fileName,
+          empresa,
+          municipio,
         });
       } catch (error) {
         console.error(`[PDF] Error generating PDF for ${pair.employeeName}:`, error);
@@ -1362,6 +1378,8 @@ export function useDocumentProcessor() {
     comprovantes,
     matchedPairs,
     generatedDocs,
+    spreadsheetData,
+    setSpreadsheetData,
     status,
     isCancelling,
     hasSavedState,

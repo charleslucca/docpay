@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { FileText, Sparkles, RotateCcw, Play, Zap, StopCircle } from 'lucide-react';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
 import { FileDropzone } from '@/components/FileDropzone';
+import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
 import { MatchedPairCard } from '@/components/MatchedPairCard';
 import { DocumentRepository } from '@/components/DocumentRepository';
@@ -15,6 +16,8 @@ const Index = () => {
     comprovantes,
     matchedPairs,
     generatedDocs,
+    spreadsheetData,
+    setSpreadsheetData,
     status,
     isCancelling,
     hasSavedState,
@@ -91,6 +94,20 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="upload" className="space-y-6">
+            {/* Excel Spreadsheet Upload */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-md mx-auto"
+            >
+              <ExcelDropzone
+                spreadsheetData={spreadsheetData}
+                onSpreadsheetLoaded={setSpreadsheetData}
+                onSpreadsheetRemoved={() => setSpreadsheetData(null)}
+                disabled={isProcessing}
+              />
+            </motion.div>
+
             {/* Upload Section */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -198,7 +215,7 @@ const Index = () => {
           </TabsContent>
 
           <TabsContent value="repository">
-            <DocumentRepository documents={generatedDocs} />
+            <DocumentRepository documents={generatedDocs} spreadsheetData={spreadsheetData} />
           </TabsContent>
         </Tabs>
       </main>
