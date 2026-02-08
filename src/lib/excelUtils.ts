@@ -307,10 +307,12 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     }
 
     if (!empresa || !cidade) continue;
-    if (!cidade.includes("-")) continue;
+
+    const cidadeExtraida = extractCityFromLine(cidade) || cidade;
+    if (!cidadeExtraida || cidadeExtraida.length < 2) continue;
 
     empresasSet.add(empresa);
-    cidadesSet.add(cidade);
+    cidadesSet.add(cidadeExtraida);
 
     // If line 4 is header/empty, start at line 5
     const row4 = String((jsonData[3] as unknown[])?.[0] || "").trim();
@@ -340,7 +342,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
       records.push({
         empresa,
-        cidade: extractCityFromLine(cidade),
+        cidade: cidadeExtraida,
         contrato: sheetName,
         colaborador: name,
       });
