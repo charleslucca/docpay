@@ -12,6 +12,7 @@ import {
   countEmployeesInDocument,
   type PreparedPage,
   type PreparedTarget,
+  normalizeForMatch,
 } from "@/lib/pdfUtils";
 import {
   getCachedPdf,
@@ -54,6 +55,27 @@ const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
+
+const namesEquivalent = (a: string, b: string): boolean => {
+  const na = normalizeForMatch(a);
+  const nb = normalizeForMatch(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+
+  const wa = na.split(" ").filter((w) => w.length >= 3);
+  const wb = nb.split(" ").filter((w) => w.length >= 3);
+  if (wa.length === 0 || wb.length === 0) return false;
+
+  const aFirst = wa[0];
+  const aLast = wa[wa.length - 1];
+  const bFirst = wb[0];
+  const bLast = wb[wb.length - 1];
+  if (aFirst === bFirst && aLast === bLast) return true;
+
+  const shared = wa.filter((w) => wb.includes(w));
+  const minWords = Math.min(wa.length, wb.length);
+  return shared.length >= 2 && shared.length >= Math.ceil(minWords * 0.6);
+};
 
 // Optimized: Align batch size with worker count for balanced CPU usage
 const getOptimalBatchSize = () => Math.max(4, Math.min(6, getWorkerCount()));
@@ -961,7 +983,7 @@ export function useDocumentProcessor() {
       const extracted = comprovanteTextsMap.get(comprovante.id);
       if (!extracted) continue;
 
-      const { preparedPages } = extracted;
+      const { preparedPages, pageTexts } = extracted;
       const totalPages = preparedPages.length;
       const matchedPages = new Set<number>(); // avoid multiple holerites on same comprovante page
 
@@ -1000,10 +1022,15 @@ export function useDocumentProcessor() {
         const entryKey = `${entry.originalHolerite.id}_${entry.pageNumber}`;
         if (matchedEntryKeys.has(entryKey)) continue;
 
-        // Search using pre-processed data (FAST!)
+        // Search using pre-processed data (FAST!) + validate comprovante name
         let foundPage = -1;
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
           if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+            const comprovanteText = pageTexts[pageIdx] ?? "";
+            const comprovanteName = extractEmployeeName(comprovanteText, false);
+            if (comprovanteName && !namesEquivalent(entry.name, comprovanteName)) {
+              continue; // name mismatch - keep searching other pages
+            }
             foundPage = pageIdx + 1; // 1-indexed
             break;
           }
