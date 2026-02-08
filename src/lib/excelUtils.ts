@@ -123,6 +123,9 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
   const empresasSet = new Set<string>();
   const cidadesSet = new Set<string>();
 
+  // Headers that should be skipped (not valid cities or employee names)
+  const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO", "EMPRESA", "CIDADE"];
+
   for (const sheetName of workbook.SheetNames) {
     // Skip "Todos" sheet
     if (normalizeForComparison(sheetName) === "TODOS") continue;
@@ -170,26 +173,35 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     // Validate: city must exist, company can have numbers/hyphens
     if (!empresa || !cidade) continue;
     if (empresa.length < 2) continue;
+    
+    // Skip if "cidade" is actually a header word (e.g., "NOME")
+    if (skipHeaders.includes(cidade.toUpperCase())) continue;
 
     empresasSet.add(empresa);
     cidadesSet.add(cidade);
 
     // Employees start after company + city + offset
-    const startIndex = offset + 2;
+    let startIndex = offset + 2;
+    
+    // Skip table header row if present (e.g., "NOME", "FUNCIONARIO")
+    const firstDataRow = jsonData[startIndex] as unknown[];
+    const firstDataValue = normalizeForComparison(String(firstDataRow?.[0] || ""));
+    if (skipHeaders.includes(firstDataValue)) {
+      startIndex++;
+    }
+
     for (let i = startIndex; i < jsonData.length; i++) {
       const row = jsonData[i] as unknown[];
       if (!row) continue;
 
       const colaborador = String(row[0] || "").trim();
 
-      // Validation filters - more permissive
+      // Validation filters
       if (!colaborador) continue;
       
       // Skip headers
       const normColaborador = normalizeForComparison(colaborador);
-      if (normColaborador === "NOME") continue;
-      if (normColaborador === "COLABORADOR") continue;
-      if (normColaborador === "FUNCIONARIO") continue;
+      if (skipHeaders.includes(normColaborador)) continue;
       
       // Skip summary/total rows
       if (/^TOTAL/i.test(colaborador)) continue;
@@ -207,9 +219,13 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
         .trim();
       
       if (!nomeLimpo) continue;
+      
+      // Minimum 3 characters (allows short names like "ANA")
+      if (nomeLimpo.length < 3) continue;
 
+      // At least 1 word with 2+ characters (relaxed from requiring 2 words)
       const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
-      if (words.length < 2) continue;
+      if (words.length === 0) continue;
 
       records.push({
         empresa,
