@@ -106,6 +106,84 @@ export async function getPdfPageCount(
   return pdf.numPages;
 }
 
+/**
+ * Conta páginas que contêm "FAVORECIDO" (para comprovantes)
+ * Usa texto nativo do PDF - muito rápido, sem OCR
+ */
+export async function countPagesWithFavorecido(
+  file: File,
+  cachedPdf?: PDFDocumentProxy
+): Promise<number> {
+  const pdf = cachedPdf || await getCachedPdf(file);
+  let count = 0;
+  
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pageText = await extractTextFromPage(file, i, pdf);
+    const normalizedText = pageText
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+    
+    // Buscar por FAVORECIDO ou variações
+    if (/FAVORECIDO\s*:?/.test(normalizedText)) {
+      count++;
+    }
+  }
+  
+  return count;
+}
+
+/**
+ * Conta páginas que contêm padrões de nome de funcionário (para holerites)
+ * Usa texto nativo do PDF - muito rápido, sem OCR
+ */
+export async function countPagesWithEmployeeName(
+  file: File,
+  cachedPdf?: PDFDocumentProxy
+): Promise<number> {
+  const pdf = cachedPdf || await getCachedPdf(file);
+  let count = 0;
+  
+  // Padrões que indicam presença de nome de funcionário
+  const employeePatterns = [
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR)\s*:/i,
+    /RECIBO\s+DE\s+PAGAMENTO/i,
+    /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
+  ];
+  
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pageText = await extractTextFromPage(file, i, pdf);
+    const normalizedText = pageText
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+    
+    // Verificar se algum padrão de funcionário é encontrado
+    const hasEmployee = employeePatterns.some(pattern => pattern.test(normalizedText));
+    if (hasEmployee) {
+      count++;
+    }
+  }
+  
+  return count;
+}
+
+/**
+ * Função unificada para contar funcionários por tipo de documento
+ * Analisa o texto nativo de cada página para contagem precisa
+ */
+export async function countEmployeesInDocument(
+  file: File,
+  type: 'holerite' | 'comprovante',
+  cachedPdf?: PDFDocumentProxy
+): Promise<number> {
+  if (type === 'comprovante') {
+    return countPagesWithFavorecido(file, cachedPdf);
+  } else {
+    return countPagesWithEmployeeName(file, cachedPdf);
+  }
+}
+
 export function extractEmployeeName(text: string): string | null {
   // Normalizar texto: remover acentos e converter para maiúscula
   const normalizedText = text

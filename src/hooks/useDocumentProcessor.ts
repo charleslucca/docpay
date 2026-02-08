@@ -8,6 +8,7 @@ import {
   preparePageForMatch,
   prepareTargetNameForMatch,
   findNameInPreparedPage,
+  countEmployeesInDocument,
   type PreparedPage,
   type PreparedTarget,
 } from '@/lib/pdfUtils';
@@ -248,21 +249,28 @@ export function useDocumentProcessor() {
       setComprovantes((prev) => [...prev, ...newFiles]);
     }
 
-    // Count pages in background (parallel)
+    // Count pages and employees in background (parallel)
     const countPagePromises = newFiles.map(async (uploadedFile) => {
       try {
         const pdf = await getCachedPdf(uploadedFile.file);
         const pageCount = pdf.numPages;
         
-        // Update with page count
+        // Contagem precisa baseada no tipo de documento (analisa texto nativo)
+        const employeeCount = await countEmployeesInDocument(
+          uploadedFile.file,
+          type,
+          pdf
+        );
+        
+        // Update with page count and precise employee count
         const setter = type === 'holerite' ? setHolerites : setComprovantes;
         setter((prev) => prev.map((f) => 
           f.id === uploadedFile.id 
-            ? { ...f, pageCount, estimatedEmployees: pageCount > 10 ? pageCount - 1 : pageCount }
+            ? { ...f, pageCount, estimatedEmployees: employeeCount }
             : f
         ));
       } catch (error) {
-        console.warn(`[PageCount] Error counting pages for ${uploadedFile.name}:`, error);
+        console.warn(`[PageCount] Error counting for ${uploadedFile.name}:`, error);
       }
     });
 
