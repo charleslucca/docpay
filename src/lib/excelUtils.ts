@@ -290,17 +290,35 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     return cleaned;
   };
 
+  const isLikelyName = (value: string): boolean => {
+    if (!value) return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    const norm = normalizeForComparison(trimmed);
+    if (skipHeaders.includes(norm)) return false;
+    if (/^TOTAL/i.test(trimmed) || /^SUBTOTAL/i.test(trimmed) || /^SOMA/i.test(trimmed) || /^COLUNA/i.test(trimmed))
+      return false;
+    if (/^R\$\s*[\d.,]/i.test(trimmed)) return false;
+    if (looksLikeCity(trimmed)) return false;
+    // Must contain letters
+    if (!/[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ]/i.test(trimmed)) return false;
+    return true;
+  };
+
   const getCandidateName = (row: unknown[]): string => {
-    for (let i = 0; i < 3; i++) {
+    // Scan first 6 cells for a plausible name
+    for (let i = 0; i < 6; i++) {
       const value = row[i];
       if (typeof value === "string") {
         const trimmed = value.trim();
-        if (trimmed && !isNumeric(trimmed)) {
+        if (trimmed && !isNumeric(trimmed) && isLikelyName(trimmed)) {
           return trimmed;
         }
       }
     }
-    return String(row[0] || "").trim();
+    // Fallback: first cell string (if any)
+    const v0 = row[0];
+    return typeof v0 === "string" ? v0.trim() : "";
   };
 
   for (const sheetName of workbook.SheetNames) {
@@ -308,46 +326,56 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     const sheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
-    if (jsonData.length < 2) continue;
+    if (jsonData.length < 3) continue;
+
+    const row1 = jsonData[0] as unknown[];
+    const row2 = jsonData[1] as unknown[];
+    const row3 = jsonData[2] as unknown[];
+
+    const cellA1 = String(row1?.[0] || "").trim();
+    const cellA2 = String(row2?.[0] || "").trim();
+    const cellA3 = String(row3?.[0] || "").trim();
+
+    // Rules from user:
+    // - Company is ALWAYS in row 1.
+    // - If row 1 has "Colunas1" (or variants), then company is in row 2 and city is in row 3.
+    // - Otherwise, city is in row 2.
+    const row1IsColunas = /^COLUNA[S]?\d*$/i.test(cellA1) || /^COLUMN[S]?\d*$/i.test(cellA1);
 
     let empresa = "";
     let cidade = "";
     let cityRowIndex = -1;
     let headerRowIndex = -1;
 
-    for (let i = 0; i < Math.min(10, jsonData.length); i++) {
-      const row = jsonData[i] as unknown[];
-      const cellA = String(row?.[0] || "").trim();
-      if (!empresa && looksLikeCompany(cellA)) {
-        empresa = cellA;
-      }
-      if (!cidade && looksLikeCity(cellA)) {
-        cidade = extractCityFromLine(cellA);
-        cityRowIndex = i;
-      }
-      const norm = normalizeForComparison(cellA);
-      if (headerRowIndex < 0 && (norm.includes("NOME") || norm.includes("COLABORADOR"))) {
-        headerRowIndex = i;
-      }
+    if (row1IsColunas) {
+      empresa = cellA2;
+      cidade = extractCityFromLine(cellA3);
+      cityRowIndex = 2;
+    } else {
+      empresa = cellA1;
+      cidade = extractCityFromLine(cellA2);
+      cityRowIndex = 1;
     }
 
-    if (!cidade) {
-      cidade = extractCityFromLine(sheetName) || sheetName;
-    }
-    if (!empresa) {
-      empresa = inferCompany(sheetName, cidade);
-    }
-
-    if (!cidade || cidade.length < 2) continue;
-    if (skipHeaders.includes(cidade.toUpperCase())) continue;
+    if (!empresa || !cidade) continue;
+    if (skipHeaders.includes(normalizeForComparison(empresa))) continue;
+    if (skipHeaders.includes(normalizeForComparison(cidade))) continue;
 
     empresasSet.add(empresa);
     cidadesSet.add(cidade);
 
-    let startIndex = cityRowIndex >= 0 ? cityRowIndex + 1 : 0;
-    if (headerRowIndex >= 0 && headerRowIndex + 1 > startIndex) {
-      startIndex = headerRowIndex + 1;
+    // Find header row if present (NOME/COLABORADOR)
+    for (let i = Math.max(0, cityRowIndex + 1); i < Math.min(cityRowIndex + 6, jsonData.length); i++) {
+      const row = jsonData[i] as unknown[];
+      const cellA = String(row?.[0] || "").trim();
+      const norm = normalizeForComparison(cellA);
+      if (norm.includes("NOME") || norm.includes("COLABORADOR")) {
+        headerRowIndex = i;
+        break;
+      }
     }
+
+    let startIndex = headerRowIndex >= 0 ? headerRowIndex + 1 : cityRowIndex + 1;
 
     // Skip header rows if present
     while (startIndex < jsonData.length) {
@@ -369,15 +397,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       const rawName = getCandidateName(row);
       if (!rawName) continue;
 
-      const normName = normalizeForComparison(rawName);
-      if (skipHeaders.includes(normName)) continue;
-      if (/^TOTAL/i.test(rawName) || /^SUBTOTAL/i.test(rawName) || /^SOMA/i.test(rawName) || /^COLUNA/i.test(rawName))
-        continue;
-      if (looksLikeCity(rawName)) continue;
-
-      const colB = row[1];
-      const colC = row[2];
-      const hasSalary = isNumeric(colB) || isNumeric(colC);
+      if (!isLikelyName(rawName)) continue;
 
       const name = cleanEmployeeName(rawName);
       if (!name) continue;
@@ -385,8 +405,6 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
       const words = name.split(" ").filter((w) => w.length >= 2);
       if (words.length === 0) continue;
-
-      if (!hasSalary && words.length < 2) continue;
 
       records.push({
         empresa,
