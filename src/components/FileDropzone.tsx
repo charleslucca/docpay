@@ -150,7 +150,7 @@ export function FileDropzone({
                     </p>
                   ) : file.pageCount !== undefined ? (
                     <p className="text-xs text-muted-foreground">
-                      {file.pageCount} {file.pageCount === 1 ? 'página' : 'páginas'} • ~{file.estimatedEmployees} funcionário(s) (estimado)
+                      {file.pageCount} {file.pageCount === 1 ? 'página' : 'páginas'} • {file.estimatedEmployees} funcionário(s)
                     </p>
                   ) : null}
                   {file.extractedName && (
@@ -194,7 +194,7 @@ export function FileDropzone({
                   <Users className="h-4 w-4" />
                   {allCounted ? (
                     <span>
-                      Total: {files.length} arquivo(s) • ~{totalEmployees} funcionário(s) (estimado)
+                      Total: {files.length} arquivo(s) • {totalEmployees} funcionário(s)
                     </span>
                   ) : (
                     <span className="flex items-center gap-1">
