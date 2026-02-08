@@ -72,7 +72,7 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
 
   const records: EmployeeRecord[] = [];
   const empresasSet = new Set<string>();
-  const cidadesList: string[] = [];
+  const cidadesSet = new Set<string>();
 
   // Parse data rows
   for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
@@ -112,42 +112,7 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
 function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
   const records: EmployeeRecord[] = [];
   const empresasSet = new Set<string>();
-  const cidadesList: string[] = [];
-  const MAX_HEADER_ROWS = 8;
-
-  const getFirstCellText = (row: unknown[] | undefined): string => {
-    if (!row) return "";
-    for (const cell of row) {
-      const value = String(cell ?? "").trim();
-      if (value) return value;
-    }
-    return "";
-  };
-
-  const extractMunicipio = (raw: string): string => {
-    if (!raw) return "";
-    // Use the text before the first hyphen (supports " - " or "-")
-    const parts = raw.split(/\s*-\s*/);
-    return parts[0]?.trim() ?? "";
-  };
-
-  const isLikelyCompany = (text: string): boolean => {
-    if (!text) return false;
-    const norm = normalizeForComparison(text);
-    if (!norm) return false;
-    if (norm.includes("COLUNA") || norm.includes("TOTAL")) return false;
-    if (/\d/.test(text)) return false;
-    if (text.includes("-")) return false;
-    return true;
-  };
-
-  const isLikelyMunicipioLine = (text: string): boolean => {
-    if (!text) return false;
-    const norm = normalizeForComparison(text);
-    if (!text.includes("-")) return false;
-    if (norm.includes("TOTAL")) return false;
-    return true;
-  };
+  const cidadesSet = new Set<string>();
 
   for (const sheetName of workbook.SheetNames) {
     // Skip "Todos" sheet
@@ -158,68 +123,58 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     if (jsonData.length < 3) continue;
 
-    let empresa = "";
-    let cidade = "";
-    let municipioRowIndex = -1;
+    // FIXED: Line 1 = Company, Line 2 = City + Bank
+    const row1 = jsonData[0] as unknown[];
+    const row2 = jsonData[1] as unknown[];
 
-    for (let i = 0; i < Math.min(MAX_HEADER_ROWS, jsonData.length); i++) {
-      const rowText = getFirstCellText(jsonData[i] as unknown[]);
-      if (!rowText) continue;
-      if (!empresa && isLikelyCompany(rowText)) {
-        empresa = rowText;
-      }
-      if (!cidade && isLikelyMunicipioLine(rowText)) {
-        cidade = extractMunicipio(rowText);
-        municipioRowIndex = i;
-      }
-    }
+    const empresaRaw = String(row1?.[0] || "").trim();
+    const cidadeRaw = String(row2?.[0] || "").trim();
 
-    if (!cidade && sheetName.includes("-")) {
-      cidade = extractMunicipio(sheetName);
-    }
+    // Extract municipality (before first hyphen)
+    const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
+    const empresa = empresaRaw;
 
+    // Validate: company shouldn't have hyphen/numbers, city must exist
     if (!empresa || !cidade) continue;
+    if (/\d/.test(empresa) || empresa.includes("-")) continue;
 
     empresasSet.add(empresa);
-    cidadesList.push(cidade);
+    cidadesSet.add(cidade);
 
-    // Row after municipality line: Employee names (skip header row "NOME")
-    const startRow = municipioRowIndex >= 0 ? municipioRowIndex + 1 : 2;
-    for (let i = startRow; i < jsonData.length; i++) {
+    // Employees from line 3 onwards (index 2)
+    for (let i = 2; i < jsonData.length; i++) {
       const row = jsonData[i] as unknown[];
       if (!row) continue;
 
       const colaborador = String(row[0] || "").trim();
 
-      // Skip empty rows, headers and totals
+      // Validation filters
       if (!colaborador) continue;
       if (normalizeForComparison(colaborador) === "NOME") continue;
       if (colaborador.startsWith("R$")) continue;
-      if (colaborador.toUpperCase().includes("TOTAL")) continue;
-      if (normalizeForComparison(colaborador).includes("COLUNA")) continue;
+      if (/TOTAL/i.test(colaborador)) continue;
+      if (/COLUNA/i.test(colaborador)) continue;
+      if (/\d/.test(colaborador)) continue;
 
-      // Check if it looks like a name (at least 2 words, no monetary values)
       const words = colaborador.split(" ").filter((w) => w.length >= 2);
       if (words.length < 2) continue;
-
-      // Skip if contains numbers (likely a value, not a name)
-      if (/\d/.test(colaborador)) continue;
 
       records.push({
         empresa,
         cidade,
-        contrato: sheetName, // Use sheet name as contract
+        contrato: sheetName,
         colaborador,
       });
     }
   }
 
-  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} municipality sheets with ${records.length} employees`);
+  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
+  console.log(`[Excel] Cities found: ${Array.from(cidadesSet).join(", ")}`);
 
   return {
     records,
     empresas: Array.from(empresasSet).sort(),
-    cidades: cidadesList,
+    cidades: Array.from(cidadesSet).sort(),
     fileName,
   };
 }
