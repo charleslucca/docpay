@@ -332,9 +332,18 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     const row2 = jsonData[1] as unknown[];
     const row3 = jsonData[2] as unknown[];
 
-    const cellA1 = String(row1?.[0] || "").trim();
-    const cellA2 = String(row2?.[0] || "").trim();
-    const cellA3 = String(row3?.[0] || "").trim();
+    const getFirstCellText = (row: unknown[] | undefined): string => {
+      if (!row) return "";
+      for (const cell of row) {
+        const value = String(cell ?? "").trim();
+        if (value) return value;
+      }
+      return "";
+    };
+
+    const cellA1 = getFirstCellText(row1);
+    const cellA2 = getFirstCellText(row2);
+    const cellA3 = getFirstCellText(row3);
 
     // Rules from user:
     // - Company is ALWAYS in row 1.
@@ -349,16 +358,15 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     if (row1IsColunas) {
       empresa = cellA2;
-      cidade = extractCityFromLine(cellA3);
+      cidade = extractCityFromLine(cellA3) || cellA3;
       cityRowIndex = 2;
     } else {
       empresa = cellA1;
-      cidade = extractCityFromLine(cellA2);
+      cidade = extractCityFromLine(cellA2) || cellA2;
       cityRowIndex = 1;
     }
 
     if (!empresa || !cidade) continue;
-    if (skipHeaders.includes(normalizeForComparison(empresa))) continue;
     if (skipHeaders.includes(normalizeForComparison(cidade))) continue;
 
     empresasSet.add(empresa);
