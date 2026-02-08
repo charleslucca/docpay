@@ -1,12 +1,13 @@
 import { useCallback, useState, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileSpreadsheet, Upload, X, Check, Building2, MapPin, Users, ChevronDown, ChevronUp, CloudUpload, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { FileSpreadsheet, Upload, X, Check, Building2, MapPin, Users, ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { parseExcelFile, type SpreadsheetData } from '@/lib/excelUtils';
-import { syncSpreadsheetToDatabase, type SyncResult } from '@/lib/supabaseExcelSync';
+import { syncSpreadsheetToDatabase, type SyncResult, type SyncProgress } from '@/lib/supabaseExcelSync';
 
 interface ExcelDropzoneProps {
   spreadsheetData: SpreadsheetData | null;
@@ -28,6 +29,7 @@ export function ExcelDropzone({
   const [showCidades, setShowCidades] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const fileRef = useRef<File | null>(null);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
@@ -44,15 +46,22 @@ export function ExcelDropzone({
       const data = await parseExcelFile(file);
       onSpreadsheetLoaded(data);
 
-      // Automatically sync to database after parsing
+      // Automatically sync to database after parsing with progress tracking
       setSyncStatus('syncing');
-      const result = await syncSpreadsheetToDatabase(data, file);
+      setSyncProgress(null);
+      
+      const result = await syncSpreadsheetToDatabase(data, file, (progress) => {
+        setSyncProgress(progress);
+      });
       
       if (result.success) {
         setSyncStatus('success');
         setSyncResult(result);
+        setSyncProgress(null);
       } else {
         setSyncStatus('error');
+        setSyncResult(result);
+        setSyncProgress(null);
         setSyncResult(result);
       }
     } catch (err) {
@@ -80,7 +89,20 @@ export function ExcelDropzone({
     setError(null);
     setSyncStatus('idle');
     setSyncResult(null);
+    setSyncProgress(null);
     fileRef.current = null;
+  };
+
+  const getProgressPercentage = (): number => {
+    if (!syncProgress) return 0;
+    switch (syncProgress.stage) {
+      case 'uploading': return 10;
+      case 'syncing-empresas': return 25;
+      case 'syncing-municipios': return 40;
+      case 'syncing-funcionarios': return 70;
+      case 'finalizing': return 95;
+      default: return 0;
+    }
   };
 
   const renderSyncStatus = () => {
@@ -96,15 +118,20 @@ export function ExcelDropzone({
           'bg-destructive/10 border-destructive/30'
         }`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2">
           {syncStatus === 'syncing' && (
             <>
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-sm">Sincronizando com banco de dados...</span>
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span className="text-sm font-medium">
+                  {syncProgress?.message || 'Sincronizando...'}
+                </span>
+              </div>
+              <Progress value={getProgressPercentage()} className="h-2" />
             </>
           )}
           {syncStatus === 'success' && syncResult && (
-            <>
+            <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-primary" />
               <div className="text-sm">
                 <span className="font-medium text-primary">Sincronizado!</span>
@@ -114,15 +141,15 @@ export function ExcelDropzone({
                   {syncResult.stats.funcionariosRemovidos > 0 && `, ${syncResult.stats.funcionariosRemovidos} removidos`}
                 </span>
               </div>
-            </>
+            </div>
           )}
           {syncStatus === 'error' && syncResult && (
-            <>
+            <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-destructive" />
               <span className="text-sm text-destructive">
                 {syncResult.error || 'Erro ao sincronizar'}
               </span>
-            </>
+            </div>
           )}
         </div>
       </motion.div>
