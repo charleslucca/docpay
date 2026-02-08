@@ -258,7 +258,7 @@ export function useDocumentProcessor() {
         const setter = type === 'holerite' ? setHolerites : setComprovantes;
         setter((prev) => prev.map((f) => 
           f.id === uploadedFile.id 
-            ? { ...f, pageCount, estimatedEmployees: pageCount }
+            ? { ...f, pageCount, estimatedEmployees: pageCount > 10 ? pageCount - 1 : pageCount }
             : f
         ));
       } catch (error) {
