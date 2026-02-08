@@ -766,7 +766,7 @@ export function useDocumentProcessor() {
             }));
           },
           () => cancelledRef.current,
-          { retryOnShortText: true } // Enable auto-retry
+          { retryOnShortText: false } // OPTIMIZED: Disabled for performance - use "OCR Reforçado" manually if needed
         );
         
         // Aggregate metrics
