@@ -1,164 +1,143 @@
 
-
-# Otimizacao da Sincronizacao - Processamento em Lote
+# Correção: Ignorar linha "colunas1" no topo das abas
 
 ## Problema Identificado
 
-O codigo atual e extremamente lento porque processa cada funcionario individualmente:
+O parser atual assume que:
+- **Linha 1 (índice 0)** = Nome da Empresa
+- **Linha 2 (índice 1)** = Cidade - Banco
+- **Linha 3+ (índice 2+)** = Funcionários
 
-| Operacao | Antes (atual) | Problema |
-|----------|---------------|----------|
-| Empresas | 1 SELECT + 1 INSERT por empresa | ~2-4 requisicoes |
-| Municipios | 1 SELECT + 1 INSERT por municipio | ~42 requisicoes (21 cidades) |
-| Funcionarios | 1 SELECT + 1 INSERT por funcionario | ~834 requisicoes (417 funcionarios) |
-| Desativacao | 1 UPDATE por funcionario ausente | Variavel |
-| **TOTAL** | | **~900+ requisicoes HTTP sequenciais** |
+Porém, algumas abas têm uma linha extra no topo contendo "colunas1" (ou "Coluna1", "COLUNA1", etc.) que deve ser ignorada. Quando isso acontece:
+- O parser interpreta "colunas1" como o nome da empresa
+- A validação falha (empresa muito curta ou inválida)
+- Todos os funcionários dessa aba são ignorados
 
-Com latencia media de 100-200ms por requisicao, o tempo total fica entre **2-4 minutos**.
-
----
-
-## Solucao: Processamento em Lote (Batch Processing)
-
-Substituir operacoes individuais por operacoes em lote, reduzindo de ~900 requisicoes para **~10-15 requisicoes**.
+**Resultado**: 931 funcionários detectados ao invés de 1004 (faltando ~73).
 
 ---
 
-## Mudancas Tecnicas
+## Solução
 
-### 1. Buscar Todos os Dados Existentes em Uma Unica Requisicao
+Adicionar detecção dinâmica do "offset" de linhas no início de cada aba:
+
+1. Verificar se a linha 1 contém "colunas1" (ou variações)
+2. Se sim, usar offset de 1 linha:
+   - Linha 2 = Empresa
+   - Linha 3 = Cidade
+   - Linha 4+ = Funcionários
+3. Se não, manter o comportamento atual (offset 0)
+
+---
+
+## Mudanças em `src/lib/excelUtils.ts`
+
+### Função `parseMunicipalitySheets()` - linhas 121-214
+
+Adicionar lógica de detecção de offset antes de extrair empresa/cidade:
 
 ```typescript
-// ANTES: 21 requisicoes para municipios
-for (const municipio of municipios) {
-  const { data } = await supabase.from("municipios").select("id").eq("nome_normalizado", municipio);
+function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
+  const records: EmployeeRecord[] = [];
+  const empresasSet = new Set<string>();
+  const cidadesSet = new Set<string>();
+
+  for (const sheetName of workbook.SheetNames) {
+    if (normalizeForComparison(sheetName) === "TODOS") continue;
+
+    const sheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
+
+    if (jsonData.length < 3) continue;
+
+    // NOVO: Detectar offset se linha 1 contém "colunas1" ou similar
+    let offset = 0;
+    const firstRow = jsonData[0] as unknown[];
+    const firstCellValue = String(firstRow?.[0] || "").trim().toUpperCase();
+    
+    // Verificar se primeira célula é "colunas*" ou similar
+    if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || 
+        /^COLUMN[S]?\d*$/i.test(firstCellValue) ||
+        firstCellValue === "" ||
+        /^[A-Z]$/i.test(firstCellValue)) { // Letra solta como "A", "B"
+      
+      // Verificar se a próxima linha parece ser a empresa (não vazia, não numérica)
+      const secondRow = jsonData[1] as unknown[];
+      const secondCellValue = String(secondRow?.[0] || "").trim();
+      
+      if (secondCellValue && secondCellValue.length >= 2 && !/^COLUNA/i.test(secondCellValue)) {
+        offset = 1;
+      }
+    }
+
+    // Garantir que temos linhas suficientes após o offset
+    if (jsonData.length < (3 + offset)) continue;
+
+    // Usar offset para pegar empresa e cidade
+    const empresaRow = jsonData[offset] as unknown[];
+    const cidadeRow = jsonData[offset + 1] as unknown[];
+
+    const empresaRaw = String(empresaRow?.[0] || "").trim();
+    const cidadeRaw = String(cidadeRow?.[0] || "").trim();
+
+    const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
+    const empresa = empresaRaw;
+
+    if (!empresa || !cidade) continue;
+    if (empresa.length < 2) continue;
+
+    empresasSet.add(empresa);
+    cidadesSet.add(cidade);
+
+    // Funcionários começam após empresa + cidade + offset
+    const startIndex = offset + 2;
+    
+    for (let i = startIndex; i < jsonData.length; i++) {
+      // ... resto da lógica de parsing de funcionários (sem alteração)
+    }
+  }
+  
+  // Log com informação de offset para debug
+  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
+  
+  // ... resto igual
 }
-
-// DEPOIS: 1 requisicao
-const { data: allMunicipios } = await supabase.from("municipios").select("id, nome_normalizado");
-const municipioMap = new Map(allMunicipios.map(m => [m.nome_normalizado, m.id]));
-```
-
-### 2. Inserir Novos Registros em Lote
-
-```typescript
-// ANTES: N requisicoes individuais
-for (const novo of novos) {
-  await supabase.from("funcionarios").insert(novo);
-}
-
-// DEPOIS: 1 requisicao para todos
-await supabase.from("funcionarios").insert(novos);
-```
-
-### 3. Buscar Funcionarios Existentes em Uma Requisicao
-
-```typescript
-// ANTES: 417 requisicoes
-for (const record of records) {
-  const { data } = await supabase.from("funcionarios")
-    .select("id, banco, contrato, ativo")
-    .eq("empresa_id", empresaId)
-    .eq("municipio_id", municipioId)
-    .eq("nome_normalizado", nomeNorm)
-    .single();
-}
-
-// DEPOIS: 1 requisicao
-const { data: allExisting } = await supabase
-  .from("funcionarios")
-  .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, ativo");
-
-// Lookup em memoria O(1)
-const existingMap = new Map(
-  allExisting.map(f => [`${f.empresa_id}|${f.municipio_id}|${f.nome_normalizado}`, f])
-);
-```
-
-### 4. Processar Updates em Paralelo com Chunks
-
-```typescript
-// Dividir em chunks de 50 para evitar timeout
-const updateChunks = chunkArray(toUpdate, 50);
-await Promise.all(
-  updateChunks.map(chunk =>
-    Promise.all(chunk.map(item =>
-      supabase.from("funcionarios").update(item.data).eq("id", item.id)
-    ))
-  )
-);
-```
-
-### 5. Desativar em Lote com IN Clause
-
-```typescript
-// ANTES: N requisicoes
-for (const id of toDeactivate) {
-  await supabase.from("funcionarios").update({ ativo: false }).eq("id", id);
-}
-
-// DEPOIS: 1 requisicao
-await supabase.from("funcionarios").update({ ativo: false }).in("id", toDeactivate);
-```
-
-### 6. Adicionar Feedback de Progresso Detalhado
-
-```typescript
-interface SyncProgress {
-  stage: 'uploading' | 'syncing-empresas' | 'syncing-municipios' | 'syncing-funcionarios' | 'finalizing';
-  message: string;
-}
-
-// Callback para atualizar UI
-onProgress?: (progress: SyncProgress) => void;
 ```
 
 ---
 
-## Comparacao de Performance
+## Padrões Detectados para Offset
 
-| Metrica | Antes | Depois |
-|---------|-------|--------|
-| Requisicoes HTTP | ~900+ | ~10-15 |
-| Tempo estimado | 2-4 minutos | 2-5 segundos |
-| Risco de timeout | Alto | Baixo |
-| Feedback visual | "Sincronizando..." | Etapas detalhadas |
+A linha será considerada "cabeçalho extra" e ignorada se:
+
+| Padrão | Exemplo | Ação |
+|--------|---------|------|
+| `COLUNA` + número | "colunas1", "Coluna1", "COLUNA2" | Offset +1 |
+| `COLUMN` + número | "Column1", "COLUMNS1" | Offset +1 |
+| Célula vazia | "" | Offset +1 (se próxima linha parece empresa) |
+| Letra solta | "A", "B", "C" | Offset +1 |
 
 ---
 
-## Arquivos a Modificar
+## Verificação de Segurança
 
-| Arquivo | Alteracao |
+Para evitar falsos positivos, após detectar potencial offset:
+1. Verificar se a linha seguinte (potencial empresa) não está vazia
+2. Verificar se a linha seguinte tem pelo menos 2 caracteres
+3. Verificar se a linha seguinte não é outro padrão de cabeçalho
+
+---
+
+## Arquivo a Modificar
+
+| Arquivo | Alteração |
 |---------|-----------|
-| `src/lib/supabaseExcelSync.ts` | Refatorar para batch processing |
-| `src/components/ExcelDropzone.tsx` | Adicionar indicador de progresso por etapa |
-
----
-
-## Fluxo Otimizado
-
-```text
-1. Upload arquivo (1 req)
-2. Buscar TODAS empresas existentes (1 req)
-3. Inserir empresas novas em lote (1 req)
-4. Buscar TODOS municipios existentes (1 req)
-5. Inserir municipios novos em lote (1 req)
-6. Buscar TODOS funcionarios existentes (1 req)
-7. Comparar em memoria (0 req)
-8. Inserir funcionarios novos em lote (1 req)
-9. Atualizar modificados em paralelo (chunks de 50)
-10. Desativar ausentes em lote (1 req)
-11. Registrar historico (1 req)
-
-TOTAL: ~10-15 requisicoes
-```
+| `src/lib/excelUtils.ts` | Adicionar lógica de offset dinâmico na função `parseMunicipalitySheets()` |
 
 ---
 
 ## Resultado Esperado
 
-- Upload de 417+ funcionarios: **< 5 segundos**
-- Feedback claro mostrando cada etapa
-- Sem risco de timeout do navegador
-- Experiencia fluida para o usuario
-
+- Antes: 931 funcionários (abas com "colunas1" ignoradas)
+- Depois: 1004 funcionários (todas as abas processadas corretamente)
+- Log mostrará detecção de offset quando aplicável
