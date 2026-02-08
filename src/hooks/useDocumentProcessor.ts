@@ -50,6 +50,9 @@ import {
 
 const CONCURRENCY_LIMIT = 5;
 const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
+const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
+const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
+const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
 
 // Optimized: Align batch size with worker count for balanced CPU usage
 const getOptimalBatchSize = () => Math.max(4, Math.min(6, getWorkerCount()));
@@ -606,16 +609,33 @@ export function useDocumentProcessor() {
                 },
               );
 
-              // Extract names and cache results
+              // Extract names and cache results (with optional retry for low-quality OCR)
               for (let i = 0; i < texts.length; i++) {
                 const pageNum = batch[i].pageNum;
-                const text = texts[i];
+                let text = texts[i];
 
                 // Cache OCR result for resume
                 const cacheKey = getOcrCacheKey(holerite.file.name, holerite.file.size, pageNum);
-                setCachedOcrResult(cacheKey, text);
 
-                const extractedName = extractEmployeeName(text);
+                let extractedName = extractEmployeeName(text);
+
+                // Retry with higher scale if OCR text is too short and no name was found
+                if (!extractedName && text.trim().length < OCR_RETRY_TEXT_LEN) {
+                  const retryCanvas = await renderPageForOCR(holerite.file, pageNum, OCR_SCALE_RETRY, false);
+                  const retryResult = await extractTextWithOCRResult(retryCanvas, undefined, {
+                    timeoutMs: OCR_RETRY_TIMEOUT_MS,
+                  });
+
+                  retryCanvas.width = 0;
+                  retryCanvas.height = 0;
+
+                  if (retryResult.text.trim().length > text.trim().length) {
+                    text = retryResult.text;
+                    extractedName = extractEmployeeName(text);
+                  }
+                }
+
+                setCachedOcrResult(cacheKey, text);
                 if (extractedName) {
                   console.log(`[OCR] Page ${pageNum}: Found "${extractedName}"`);
                   entries.push({
@@ -819,7 +839,7 @@ export function useDocumentProcessor() {
             }));
           },
           () => cancelledRef.current,
-          { retryOnShortText: false }, // OPTIMIZED: Disabled for performance - use "OCR Reforçado" manually if needed
+          { retryOnShortText: true }, // Accuracy: retry short-text pages with higher scale
         );
 
         // Aggregate metrics
