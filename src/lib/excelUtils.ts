@@ -299,7 +299,6 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     if (/^TOTAL/i.test(trimmed) || /^SUBTOTAL/i.test(trimmed) || /^SOMA/i.test(trimmed) || /^COLUNA/i.test(trimmed))
       return false;
     if (/^R\$\s*[\d.,]/i.test(trimmed)) return false;
-    if (looksLikeCity(trimmed)) return false;
     // Must contain letters
     if (!/[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ]/i.test(trimmed)) return false;
     return true;
@@ -360,10 +359,18 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       empresa = cellA2;
       cidade = extractCityFromLine(cellA3) || cellA3;
       cityRowIndex = 2;
+      if (!cidade) {
+        cidade = extractCityFromLine(cellA2) || cellA2;
+        cityRowIndex = 1;
+      }
     } else {
       empresa = cellA1;
       cidade = extractCityFromLine(cellA2) || cellA2;
       cityRowIndex = 1;
+      if (!cidade) {
+        cidade = extractCityFromLine(cellA3) || cellA3;
+        cityRowIndex = 2;
+      }
     }
 
     if (!empresa || !cidade) continue;
@@ -406,6 +413,12 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       if (!rawName) continue;
 
       if (!isLikelyName(rawName)) continue;
+
+      const colB = row[1];
+      const colC = row[2];
+      const hasSalary = isNumeric(colB) || isNumeric(colC);
+
+      if (looksLikeCity(rawName) && !hasSalary) continue;
 
       const name = cleanEmployeeName(rawName);
       if (!name) continue;
