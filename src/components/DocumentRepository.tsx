@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Download, Search, Calendar, User, FileText, FolderOpen } from 'lucide-react';
+import { Download, Search, Calendar, User, FileText, FolderOpen, Building2, MapPin } from 'lucide-react';
 import { GeneratedDocument } from '@/types/document';
+import { type SpreadsheetData } from '@/lib/excelUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -15,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface DocumentRepositoryProps {
   documents: GeneratedDocument[];
+  spreadsheetData?: SpreadsheetData | null;
 }
 
 // Month names for filter display
@@ -23,10 +25,12 @@ const monthNames = [
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
-export function DocumentRepository({ documents }: DocumentRepositoryProps) {
+export function DocumentRepository({ documents, spreadsheetData }: DocumentRepositoryProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedYear, setSelectedYear] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedEmpresa, setSelectedEmpresa] = useState<string>('all');
+  const [selectedCidade, setSelectedCidade] = useState<string>('all');
 
   const years = useMemo(() => {
     const uniqueYears = [...new Set(documents.map((d) => d.year))];
@@ -38,6 +42,16 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
     return uniqueMonths.sort((a, b) => a - b);
   }, [documents]);
 
+  const empresas = useMemo(() => {
+    const uniqueEmpresas = [...new Set(documents.map((d) => d.empresa).filter(Boolean))] as string[];
+    return uniqueEmpresas.sort();
+  }, [documents]);
+
+  const cidades = useMemo(() => {
+    const uniqueCidades = [...new Set(documents.map((d) => d.municipio).filter(Boolean))] as string[];
+    return uniqueCidades.sort();
+  }, [documents]);
+
   const filteredDocuments = useMemo(() => {
     return documents.filter((doc) => {
       const matchesSearch = doc.employeeName
@@ -45,9 +59,11 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
         .includes(searchQuery.toLowerCase());
       const matchesYear = selectedYear === 'all' || doc.year === parseInt(selectedYear);
       const matchesMonth = selectedMonth === 'all' || doc.month === parseInt(selectedMonth);
-      return matchesSearch && matchesYear && matchesMonth;
+      const matchesEmpresa = selectedEmpresa === 'all' || doc.empresa === selectedEmpresa;
+      const matchesCidade = selectedCidade === 'all' || doc.municipio === selectedCidade;
+      return matchesSearch && matchesYear && matchesMonth && matchesEmpresa && matchesCidade;
     });
-  }, [documents, searchQuery, selectedYear, selectedMonth]);
+  }, [documents, searchQuery, selectedYear, selectedMonth, selectedEmpresa, selectedCidade]);
 
   const groupedDocuments = useMemo(() => {
     const groups: Record<string, GeneratedDocument[]> = {};
@@ -103,43 +119,83 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por nome..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
-            />
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por nome..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <Select value={selectedYear} onValueChange={setSelectedYear}>
+              <SelectTrigger className="w-full sm:w-32">
+                <Calendar className="h-4 w-4 mr-2" />
+                <SelectValue placeholder="Ano" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                {years.map((year) => (
+                  <SelectItem key={year} value={year.toString()}>
+                    {year}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+              <SelectTrigger className="w-full sm:w-36">
+                <SelectValue placeholder="Mês" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                {months.map((month) => (
+                  <SelectItem key={month} value={month.toString()}>
+                    {monthNames[month - 1]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <Select value={selectedYear} onValueChange={setSelectedYear}>
-            <SelectTrigger className="w-full sm:w-32">
-              <Calendar className="h-4 w-4 mr-2" />
-              <SelectValue placeholder="Ano" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos</SelectItem>
-              {years.map((year) => (
-                <SelectItem key={year} value={year.toString()}>
-                  {year}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-            <SelectTrigger className="w-full sm:w-36">
-              <SelectValue placeholder="Mês" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos</SelectItem>
-              {months.map((month) => (
-                <SelectItem key={month} value={month.toString()}>
-                  {monthNames[month - 1]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          
+          {/* Company and City filters - only show if data exists */}
+          {(empresas.length > 0 || cidades.length > 0) && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              {empresas.length > 0 && (
+                <Select value={selectedEmpresa} onValueChange={setSelectedEmpresa}>
+                  <SelectTrigger className="w-full sm:w-44">
+                    <Building2 className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Empresa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas Empresas</SelectItem>
+                    {empresas.map((empresa) => (
+                      <SelectItem key={empresa} value={empresa}>
+                        {empresa}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {cidades.length > 0 && (
+                <Select value={selectedCidade} onValueChange={setSelectedCidade}>
+                  <SelectTrigger className="w-full sm:w-44">
+                    <MapPin className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Cidade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas Cidades</SelectItem>
+                    {cidades.map((cidade) => (
+                      <SelectItem key={cidade} value={cidade}>
+                        {cidade}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Stats and download all */}
@@ -193,13 +249,31 @@ export function DocumentRepository({ documents }: DocumentRepositoryProps) {
                           <p className="text-sm font-medium truncate">
                             {doc.employeeName}
                           </p>
-                          <p className="text-xs text-muted-foreground">
-                            {doc.createdAt.toLocaleDateString('pt-BR')} às{' '}
-                            {doc.createdAt.toLocaleTimeString('pt-BR', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </p>
+                          {(doc.empresa || doc.municipio) ? (
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              {doc.empresa && (
+                                <span className="flex items-center gap-0.5">
+                                  <Building2 className="h-3 w-3" />
+                                  {doc.empresa}
+                                </span>
+                              )}
+                              {doc.empresa && doc.municipio && <span>•</span>}
+                              {doc.municipio && (
+                                <span className="flex items-center gap-0.5">
+                                  <MapPin className="h-3 w-3" />
+                                  {doc.municipio}
+                                </span>
+                              )}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              {doc.createdAt.toLocaleDateString('pt-BR')} às{' '}
+                              {doc.createdAt.toLocaleTimeString('pt-BR', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </p>
+                          )}
                         </div>
                         <Button
                           variant="ghost"
