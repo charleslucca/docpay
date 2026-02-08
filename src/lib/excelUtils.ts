@@ -143,9 +143,9 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
     const empresa = empresaRaw;
 
-    // Validate: company shouldn't have hyphen/numbers, city must exist
+    // Validate: city must exist, company can have numbers/hyphens
     if (!empresa || !cidade) continue;
-    if (/\d/.test(empresa) || empresa.includes("-")) continue;
+    if (empresa.length < 2) continue;
 
     empresasSet.add(empresa);
     cidadesSet.add(cidade);
@@ -157,22 +157,40 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
       const colaborador = String(row[0] || "").trim();
 
-      // Validation filters
+      // Validation filters - more permissive
       if (!colaborador) continue;
-      if (normalizeForComparison(colaborador) === "NOME") continue;
-      if (colaborador.startsWith("R$")) continue;
-      if (/TOTAL/i.test(colaborador)) continue;
-      if (/COLUNA/i.test(colaborador)) continue;
-      if (/\d/.test(colaborador)) continue;
+      
+      // Skip headers
+      const normColaborador = normalizeForComparison(colaborador);
+      if (normColaborador === "NOME") continue;
+      if (normColaborador === "COLABORADOR") continue;
+      if (normColaborador === "FUNCIONARIO") continue;
+      
+      // Skip summary/total rows
+      if (/^TOTAL/i.test(colaborador)) continue;
+      if (/^SUBTOTAL/i.test(colaborador)) continue;
+      if (/^SOMA/i.test(colaborador)) continue;
+      if (/^COLUNA/i.test(colaborador)) continue;
+      
+      // Skip currency values
+      if (/^R\$\s*[\d.,]/i.test(colaborador)) continue;
+      
+      // Clean name: remove trailing codes/numbers
+      const nomeLimpo = colaborador
+        .replace(/\s*-?\s*\d+\s*$/, '') // Remove " - 123" or " 123" from end
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      if (!nomeLimpo) continue;
 
-      const words = colaborador.split(" ").filter((w) => w.length >= 2);
+      const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
       if (words.length < 2) continue;
 
       records.push({
         empresa,
         cidade,
         contrato: sheetName,
-        colaborador,
+        colaborador: nomeLimpo,
       });
     }
   }
