@@ -1,202 +1,201 @@
 
 
-# Correção: Importação Excel - De 749 para 1004 Funcionários
+# Correção: Extração Inteligente do Município
 
-## Problemas Identificados
+## Entendimento do Padrão
 
-Analisando o arquivo Excel enviado e comparando com a listagem manual, identifiquei os seguintes problemas:
+A linha do município segue o formato: `[PARTE1] - [PARTE2] - [BANCO]`
 
-### Problema 1: Estruturas Variadas de Abas
+| Exemplo | Parte 1 | Parte 2 | Banco | Cidade Real |
+|---------|---------|---------|-------|-------------|
+| `GRAMADO - PORTEIROS - ITAÚ` | GRAMADO | PORTEIROS | ITAÚ | **GRAMADO** (1a posição) |
+| `IPAM - CAXIAS DO SUL - ITAÚ` | IPAM | CAXIAS DO SUL | ITAÚ | **CAXIAS DO SUL** (2a posição) |
 
-O arquivo tem **diferentes formatos de estrutura** que o parser atual não trata corretamente:
-
-| Tipo | Exemplo | Estrutura |
-|------|---------|-----------|
-| **Tipo A** | Page 1-3 (Alegrete, Alvorada, etc.) | Linha 1: "B SERVICE" (empresa), Linha 2: "CIDADE - BANCO", Linha 3+: Funcionários |
-| **Tipo B** | Page 4-7 (Cachoeirinha, Canela, Carazinho) | Linha 1: "Colunas1", Linha 2: "B SERVICE", Linha 3: "CIDADE - BANCO", Linha 4: "NOME" (header), Linha 5+: Funcionários |
-| **Tipo C** | Page 43 (Canela extra) | Linha 1: "CANELA - ITAÚ" (cidade na linha 1!), sem empresa separada |
-| **Tipo D** | Page 44-49 (Dois Irmãos, Ibirubá, etc.) | Linha 1: "Colunas1", Linha 2: "CIDADE - BANCO", Linha 3: "NOME", Linha 4+: Funcionários |
-
-### Problema 2: Empresa na Linha 1 ou Linha 2
-
-Algumas abas têm:
-- **Linha 1 = Empresa** (B SERVICE) e **Linha 2 = Cidade** (tipo normal)
-- **Linha 1 = Cidade** diretamente (sem linha de empresa separada - ex: Page 43 "CANELA - ITAÚ")
-
-O parser atual assume sempre Linha 1 = Empresa, perdendo abas onde a cidade está na linha 1.
-
-### Problema 3: Mais de 50 abas no arquivo
-
-O documento tem **mais de 50 páginas/abas** (o parser de documentos cortou em 50). O arquivo real contém mais abas que não foram analisadas no preview mas são lidas pelo XLSX.
-
-### Problema 4: Abas com Estrutura "SPACE"
-
-Páginas 50+ contêm abas da empresa "SPACE" com estrutura similar:
-- CANOAS TEC, CAPÃO DO CIPÓ, ELDORADO, ESTEIO, ITAQUI, PANAMBI, PASSO FUNDO, SÃO LOURENÇO, etc.
+A diferença: **IPAM** é um prefixo/sigla (tipo de contrato), não um município. Precisamos identificar esses prefixos.
 
 ---
 
-## Solução Proposta
+## Regras de Extração
 
-### Mudança 1: Detectar cidade na linha 1 (sem empresa separada)
+### Estrutura da Planilha
+```
+Linha 1: Empresa (B SERVICE, SPACE, FORTCLEAN, INTERCLEAN)
+         OU "Colunas1" (nesse caso, empresa na Linha 2)
 
-Quando a linha 1 contém um padrão de cidade (ex: "CANELA - ITAÚ", "DOIS IRMÃOS - SICREDI"), usar a cidade diretamente:
+Linha 2: Município no formato "[CIDADE ou PREFIXO] - [DESCRICAO] - [BANCO]"
+         (ou Linha 3 se Linha 1 = "Colunas1")
 
-```text
-SE linha 1 contém " - " E não começa com "B SERVICE" ou "SPACE":
-   cidade = linha 1 (antes do hífen)
-   empresa = extrair do nome (após hífen ou padrão conhecido)
-   funcionários = linha 2+ (pulando "NOME" se existir)
+Linha 3+: Funcionários (pulando linha "NOME" se existir)
 ```
 
-### Mudança 2: Detectar empresa pelo padrão do nome
+### Prefixos Conhecidos (NÃO são cidades)
+Estes termos na primeira posição indicam que a cidade está na segunda posição:
+- IPAM
+- IFRS
+- SESI
+- MIN AGRIC (Ministério Agricultura)
+- FARMACIA
+- METROPOLITANA
 
-O arquivo tem duas empresas principais:
-- **B SERVICE** (maioria das abas)
-- **SPACE** (abas específicas como "CANOAS TEC", "ESTEIO", etc.)
-
-Quando a empresa não está explícita na linha 1, detectar pelo padrão:
-- Se o nome da aba contém "SPACE" ou a linha contém "SPACE": empresa = "SPACE"
-- Caso contrário: empresa = "B SERVICE"
-
-### Mudança 3: Melhorar detecção de offset para múltiplas linhas de cabeçalho
-
-Algumas abas têm:
-- Linha 1: "Colunas1"
-- Linha 2: Cidade (não empresa!)
-- Linha 3: "NOME"
-- Linha 4+: Funcionários
-
-Ajustar para detectar quando a linha 2 parece cidade (contém " - ITAÚ", " - SICREDI", etc.):
-
-```text
-SE linha 1 = "Colunas1" E linha 2 contém " - ITAU|SICREDI":
-   offset = 1
-   cidade = linha 2 (antes do hífen)
-   empresa = detectar pelo padrão
-   startIndex = 3 (ou 4 se linha 3 = "NOME")
-```
-
-### Mudança 4: Extrair cidade do nome completo da linha
-
-Atualmente o parser pega só o texto antes do primeiro hífen. Mas algumas linhas têm:
-- "LEBON REGIS - LIMPEZA - SICREDI" → cidade = "LEBON REGIS"
-- "SÃO SEBASTIÃO DO CAÍ - PORTEIROS 01 - SICREDI" → cidade = "SÃO SEBASTIÃO DO CAÍ"
-
-O código atual já faz isso corretamente (`cidadeRaw.split(/\s*-\s*/)[0]`).
+### Funções (aparecem na segunda posição quando cidade está na primeira)
+- PORTEIROS
+- LIMPEZA
+- COZINHA
+- VIGILANCIA
+- MANUTENCAO
+- CAMARA
+- PACO
 
 ---
 
-## Arquivos a Modificar
+## Mudanças Técnicas
 
-| Arquivo | Alteração |
+### Nova Funcao: `extractCityFromLine()`
+
+```typescript
+/**
+ * Extrai o município de uma linha no formato:
+ * "[CIDADE] - [FUNCAO] - [BANCO]" ou "[PREFIXO] - [CIDADE] - [BANCO]"
+ */
+function extractCityFromLine(line: string): string {
+  const parts = line.split(/\s*-\s*/);
+  
+  if (parts.length < 2) {
+    return parts[0]?.trim() || "";
+  }
+  
+  const firstPart = normalizeForComparison(parts[0] || "");
+  const secondPart = parts[1]?.trim() || "";
+  
+  // Lista de prefixos conhecidos (NÃO são cidades)
+  const knownPrefixes = [
+    "IPAM",
+    "IFRS", 
+    "SESI",
+    "MIN AGRIC",
+    "MINISTERIO",
+    "FARMACIA",
+    "METROPOLITANA",
+    "SS CAI",        // São Sebastião do Caí (abreviado)
+  ];
+  
+  // Se primeira parte é um prefixo conhecido, cidade está na segunda parte
+  if (knownPrefixes.some(prefix => firstPart.startsWith(prefix) || firstPart === prefix)) {
+    return secondPart;
+  }
+  
+  // Lista de funções/cargos (indicam que cidade está na primeira parte)
+  const knownFunctions = [
+    "PORTEIRO",
+    "LIMPEZA",
+    "COZINHA",
+    "VIGILANCIA",
+    "MANUTENCAO",
+    "CAMARA",
+    "PACO",
+    "OBRAS",
+    "RECEPCAO",
+    "ASSISTENCIA",
+    "ZELADOR",
+  ];
+  
+  // Se segunda parte é função, cidade está na primeira parte
+  const secondNorm = normalizeForComparison(secondPart);
+  if (knownFunctions.some(func => secondNorm.startsWith(func) || secondNorm.includes(func))) {
+    return parts[0]?.trim() || "";
+  }
+  
+  // Bancos conhecidos (aparecem na última posição)
+  const knownBanks = ["ITAU", "SICREDI", "BRADESCO", "CAIXA", "BB", "SANTANDER", "BANRISUL", "PREFEITURA"];
+  
+  // Se segunda parte é banco, cidade está na primeira
+  if (knownBanks.some(bank => secondNorm.includes(bank))) {
+    return parts[0]?.trim() || "";
+  }
+  
+  // Default: primeira parte é a cidade
+  return parts[0]?.trim() || "";
+}
+```
+
+### Atualizar `looksLikeCompany()`
+
+Adicionar todas as empresas conhecidas:
+
+```typescript
+function looksLikeCompany(value: string): boolean {
+  const normalized = value.trim().toUpperCase();
+  const companies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
+  return companies.some(c => normalized.startsWith(c) || normalized === c);
+}
+```
+
+### Atualizar `parseMunicipalitySheets()`
+
+Simplificar a lógica de extração:
+
+```typescript
+// Passo 1: Detectar offset (Colunas1)
+let offset = 0;
+const firstCellValue = String(jsonData[0]?.[0] || "").trim().toUpperCase();
+if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || firstCellValue === "") {
+  offset = 1;
+}
+
+// Passo 2: Empresa SEMPRE na linha após offset
+const empresaRow = jsonData[offset] as unknown[];
+const empresaValue = String(empresaRow?.[0] || "").trim();
+
+let empresa = "";
+let cidadeRowIndex = offset + 1;
+
+if (looksLikeCompany(empresaValue)) {
+  empresa = empresaValue;
+} else {
+  // Se linha não é empresa conhecida, pode ser empresa nova ou erro
+  empresa = empresaValue;
+}
+
+// Passo 3: Município na linha seguinte
+const cidadeRow = jsonData[cidadeRowIndex] as unknown[];
+const cidadeValue = String(cidadeRow?.[0] || "").trim();
+
+// Usar nova função para extrair cidade corretamente
+const cidade = extractCityFromLine(cidadeValue);
+
+// Passo 4: Funcionários começam após a linha de cidade
+let startIndex = cidadeRowIndex + 1;
+
+// Pular linha "NOME" se existir
+// ... resto da lógica
+```
+
+---
+
+## Arquivo a Modificar
+
+| Arquivo | Alteracoes |
 |---------|-----------|
-| `src/lib/excelUtils.ts` | Reescrever `parseMunicipalitySheets()` com lógica mais robusta |
+| `src/lib/excelUtils.ts` | Adicionar `extractCityFromLine()`, atualizar `looksLikeCompany()`, simplificar `parseMunicipalitySheets()` |
 
 ---
 
-## Nova Lógica de Parsing
+## Exemplos de Extração
 
-```text
-PARA cada aba (exceto "Todos"):
-  1. Ler todas as linhas
-
-  2. DETECTAR OFFSET:
-     - Se linha 1 contém "COLUNA" ou está vazia → offset = 1
-     - Senão → offset = 0
-
-  3. DETECTAR ESTRUTURA:
-     linhaEmpresa = jsonData[offset]
-     linhaCidade = jsonData[offset + 1]
-     
-     CASO A: linhaEmpresa começa com "B SERVICE" ou "SPACE"
-       → empresa = linhaEmpresa
-       → cidade = linhaCidade (antes do hífen)
-       → startIndex = offset + 2
-     
-     CASO B: linhaEmpresa contém " - ITAU|SICREDI|PREFEITURA" (é cidade na linha 1)
-       → cidade = linhaEmpresa (antes do hífen)
-       → empresa = detectar pelo contexto (B SERVICE ou SPACE do nome da aba)
-       → startIndex = offset + 1
-     
-     CASO C: Estrutura diferente
-       → tentar extrair cidade do nome da aba
-
-  4. PULAR CABEÇALHOS:
-     Se jsonData[startIndex] = "NOME" ou "FUNCIONARIO" → startIndex++
-
-  5. EXTRAIR FUNCIONÁRIOS:
-     Para cada linha a partir de startIndex:
-       - Pular linhas vazias
-       - Pular totais e valores monetários
-       - Adicionar nome limpo
-```
-
----
-
-## Comparação: Contagem Manual vs. Esperada
-
-Somando sua listagem manual:
-
-| Cidade | Manual | Observação |
-|--------|--------|------------|
-| carazinho | 32 + 6 = 38 | 2 abas |
-| dom pedrito | 18 + 28 = 46 | cozinha + limpeza |
-| flores da cunha | 3 | |
-| gramado | 73 + 5 + 5 + 2 + 4 = 89 | cozinha + porteiros + recepção + assistência + obras |
-| guaporé | 1 | |
-| ifrs | 3 + 6 = 9 | ibirubá + zeladores |
-| ipam | 6 | (4 na página?) |
-| itaqui | 2 + 11 = 13 | 2 abas |
-| ivora | 3 | |
-| min agric | 4 | |
-| quarai | 3 + 2 + 1 = 6 | 3 abas diferentes |
-| são marcos | 7 | |
-| santa barbara | 26 + 3 = 29 | 2 abas |
-| sapiranga | 31 + 50 + 72 = 153 | manutenção + limpeza + vigilância |
-| sesi | 3 | |
-| ss cai | 2 + 2 + 7 + 16 = 27 | 4 abas (porteiros + cozinha) |
-| são joão urtiga | 17 | |
-| são josé norte | 20 | |
-| taquara | 11 | |
-| torres | 53 | |
-| uruguaiana | 2 | |
-| viamão | 48 + 8 = 56 | 2 abas |
-| alegrete | 1 + 6 = 7 | 2 abas (1 + câmara?) |
-| cachoeirinha | 8 + 1 = 9 | (cacique = cachoeirinha?) |
-| canela | 18 + 1 + 20 = 39 | + paço + extra |
-| 2 irmãos | 1 | |
-| ibirubá | 2 | câmara |
-| lebon regis | 31 + 18 = 49 | limpeza + cozinha |
-| salto jacuí | 33 | |
-| canoas | 1 | SPACE |
-| capão do cipó | 3 | SPACE |
-| eldorado | 1 + 1 = 2 | 2 abas |
-| esteio | 75 | SPACE |
-| panambi | 42 + 16 = 58 | 2 abas |
-| passo fundo | 8 | SPACE |
-| são lourenço | 2 | SPACE |
-| tupandi | 22 | SPACE |
-| ajuricaba | 7 | SPACE |
-| carlos barbosa | 1 | SPACE |
-| erechim | 9 | SPACE |
-| farmácia | 3 | |
-| mato leão | 26 | |
-| rio grande | 28 | |
-| metropolitana | 20 | |
-| osório | 2 | |
-| pinheiro machado | 8 | |
-| cachoeira do sul | 12 | (do arquivo) |
-| alvorada | 2 | (do arquivo) |
-
-**Total aproximado**: ~1004 funcionários
+| Linha Original | Parte 1 | Parte 2 | Resultado |
+|----------------|---------|---------|-----------|
+| `GRAMADO - PORTEIROS - ITAÚ` | GRAMADO | PORTEIROS | cidade = **GRAMADO** |
+| `IPAM - CAXIAS DO SUL - ITAÚ` | IPAM | CAXIAS DO SUL | cidade = **CAXIAS DO SUL** |
+| `ALEGRETE - CÂMARA - SICREDI` | ALEGRETE | CÂMARA | cidade = **ALEGRETE** |
+| `SESI - PORTO ALEGRE - ITAÚ` | SESI | PORTO ALEGRE | cidade = **PORTO ALEGRE** |
+| `TORRES - LIMPEZA - PREFEITURA` | TORRES | LIMPEZA | cidade = **TORRES** |
 
 ---
 
 ## Resultado Esperado
 
-Após as correções:
-- Todas as abas serão processadas corretamente
-- Ambos os formatos de estrutura serão detectados
-- Contagem final: ~1004 funcionários (correspondendo à listagem manual)
+- Empresas detectadas: B SERVICE, SPACE, FORTCLEAN, INTERCLEAN
+- IPAM, IFRS, SESI serão reconhecidos como prefixos (não cidades)
+- Cada município terá contagem correta de funcionários
+- Total: ~1004 funcionários
 
