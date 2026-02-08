@@ -1,40 +1,43 @@
 
-# Correção: Parser de Excel para Múltiplas Abas por Município
 
-## Problema Identificado
+# Correção: Parser de Excel Mostrando 76 Cidades ao Invés de 9
 
-O código atual só lê a aba "Todos" (ou primeira aba) que possui uma estrutura tabular com colunas EMPRESA, CIDADE, COLABORADOR. Porém, a planilha real possui:
+## Problemas Identificados
 
-- **Aba "Todos"**: Estrutura consolidada (que já funciona) - MAS só tem 21 funcionários
-- **9 abas adicionais** (uma por município): Cada uma com estrutura diferente:
-  - **Linha 1**: Nome da empresa (ex: "B SERVICE")
-  - **Linha 2**: Município + Banco (ex: "CARAZINHO - ITAÚ", "DOM PEDRITO - COZINHA - SICREDI")
-  - **Linha 3+**: Lista de funcionários (coluna A contém o nome)
+### 1. Erros de Compilação
+Na função `parseTodosSheet` (linhas 97 e 103), o código usa `cidadesSet` mas a variável declarada é `cidadesList`:
+```typescript
+// Linha 75: declarado como cidadesList
+const cidadesList: string[] = [];
 
-### Estrutura das Abas Individuais (exemplo):
+// Linha 97: erro - usando cidadesSet
+if (cidade) cidadesSet.add(cidade);  // ❌ deveria ser cidadesSet
 
-```
-| B SERVICE                   | SALARIO      |
-| CARAZINHO - ITAÚ            |              |
-|                             |              |
-| NOME                        | SALARIO      |
-| ALEXSANDRA JUNGES           | R$ 1,791.49  |
-| ANA PAULA SOUZA DA SILVA    | R$ 1,836.49  |
+// Linha 103: erro - usando cidadesSet  
+cidades: Array.from(cidadesSet).sort(),  // ❌
 ```
 
-O município está na linha 2, **antes do hífen** (ex: "CARAZINHO" de "CARAZINHO - ITAÚ").
+### 2. Duplicação de Cidades
+Na função `parseMunicipalitySheets`:
+- Usa `cidadesList.push(cidade)` (array) ao invés de `Set`, permitindo duplicatas
+- A função `isLikelyMunicipioLine` encontra **qualquer linha com hífen**, não apenas a linha 2
+- Isso faz com que linhas como "TOTAL - GERAL" ou outras sejam interpretadas como cidades
+
+### 3. Lógica de Detecção Falha
+A função percorre até 8 linhas (`MAX_HEADER_ROWS = 8`) procurando por linhas com hífen, quando deveria:
+- Empresa: **sempre linha 1**
+- Município: **sempre linha 2** (antes do hífen)
 
 ---
 
 ## Solução
 
-Modificar `parseExcelFile` em `src/lib/excelUtils.ts` para:
+Simplificar a lógica para seguir a estrutura fixa da planilha:
+- **Linha 1 (índice 0)**: Nome da empresa
+- **Linha 2 (índice 1)**: Município + Banco (ex: "CARAZINHO - ITAÚ")
+- **Linha 3+**: Funcionários
 
-1. **Estratégia prioritária**: Primeiro tentar ler a aba "Todos" (já funciona)
-2. **Fallback para múltiplas abas**: Se "Todos" não existir ou estiver vazia, iterar **todas as abas** e:
-   - Extrair empresa da linha 1, coluna A
-   - Extrair município da linha 2, coluna A (antes do hífen)
-   - Extrair nomes dos funcionários das linhas seguintes (coluna A)
+Usar `Set` para garantir unicidade das cidades.
 
 ---
 
@@ -42,153 +45,84 @@ Modificar `parseExcelFile` em `src/lib/excelUtils.ts` para:
 
 ### Arquivo: `src/lib/excelUtils.ts`
 
+#### Correção 1: Função `parseTodosSheet` (erros de compilação)
 ```typescript
-export async function parseExcelFile(file: File): Promise<SpreadsheetData> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        
-        // 1. Primeiro tenta aba "Todos" (estrutura tabular)
-        const todosSheet = workbook.SheetNames.find(
-          name => normalizeForComparison(name) === 'TODOS'
-        );
-        
-        if (todosSheet) {
-          const result = parseTodosSheet(workbook, todosSheet, file.name);
-          if (result.records.length > 0) {
-            console.log(`[Excel] Usando aba "Todos" com ${result.records.length} registros`);
-            resolve(result);
-            return;
-          }
-        }
-        
-        // 2. Fallback: ler todas as abas (uma por município)
-        const records: EmployeeRecord[] = [];
-        const empresasSet = new Set<string>();
-        const cidadesSet = new Set<string>();
-        
-        for (const sheetName of workbook.SheetNames) {
-          // Pular aba "Todos" pois já tentamos
-          if (normalizeForComparison(sheetName) === 'TODOS') continue;
-          
-          const sheet = workbook.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
-          
-          if (jsonData.length < 3) continue;
-          
-          // Linha 1: Empresa (coluna A)
-          const empresaRaw = String((jsonData[0] as unknown[])?.[0] || '').trim();
-          // Linha 2: Município + Banco (ex: "CARAZINHO - ITAÚ")
-          const cidadeRaw = String((jsonData[1] as unknown[])?.[0] || '').trim();
-          
-          // Extrair município (antes do hífen)
-          const cidade = cidadeRaw.split(' - ')[0].trim();
-          const empresa = empresaRaw;
-          
-          if (!empresa || !cidade) continue;
-          
-          empresasSet.add(empresa);
-          cidadesSet.add(cidade);
-          
-          // Linhas 3+: Funcionários (pular linha de cabeçalho "NOME")
-          for (let i = 2; i < jsonData.length; i++) {
-            const row = jsonData[i] as unknown[];
-            if (!row) continue;
-            
-            const colaborador = String(row[0] || '').trim();
-            
-            // Pular linhas vazias, cabeçalhos e totais
-            if (!colaborador) continue;
-            if (normalizeForComparison(colaborador) === 'NOME') continue;
-            if (colaborador.startsWith('R$')) continue;
-            
-            // Verificar se parece um nome (pelo menos 2 palavras, sem valores monetários)
-            const words = colaborador.split(' ').filter(w => w.length >= 2);
-            if (words.length < 2) continue;
-            
-            records.push({
-              empresa,
-              cidade,
-              contrato: sheetName, // Usar nome da aba como contrato
-              colaborador,
-            });
-          }
-        }
-        
-        console.log(`[Excel] Lidas ${workbook.SheetNames.length - 1} abas com ${records.length} funcionários`);
-        
-        resolve({
-          records,
-          empresas: Array.from(empresasSet).sort(),
-          cidades: Array.from(cidadesSet).sort(),
-          fileName: file.name,
-        });
-      } catch (error) {
-        console.error('[Excel] Parse error:', error);
-        reject(error);
-      }
-    };
-    
-    reader.onerror = () => {
-      reject(new Error('Erro ao ler arquivo Excel'));
-    };
-    
-    reader.readAsArrayBuffer(file);
-  });
-}
+// Linha 75: Mudar cidadesList para cidadesSet
+const cidadesSet = new Set<string>();
 
-// Função auxiliar para parsear a aba "Todos" (estrutura tabular existente)
-function parseTodosSheet(
-  workbook: XLSX.WorkBook,
-  sheetName: string,
-  fileName: string
-): SpreadsheetData {
-  const sheet = workbook.Sheets[sheetName];
-  const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
-  
-  // ... lógica existente para encontrar colunas EMPRESA, CIDADE, COLABORADOR ...
-}
+// Linha 97: Já está correto após a mudança acima
+if (cidade) cidadesSet.add(cidade);
+
+// Linha 103: Já está correto após a mudança acima
+cidades: Array.from(cidadesSet).sort(),
 ```
 
----
+#### Correção 2: Função `parseMunicipalitySheets` (simplificar lógica)
+```typescript
+function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
+  const records: EmployeeRecord[] = [];
+  const empresasSet = new Set<string>();
+  const cidadesSet = new Set<string>();  // ← Usar Set ao invés de array
 
-## Lógica de Parsing por Aba
+  for (const sheetName of workbook.SheetNames) {
+    if (normalizeForComparison(sheetName) === "TODOS") continue;
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│  Para cada aba (exceto "Todos"):                                │
-├─────────────────────────────────────────────────────────────────┤
-│  Linha 1: "B SERVICE"          → empresa = "B SERVICE"          │
-│  Linha 2: "CARAZINHO - ITAÚ"   → cidade = "CARAZINHO"           │
-│  Linha 3: (cabeçalho - pular)                                   │
-│  Linha 4+: nomes dos funcionários (coluna A)                    │
-├─────────────────────────────────────────────────────────────────┤
-│  Resultado: { empresa, cidade, colaborador, contrato: abaName } │
-└─────────────────────────────────────────────────────────────────┘
+    const sheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
+
+    if (jsonData.length < 3) continue;
+
+    // FIXO: Linha 1 = Empresa, Linha 2 = Cidade + Banco
+    const row1 = jsonData[0] as unknown[];
+    const row2 = jsonData[1] as unknown[];
+    
+    const empresaRaw = String(row1?.[0] || "").trim();
+    const cidadeRaw = String(row2?.[0] || "").trim();
+
+    // Extrair município (antes do primeiro hífen)
+    const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
+    const empresa = empresaRaw;
+
+    // Validar: empresa não deve conter hífen/números, cidade deve existir
+    if (!empresa || !cidade) continue;
+    if (/\d/.test(empresa) || empresa.includes("-")) continue;
+
+    empresasSet.add(empresa);
+    cidadesSet.add(cidade);  // ← Set previne duplicatas
+
+    // Funcionários a partir da linha 3 (índice 2)
+    for (let i = 2; i < jsonData.length; i++) {
+      const row = jsonData[i] as unknown[];
+      if (!row) continue;
+
+      const colaborador = String(row[0] || "").trim();
+      
+      // Filtros de validação
+      if (!colaborador) continue;
+      if (normalizeForComparison(colaborador) === "NOME") continue;
+      if (colaborador.startsWith("R$")) continue;
+      if (/TOTAL/i.test(colaborador)) continue;
+      if (/COLUNA/i.test(colaborador)) continue;
+      if (/\d/.test(colaborador)) continue;
+      
+      const words = colaborador.split(" ").filter(w => w.length >= 2);
+      if (words.length < 2) continue;
+
+      records.push({ empresa, cidade, contrato: sheetName, colaborador });
+    }
+  }
+
+  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
+  console.log(`[Excel] Cities found: ${Array.from(cidadesSet).join(", ")}`);
+
+  return {
+    records,
+    empresas: Array.from(empresasSet).sort(),
+    cidades: Array.from(cidadesSet).sort(),
+    fileName,
+  };
+}
 ```
-
----
-
-## Tratamento de Casos Especiais
-
-A linha 2 pode conter variações como:
-- `"CARAZINHO - ITAÚ"` → cidade = "CARAZINHO"
-- `"DOM PEDRITO - COZINHA - SICREDI"` → cidade = "DOM PEDRITO"
-- `"FLORES DA CUNHA - SICREDI"` → cidade = "FLORES DA CUNHA"
-
-A solução é usar `split(' - ')[0]` para pegar tudo antes do primeiro hífen.
-
----
-
-## Arquivos a Modificar
-
-| Arquivo | Alteração |
-|---------|-----------|
-| `src/lib/excelUtils.ts` | Reescrever `parseExcelFile` para suportar múltiplas abas por município |
 
 ---
 
@@ -196,8 +130,16 @@ A solução é usar `split(' - ')[0]` para pegar tudo antes do primeiro hífen.
 
 | Antes | Depois |
 |-------|--------|
-| 21 funcionários | ~300+ funcionários (todos os municípios) |
-| 1 empresa | 1 empresa (B SERVICE) |
-| 3 cidades | 9 cidades (todos os municípios) |
+| 76 cidades (duplicadas) | 9 cidades (únicas) |
+| Lógica complexa com heurísticas | Lógica simples: linha 1 = empresa, linha 2 = cidade |
+| Erros de compilação | Código funcional |
 
-O parser agora lerá **todas as abas** e consolidará os funcionários de cada município, permitindo o enriquecimento correto durante a geração de documentos.
+### Log de Debug Adicionado
+Após o upload, o console mostrará:
+```
+[Excel] Parsed 9 sheets: 300 employees, 9 cities
+[Excel] Cities found: ALEGRETE, CACHOEIRA DO SUL, CARAZINHO, DOM PEDRITO, ...
+```
+
+Isso permitirá verificar exatamente quais cidades estão sendo detectadas.
+
