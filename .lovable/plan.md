@@ -1,259 +1,202 @@
 
 
-# Correção: Recuperar Funcionários Perdidos (748 -> 1004)
+# Correção: Importação Excel - De 749 para 1004 Funcionários
 
 ## Problemas Identificados
 
-Analisando os logs do console, encontrei **dois problemas principais**:
+Analisando o arquivo Excel enviado e comparando com a listagem manual, identifiquei os seguintes problemas:
 
-### Problema 1: Cidade "NOME" detectada como cidade válida
+### Problema 1: Estruturas Variadas de Abas
 
-```
-[Excel] Cities found: ..., NOME
-```
+O arquivo tem **diferentes formatos de estrutura** que o parser atual não trata corretamente:
 
-O log mostra "NOME" como uma das 29 cidades detectadas. Isso indica que algumas abas têm uma linha extra de cabeçalho contendo "NOME" que está sendo interpretada como cidade, fazendo com que o parser comece a ler funcionários no lugar errado.
+| Tipo | Exemplo | Estrutura |
+|------|---------|-----------|
+| **Tipo A** | Page 1-3 (Alegrete, Alvorada, etc.) | Linha 1: "B SERVICE" (empresa), Linha 2: "CIDADE - BANCO", Linha 3+: Funcionários |
+| **Tipo B** | Page 4-7 (Cachoeirinha, Canela, Carazinho) | Linha 1: "Colunas1", Linha 2: "B SERVICE", Linha 3: "CIDADE - BANCO", Linha 4: "NOME" (header), Linha 5+: Funcionários |
+| **Tipo C** | Page 43 (Canela extra) | Linha 1: "CANELA - ITAÚ" (cidade na linha 1!), sem empresa separada |
+| **Tipo D** | Page 44-49 (Dois Irmãos, Ibirubá, etc.) | Linha 1: "Colunas1", Linha 2: "CIDADE - BANCO", Linha 3: "NOME", Linha 4+: Funcionários |
 
-### Problema 2: Filtro de mínimo 2 palavras muito restritivo
+### Problema 2: Empresa na Linha 1 ou Linha 2
 
-Na linha 211-212 do código atual:
-```typescript
-const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
-if (words.length < 2) continue;
-```
+Algumas abas têm:
+- **Linha 1 = Empresa** (B SERVICE) e **Linha 2 = Cidade** (tipo normal)
+- **Linha 1 = Cidade** diretamente (sem linha de empresa separada - ex: Page 43 "CANELA - ITAÚ")
 
-Este filtro **descarta nomes com apenas 1 palavra** (ex: "ALINE", "MARIA") ou nomes onde uma das palavras tem menos de 2 caracteres.
+O parser atual assume sempre Linha 1 = Empresa, perdendo abas onde a cidade está na linha 1.
 
-### Problema 3: Detecção de offset incompleta
+### Problema 3: Mais de 50 abas no arquivo
 
-O offset atual só verifica a **primeira célula** da linha 1. Algumas abas podem ter estruturas diferentes:
-- Linha 1 vazia mas com dados em colunas B, C...
-- Linha 1 com texto parcial que não é "colunas1"
+O documento tem **mais de 50 páginas/abas** (o parser de documentos cortou em 50). O arquivo real contém mais abas que não foram analisadas no preview mas são lidas pelo XLSX.
+
+### Problema 4: Abas com Estrutura "SPACE"
+
+Páginas 50+ contêm abas da empresa "SPACE" com estrutura similar:
+- CANOAS TEC, CAPÃO DO CIPÓ, ELDORADO, ESTEIO, ITAQUI, PANAMBI, PASSO FUNDO, SÃO LOURENÇO, etc.
 
 ---
 
 ## Solução Proposta
 
-### Mudança 1: Melhorar detecção de linhas de cabeçalho extra
+### Mudança 1: Detectar cidade na linha 1 (sem empresa separada)
 
-Adicionar detecção para mais padrões de cabeçalho que devem ser ignorados:
+Quando a linha 1 contém um padrão de cidade (ex: "CANELA - ITAÚ", "DOIS IRMÃOS - SICREDI"), usar a cidade diretamente:
 
-```typescript
-// Padrões adicionais para detectar como cabeçalho extra (offset)
-const headerPatterns = [
-  /^COLUNA[S]?\d*$/i,     // colunas1, Coluna1, etc
-  /^COLUMN[S]?\d*$/i,     // Column1, etc
-  /^[A-Z]$/i,             // Letra solta: A, B, C
-];
-
-// Também verificar se a linha parece ser um cabeçalho de tabela
-const tableHeaderPatterns = [
-  "NOME",
-  "FUNCIONARIO", 
-  "COLABORADOR",
-  "MATRICULA",
-  "CODIGO"
-];
+```text
+SE linha 1 contém " - " E não começa com "B SERVICE" ou "SPACE":
+   cidade = linha 1 (antes do hífen)
+   empresa = extrair do nome (após hífen ou padrão conhecido)
+   funcionários = linha 2+ (pulando "NOME" se existir)
 ```
 
-### Mudança 2: Detectar linhas de cabeçalho de tabela entre empresa/cidade e funcionários
+### Mudança 2: Detectar empresa pelo padrão do nome
 
-Algumas abas podem ter:
-- Linha 1: Empresa
-- Linha 2: Cidade
-- Linha 3: **NOME** (cabeçalho de coluna) <- IGNORAR
+O arquivo tem duas empresas principais:
+- **B SERVICE** (maioria das abas)
+- **SPACE** (abas específicas como "CANOAS TEC", "ESTEIO", etc.)
+
+Quando a empresa não está explícita na linha 1, detectar pelo padrão:
+- Se o nome da aba contém "SPACE" ou a linha contém "SPACE": empresa = "SPACE"
+- Caso contrário: empresa = "B SERVICE"
+
+### Mudança 3: Melhorar detecção de offset para múltiplas linhas de cabeçalho
+
+Algumas abas têm:
+- Linha 1: "Colunas1"
+- Linha 2: Cidade (não empresa!)
+- Linha 3: "NOME"
 - Linha 4+: Funcionários
 
-```typescript
-// Verificar se a primeira linha de "funcionários" é na verdade um cabeçalho
-const firstEmployeeRow = jsonData[startIndex] as unknown[];
-const firstEmployeeValue = String(firstEmployeeRow?.[0] || "").trim().toUpperCase();
+Ajustar para detectar quando a linha 2 parece cidade (contém " - ITAÚ", " - SICREDI", etc.):
 
-if (["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA"].includes(firstEmployeeValue)) {
-  startIndex++; // Pular linha de cabeçalho
-}
+```text
+SE linha 1 = "Colunas1" E linha 2 contém " - ITAU|SICREDI":
+   offset = 1
+   cidade = linha 2 (antes do hífen)
+   empresa = detectar pelo padrão
+   startIndex = 3 (ou 4 se linha 3 = "NOME")
 ```
 
-### Mudança 3: Relaxar filtro de palavras mínimas
+### Mudança 4: Extrair cidade do nome completo da linha
 
-Permitir nomes com apenas 1 palavra, desde que tenha pelo menos 3 caracteres:
+Atualmente o parser pega só o texto antes do primeiro hífen. Mas algumas linhas têm:
+- "LEBON REGIS - LIMPEZA - SICREDI" → cidade = "LEBON REGIS"
+- "SÃO SEBASTIÃO DO CAÍ - PORTEIROS 01 - SICREDI" → cidade = "SÃO SEBASTIÃO DO CAÍ"
 
-```typescript
-// ANTES:
-const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
-if (words.length < 2) continue;
-
-// DEPOIS:
-// Nome válido: pelo menos 3 caracteres total
-if (nomeLimpo.length < 3) continue;
-
-// Se tiver múltiplas palavras, pelo menos 1 deve ter 2+ chars
-const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
-if (words.length === 0) continue;
-```
-
-### Mudança 4: Não adicionar "NOME" como cidade
-
-Adicionar validação extra para cidade:
-
-```typescript
-// Validar que cidade não é um cabeçalho comum
-const invalidCities = ["NOME", "FUNCIONARIO", "COLABORADOR", "EMPRESA", "CIDADE"];
-if (invalidCities.includes(cidade.toUpperCase())) continue;
-```
+O código atual já faz isso corretamente (`cidadeRaw.split(/\s*-\s*/)[0]`).
 
 ---
 
-## Código Final para `parseMunicipalitySheets()`
-
-```typescript
-function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
-  const records: EmployeeRecord[] = [];
-  const empresasSet = new Set<string>();
-  const cidadesSet = new Set<string>();
-
-  // Headers that should be skipped
-  const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO"];
-
-  for (const sheetName of workbook.SheetNames) {
-    if (normalizeForComparison(sheetName) === "TODOS") continue;
-
-    const sheet = workbook.Sheets[sheetName];
-    const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
-
-    if (jsonData.length < 3) continue;
-
-    // Detect offset for "colunas1" or similar
-    let offset = 0;
-    const firstRow = jsonData[0] as unknown[];
-    const firstCellValue = String(firstRow?.[0] || "").trim().toUpperCase();
-    
-    if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || 
-        /^COLUMN[S]?\d*$/i.test(firstCellValue) ||
-        firstCellValue === "" ||
-        /^[A-Z]$/i.test(firstCellValue)) {
-      
-      const secondRow = jsonData[1] as unknown[];
-      const secondCellValue = String(secondRow?.[0] || "").trim();
-      
-      if (secondCellValue && secondCellValue.length >= 2 && !/^COLUNA/i.test(secondCellValue)) {
-        offset = 1;
-      }
-    }
-
-    if (jsonData.length < (3 + offset)) continue;
-
-    const empresaRow = jsonData[offset] as unknown[];
-    const cidadeRow = jsonData[offset + 1] as unknown[];
-
-    const empresaRaw = String(empresaRow?.[0] || "").trim();
-    const cidadeRaw = String(cidadeRow?.[0] || "").trim();
-
-    const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
-    const empresa = empresaRaw;
-
-    if (!empresa || !cidade) continue;
-    if (empresa.length < 2) continue;
-    
-    // NOVO: Skip if "cidade" is actually a header word
-    if (skipHeaders.includes(cidade.toUpperCase())) continue;
-
-    empresasSet.add(empresa);
-    cidadesSet.add(cidade);
-
-    let startIndex = offset + 2;
-    
-    // NOVO: Skip table header row if present (e.g., "NOME")
-    const firstDataRow = jsonData[startIndex] as unknown[];
-    const firstDataValue = normalizeForComparison(String(firstDataRow?.[0] || ""));
-    if (skipHeaders.includes(firstDataValue)) {
-      startIndex++;
-    }
-
-    for (let i = startIndex; i < jsonData.length; i++) {
-      const row = jsonData[i] as unknown[];
-      if (!row) continue;
-
-      const colaborador = String(row[0] || "").trim();
-
-      if (!colaborador) continue;
-      
-      const normColaborador = normalizeForComparison(colaborador);
-      if (skipHeaders.includes(normColaborador)) continue;
-      
-      if (/^TOTAL/i.test(colaborador)) continue;
-      if (/^SUBTOTAL/i.test(colaborador)) continue;
-      if (/^SOMA/i.test(colaborador)) continue;
-      if (/^COLUNA/i.test(colaborador)) continue;
-      if (/^R\$\s*[\d.,]/i.test(colaborador)) continue;
-      
-      const nomeLimpo = colaborador
-        .replace(/\s*-?\s*\d+\s*$/, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      if (!nomeLimpo) continue;
-      
-      // NOVO: Mínimo 3 caracteres (permite nomes curtos)
-      if (nomeLimpo.length < 3) continue;
-
-      // NOVO: Pelo menos 1 palavra com 2+ caracteres
-      const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
-      if (words.length === 0) continue;
-
-      records.push({
-        empresa,
-        cidade,
-        contrato: sheetName,
-        colaborador: nomeLimpo,
-      });
-    }
-  }
-
-  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
-  console.log(`[Excel] Cities found: ${Array.from(cidadesSet).join(", ")}`);
-
-  // Calculate employees per city
-  const funcionariosPorCidade: Record<string, number> = {};
-  for (const record of records) {
-    funcionariosPorCidade[record.cidade] = (funcionariosPorCidade[record.cidade] || 0) + 1;
-  }
-
-  return {
-    records,
-    empresas: Array.from(empresasSet).sort(),
-    cidades: Array.from(cidadesSet).sort(),
-    funcionariosPorCidade,
-    fileName,
-  };
-}
-```
-
----
-
-## Resumo das Mudanças
-
-| Problema | Solução |
-|----------|---------|
-| "NOME" sendo detectado como cidade | Adicionar lista de palavras inválidas para cidade |
-| Linha "NOME" sendo lida como funcionário | Detectar e pular linha de cabeçalho de tabela |
-| Nomes de 1 palavra descartados | Relaxar filtro: mínimo 3 chars e 1 palavra válida |
-| Empresas duplicadas (9 ao invés de menos) | Não é erro - offset correto revela mais abas válidas |
-
----
-
-## Arquivo a Modificar
+## Arquivos a Modificar
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/lib/excelUtils.ts` | Melhorar validações e pular cabeçalhos de tabela |
+| `src/lib/excelUtils.ts` | Reescrever `parseMunicipalitySheets()` com lógica mais robusta |
+
+---
+
+## Nova Lógica de Parsing
+
+```text
+PARA cada aba (exceto "Todos"):
+  1. Ler todas as linhas
+
+  2. DETECTAR OFFSET:
+     - Se linha 1 contém "COLUNA" ou está vazia → offset = 1
+     - Senão → offset = 0
+
+  3. DETECTAR ESTRUTURA:
+     linhaEmpresa = jsonData[offset]
+     linhaCidade = jsonData[offset + 1]
+     
+     CASO A: linhaEmpresa começa com "B SERVICE" ou "SPACE"
+       → empresa = linhaEmpresa
+       → cidade = linhaCidade (antes do hífen)
+       → startIndex = offset + 2
+     
+     CASO B: linhaEmpresa contém " - ITAU|SICREDI|PREFEITURA" (é cidade na linha 1)
+       → cidade = linhaEmpresa (antes do hífen)
+       → empresa = detectar pelo contexto (B SERVICE ou SPACE do nome da aba)
+       → startIndex = offset + 1
+     
+     CASO C: Estrutura diferente
+       → tentar extrair cidade do nome da aba
+
+  4. PULAR CABEÇALHOS:
+     Se jsonData[startIndex] = "NOME" ou "FUNCIONARIO" → startIndex++
+
+  5. EXTRAIR FUNCIONÁRIOS:
+     Para cada linha a partir de startIndex:
+       - Pular linhas vazias
+       - Pular totais e valores monetários
+       - Adicionar nome limpo
+```
+
+---
+
+## Comparação: Contagem Manual vs. Esperada
+
+Somando sua listagem manual:
+
+| Cidade | Manual | Observação |
+|--------|--------|------------|
+| carazinho | 32 + 6 = 38 | 2 abas |
+| dom pedrito | 18 + 28 = 46 | cozinha + limpeza |
+| flores da cunha | 3 | |
+| gramado | 73 + 5 + 5 + 2 + 4 = 89 | cozinha + porteiros + recepção + assistência + obras |
+| guaporé | 1 | |
+| ifrs | 3 + 6 = 9 | ibirubá + zeladores |
+| ipam | 6 | (4 na página?) |
+| itaqui | 2 + 11 = 13 | 2 abas |
+| ivora | 3 | |
+| min agric | 4 | |
+| quarai | 3 + 2 + 1 = 6 | 3 abas diferentes |
+| são marcos | 7 | |
+| santa barbara | 26 + 3 = 29 | 2 abas |
+| sapiranga | 31 + 50 + 72 = 153 | manutenção + limpeza + vigilância |
+| sesi | 3 | |
+| ss cai | 2 + 2 + 7 + 16 = 27 | 4 abas (porteiros + cozinha) |
+| são joão urtiga | 17 | |
+| são josé norte | 20 | |
+| taquara | 11 | |
+| torres | 53 | |
+| uruguaiana | 2 | |
+| viamão | 48 + 8 = 56 | 2 abas |
+| alegrete | 1 + 6 = 7 | 2 abas (1 + câmara?) |
+| cachoeirinha | 8 + 1 = 9 | (cacique = cachoeirinha?) |
+| canela | 18 + 1 + 20 = 39 | + paço + extra |
+| 2 irmãos | 1 | |
+| ibirubá | 2 | câmara |
+| lebon regis | 31 + 18 = 49 | limpeza + cozinha |
+| salto jacuí | 33 | |
+| canoas | 1 | SPACE |
+| capão do cipó | 3 | SPACE |
+| eldorado | 1 + 1 = 2 | 2 abas |
+| esteio | 75 | SPACE |
+| panambi | 42 + 16 = 58 | 2 abas |
+| passo fundo | 8 | SPACE |
+| são lourenço | 2 | SPACE |
+| tupandi | 22 | SPACE |
+| ajuricaba | 7 | SPACE |
+| carlos barbosa | 1 | SPACE |
+| erechim | 9 | SPACE |
+| farmácia | 3 | |
+| mato leão | 26 | |
+| rio grande | 28 | |
+| metropolitana | 20 | |
+| osório | 2 | |
+| pinheiro machado | 8 | |
+| cachoeira do sul | 12 | (do arquivo) |
+| alvorada | 2 | (do arquivo) |
+
+**Total aproximado**: ~1004 funcionários
 
 ---
 
 ## Resultado Esperado
 
-- Antes: 748 funcionários, 29 cidades (incluindo "NOME")
-- Depois: ~1004 funcionários, ~28 cidades (sem "NOME")
-- Nomes curtos como "ALINE" serão incluídos
-- Cabeçalhos de tabela serão ignorados corretamente
+Após as correções:
+- Todas as abas serão processadas corretamente
+- Ambos os formatos de estrutura serão detectados
+- Contagem final: ~1004 funcionários (correspondendo à listagem manual)
 
