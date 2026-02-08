@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import JSZip from "jszip";
 import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from "@/types/document";
 import {
   extractEmployeeName,
@@ -1176,7 +1177,9 @@ export function useDocumentProcessor() {
 
     const generatedDocuments: GeneratedDocument[] = [];
 
-    // Process PDFs sequentially for controlled download timing
+    const zip = new JSZip();
+
+    // Process PDFs sequentially for controlled generation timing
     for (let index = 0; index < matchedPairs.length; index++) {
       if (cancelledRef.current) break;
 
@@ -1200,11 +1203,8 @@ export function useDocumentProcessor() {
         // Format: Ano_Mês_Nome.pdf (e.g., 2026_Janeiro_ANA_BEATRIZ.pdf)
         const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, "_")}.pdf`;
 
-        // Trigger automatic download
-        triggerDownload(blobUrl, fileName);
-
-        // Wait 300ms between downloads to avoid browser blocking
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Add to zip
+        zip.file(fileName, pdfBlob);
 
         setMatchedPairs((prev) =>
           prev.map((p) => (p.id === pair.id ? { ...p, status: "completed", outputUrl: blobUrl } : p)),
@@ -1242,16 +1242,33 @@ export function useDocumentProcessor() {
 
     setGeneratedDocs((prev) => [...prev, ...generatedDocuments]);
 
+    // Generate and download zip with all PDFs
+    setStatus({
+      step: "generating",
+      progress: 100,
+      message: "Compactando arquivos...",
+    });
+
+    const zipBlob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
+    });
+
+    const zipUrl = URL.createObjectURL(zipBlob);
+    const zipFileName = `${year}_${monthName}_PDFs.zip`;
+    triggerDownload(zipUrl, zipFileName);
+
     // Show success toast with download count
     toast({
-      title: "Downloads concluídos",
-      description: `${generatedDocuments.length} arquivo(s) baixado(s) para sua pasta de Downloads`,
+      title: "Download concluído",
+      description: `${generatedDocuments.length} PDF(s) compactado(s) em ZIP`,
     });
 
     setStatus({
       step: "completed",
       progress: 100,
-      message: `${generatedDocuments.length} PDF(s) gerado(s) e baixado(s)!`,
+      message: `${generatedDocuments.length} PDF(s) gerado(s) e baixado(s) em ZIP!`,
     });
   }, [matchedPairs]);
 
