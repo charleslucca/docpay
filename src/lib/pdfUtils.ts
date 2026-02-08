@@ -135,14 +135,14 @@ export async function countPagesWithFavorecido(
 
 /**
  * Conta páginas que contêm padrões de nome de funcionário (para holerites)
- * Usa texto nativo do PDF - muito rápido, sem OCR
+ * Detecta PDFs escaneados (sem texto nativo) e usa fallback de contagem de páginas
  */
 export async function countPagesWithEmployeeName(
   file: File,
   cachedPdf?: PDFDocumentProxy
 ): Promise<number> {
   const pdf = cachedPdf || await getCachedPdf(file);
-  let count = 0;
+  const totalPages = pdf.numPages;
   
   // Padrões que indicam presença de nome de funcionário
   const employeePatterns = [
@@ -151,14 +151,42 @@ export async function countPagesWithEmployeeName(
     /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
   ];
   
-  for (let i = 1; i <= pdf.numPages; i++) {
+  // Amostragem: verificar algumas páginas para determinar se é PDF escaneado
+  const samplePages = [1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)];
+  let pagesWithText = 0;
+  
+  for (const pageNum of samplePages) {
+    if (pageNum > totalPages) continue;
+    
+    const pageText = await extractTextFromPage(file, pageNum, pdf);
+    const normalizedText = pageText
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+    
+    // Verificar se a página tem texto suficiente (não é escaneada)
+    if (normalizedText.length >= 50) {
+      pagesWithText++;
+    }
+  }
+  
+  // Se a maioria das páginas amostradas não tem texto (PDF escaneado)
+  // Usar contagem de páginas como fallback
+  if (pagesWithText < samplePages.length / 2) {
+    console.log(`[countEmployees] PDF escaneado detectado: ${file.name}, usando contagem de páginas`);
+    // Para PDFs grandes, subtrair 1 (página de resumo)
+    return totalPages > 10 ? totalPages - 1 : totalPages;
+  }
+  
+  // PDF com texto nativo - contar todas as páginas com padrões
+  let count = 0;
+  for (let i = 1; i <= totalPages; i++) {
     const pageText = await extractTextFromPage(file, i, pdf);
     const normalizedText = pageText
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase();
     
-    // Verificar se algum padrão de funcionário é encontrado
     const hasEmployee = employeePatterns.some(pattern => pattern.test(normalizedText));
     if (hasEmployee) {
       count++;
