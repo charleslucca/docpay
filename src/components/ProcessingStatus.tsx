@@ -303,25 +303,6 @@ export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: Proce
         </motion.div>
       )}
 
-      {/* Slow operation warning */}
-      <AnimatePresence>
-        {status.isSlowOperation && !isZeroMatchesState && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="mt-4"
-          >
-            <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              <AlertDescription className="text-destructive">
-                <strong>Atenção:</strong> Extração lenta detectada (mais de 10s). 
-                O documento pode estar escaneado ou ser muito grande.
-              </AlertDescription>
-            </Alert>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Step indicators */}
       <div className="mt-6 flex justify-between">
