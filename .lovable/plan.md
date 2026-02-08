@@ -1,69 +1,49 @@
 
-# Contagem Precisa de Funcionários por Tipo de Documento
+# Correção: Contagem de Funcionários em PDFs Escaneados (Holerites)
 
-## Problema Atual
+## Problema Identificado
 
-A estimativa atual é baseada apenas no número de páginas:
+A função `countPagesWithEmployeeName` usa **apenas texto nativo** do PDF (via `extractTextFromPage`):
+
 ```typescript
-estimatedEmployees: pageCount > 10 ? pageCount - 1 : pageCount
+const pageText = await extractTextFromPage(file, i, pdf);
 ```
 
-Isso causa imprecisões porque não verifica se cada página realmente contém um funcionário.
+Mas os holerites são frequentemente **PDFs escaneados (imagens)**, onde:
+- O texto nativo está **vazio** ou tem apenas alguns caracteres
+- A contagem retorna apenas 1 (ou 0) porque nenhuma página tem os padrões no texto nativo
+- Funciona para comprovantes porque esses são PDFs digitais com texto embutido
+
+Por isso, 690 holerites aparecem como apenas "1 funcionário" - provavelmente apenas a primeira página (capa ou índice) tem texto nativo.
+
+---
 
 ## Solução Proposta
 
-Implementar contagem **precisa** durante o upload, analisando o texto nativo de cada página para detectar:
+Para holerites (PDFs potencialmente escaneados), **não** podemos confiar apenas no texto nativo. A solução é:
 
-| Tipo | Campo a Buscar | Regex |
-|------|----------------|-------|
-| **Comprovante** | "FAVORECIDO" | `/FAVORECIDO\s*:/gi` |
-| **Holerite** | Nome do Funcionário | Padrões existentes em `extractEmployeeName` |
+### Opção 1: Verificar se há texto nativo suficiente primeiro
+- Se o PDF tem texto nativo em pelo menos 50% das páginas → usar contagem por padrões
+- Se não → assumir que cada página é um funcionário (fallback para contagem de páginas)
+
+### Opção 2 (Recomendada): Usar contagem de páginas com ajuste para holerites escaneados
+- Verificar a **primeira página** para determinar se o PDF é nativo ou escaneado
+- Se escaneado: usar `pageCount` diretamente (menos última página se > 10 páginas)
+- Se nativo: usar a busca por padrões
 
 ---
 
 ## Implementação
 
-### 1. Nova função de contagem em `src/lib/pdfUtils.ts`
-
-Criar funções para contar funcionários baseado no tipo de documento:
+### Modificar `countPagesWithEmployeeName` em `src/lib/pdfUtils.ts`
 
 ```typescript
-/**
- * Conta páginas que contêm "FAVORECIDO" (para comprovantes)
- */
-export async function countPagesWithFavorecido(
-  file: File,
-  cachedPdf?: PDFDocumentProxy
-): Promise<number> {
-  const pdf = cachedPdf || await getCachedPdf(file);
-  let count = 0;
-  
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const pageText = await extractTextFromPage(file, i, pdf);
-    const normalizedText = pageText
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase();
-    
-    // Buscar por FAVORECIDO ou variações
-    if (/FAVORECIDO\s*:?/.test(normalizedText)) {
-      count++;
-    }
-  }
-  
-  return count;
-}
-
-/**
- * Conta páginas que contêm padrões de nome de funcionário (para holerites)
- * Usa regex simplificado que detecta labels de nome
- */
 export async function countPagesWithEmployeeName(
   file: File,
   cachedPdf?: PDFDocumentProxy
 ): Promise<number> {
   const pdf = cachedPdf || await getCachedPdf(file);
-  let count = 0;
+  const totalPages = pdf.numPages;
   
   // Padrões que indicam presença de nome de funcionário
   const employeePatterns = [
@@ -72,14 +52,49 @@ export async function countPagesWithEmployeeName(
     /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
   ];
   
-  for (let i = 1; i <= pdf.numPages; i++) {
+  // Amostragem: verificar algumas páginas para determinar se é PDF escaneado
+  const samplePages = [1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)];
+  let pagesWithText = 0;
+  let pagesWithEmployee = 0;
+  
+  for (const pageNum of samplePages) {
+    if (pageNum > totalPages) continue;
+    
+    const pageText = await extractTextFromPage(file, pageNum, pdf);
+    const normalizedText = pageText
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+    
+    // Verificar se a página tem texto suficiente (não é escaneada)
+    if (normalizedText.length >= 50) {
+      pagesWithText++;
+      
+      // Verificar se algum padrão de funcionário é encontrado
+      const hasEmployee = employeePatterns.some(pattern => pattern.test(normalizedText));
+      if (hasEmployee) {
+        pagesWithEmployee++;
+      }
+    }
+  }
+  
+  // Se a maioria das páginas amostradas não tem texto (PDF escaneado)
+  // Usar contagem de páginas como fallback
+  if (pagesWithText < samplePages.length / 2) {
+    console.log(`[countEmployees] PDF escaneado detectado: ${file.name}, usando contagem de páginas`);
+    // Para PDFs grandes, subtrair 1 (página de resumo)
+    return totalPages > 10 ? totalPages - 1 : totalPages;
+  }
+  
+  // PDF com texto nativo - contar todas as páginas com padrões
+  let count = 0;
+  for (let i = 1; i <= totalPages; i++) {
     const pageText = await extractTextFromPage(file, i, pdf);
     const normalizedText = pageText
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase();
     
-    // Verificar se algum padrão de funcionário é encontrado
     const hasEmployee = employeePatterns.some(pattern => pattern.test(normalizedText));
     if (hasEmployee) {
       count++;
@@ -88,64 +103,23 @@ export async function countPagesWithEmployeeName(
   
   return count;
 }
-
-/**
- * Função unificada para contar funcionários por tipo
- */
-export async function countEmployeesInDocument(
-  file: File,
-  type: 'holerite' | 'comprovante',
-  cachedPdf?: PDFDocumentProxy
-): Promise<number> {
-  if (type === 'comprovante') {
-    return countPagesWithFavorecido(file, cachedPdf);
-  } else {
-    return countPagesWithEmployeeName(file, cachedPdf);
-  }
-}
 ```
 
-### 2. Atualizar `src/hooks/useDocumentProcessor.ts`
+---
 
-Modificar a função `addFiles` para usar a nova contagem:
+## Fluxo de Execução
 
-```typescript
-// Linha 251-270 - Substituir contagem simples por contagem precisa
-const countPagePromises = newFiles.map(async (uploadedFile) => {
-  try {
-    const pdf = await getCachedPdf(uploadedFile.file);
-    const pageCount = pdf.numPages;
-    
-    // Contagem precisa baseada no tipo de documento
-    const employeeCount = await countEmployeesInDocument(
-      uploadedFile.file,
-      type,
-      pdf
-    );
-    
-    // Update with page count and precise employee count
-    const setter = type === 'holerite' ? setHolerites : setComprovantes;
-    setter((prev) => prev.map((f) => 
-      f.id === uploadedFile.id 
-        ? { ...f, pageCount, estimatedEmployees: employeeCount }
-        : f
-    ));
-  } catch (error) {
-    console.warn(`[PageCount] Error counting for ${uploadedFile.name}:`, error);
-  }
-});
-```
-
-### 3. Atualizar `src/components/FileDropzone.tsx`
-
-Remover "(estimado)" do texto já que agora é contagem precisa:
-
-```tsx
-// Linha 153 - Mudar texto para indicar contagem real
-{file.pageCount} {file.pageCount === 1 ? 'página' : 'páginas'} • {file.estimatedEmployees} funcionário(s)
-
-// Linha 196 - Total também sem "(estimado)"
-Total: {files.length} arquivo(s) • {totalEmployees} funcionário(s)
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│  Upload de Holerite                                             │
+├─────────────────────────────────────────────────────────────────┤
+│  1. Amostrar 3 páginas (primeira, meio, última)                 │
+│  2. Verificar se têm texto nativo (>= 50 caracteres)            │
+│  3. SE < 50% tem texto:                                         │
+│     → PDF ESCANEADO → usar (pageCount - 1) como estimativa      │
+│  4. SE >= 50% tem texto:                                        │
+│     → PDF NATIVO → buscar padrões em todas as páginas           │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -154,44 +128,14 @@ Total: {files.length} arquivo(s) • {totalEmployees} funcionário(s)
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/lib/pdfUtils.ts` | Adicionar funções `countPagesWithFavorecido`, `countPagesWithEmployeeName`, `countEmployeesInDocument` |
-| `src/hooks/useDocumentProcessor.ts` | Usar `countEmployeesInDocument` em vez de `pageCount` para a estimativa |
-| `src/components/FileDropzone.tsx` | Remover "(estimado)" do texto de contagem |
-
----
-
-## Fluxo de Execução
-
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│  Upload de Arquivo                                              │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Carregar PDF (getCachedPdf)                                 │
-│  2. Contar páginas (pdf.numPages)                               │
-│  3. Para cada página:                                           │
-│     - Extrair texto nativo (extractTextFromPage) ← RÁPIDO!      │
-│     - Se comprovante: buscar "FAVORECIDO"                       │
-│     - Se holerite: buscar padrões de nome                       │
-│  4. Atualizar UI com contagem precisa                           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Performance
-
-A contagem usa apenas **texto nativo** do PDF (não OCR), então é muito rápida:
-- ~50-100ms por página para extração de texto
-- Para 70 páginas: ~3-7 segundos total
-- Para 691 páginas: ~35-70 segundos total
-
-Se for necessário ainda mais velocidade, podemos implementar amostragem (verificar cada 5ª página e multiplicar).
+| `src/lib/pdfUtils.ts` | Modificar `countPagesWithEmployeeName` para detectar PDFs escaneados e usar fallback |
 
 ---
 
 ## Resultado Esperado
 
-- **Comprovante com 70 páginas**: `70 páginas • 70 funcionário(s)` (se todas têm FAVORECIDO)
-- **Holerite com 691 páginas**: `691 páginas • 690 funcionário(s)` (se 1 página é resumo)
+- **Holerite escaneado (691 páginas)**: `691 páginas • 690 funcionário(s)` (fallback)
+- **Holerite digital (50 páginas)**: `50 páginas • 48 funcionário(s)` (contagem precisa por padrões)
+- **Comprovante digital (70 páginas)**: `70 páginas • 70 funcionário(s)` (contagem precisa por FAVORECIDO)
 
-A contagem agora reflete a realidade do documento, não uma estimativa baseada em páginas.
+A contagem agora funciona corretamente tanto para PDFs digitais quanto escaneados.
