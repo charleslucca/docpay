@@ -1,46 +1,119 @@
 
-# Correção: Ignorar linha "colunas1" no topo das abas
 
-## Problema Identificado
+# Correção: Recuperar Funcionários Perdidos (748 -> 1004)
 
-O parser atual assume que:
-- **Linha 1 (índice 0)** = Nome da Empresa
-- **Linha 2 (índice 1)** = Cidade - Banco
-- **Linha 3+ (índice 2+)** = Funcionários
+## Problemas Identificados
 
-Porém, algumas abas têm uma linha extra no topo contendo "colunas1" (ou "Coluna1", "COLUNA1", etc.) que deve ser ignorada. Quando isso acontece:
-- O parser interpreta "colunas1" como o nome da empresa
-- A validação falha (empresa muito curta ou inválida)
-- Todos os funcionários dessa aba são ignorados
+Analisando os logs do console, encontrei **dois problemas principais**:
 
-**Resultado**: 931 funcionários detectados ao invés de 1004 (faltando ~73).
+### Problema 1: Cidade "NOME" detectada como cidade válida
+
+```
+[Excel] Cities found: ..., NOME
+```
+
+O log mostra "NOME" como uma das 29 cidades detectadas. Isso indica que algumas abas têm uma linha extra de cabeçalho contendo "NOME" que está sendo interpretada como cidade, fazendo com que o parser comece a ler funcionários no lugar errado.
+
+### Problema 2: Filtro de mínimo 2 palavras muito restritivo
+
+Na linha 211-212 do código atual:
+```typescript
+const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
+if (words.length < 2) continue;
+```
+
+Este filtro **descarta nomes com apenas 1 palavra** (ex: "ALINE", "MARIA") ou nomes onde uma das palavras tem menos de 2 caracteres.
+
+### Problema 3: Detecção de offset incompleta
+
+O offset atual só verifica a **primeira célula** da linha 1. Algumas abas podem ter estruturas diferentes:
+- Linha 1 vazia mas com dados em colunas B, C...
+- Linha 1 com texto parcial que não é "colunas1"
 
 ---
 
-## Solução
+## Solução Proposta
 
-Adicionar detecção dinâmica do "offset" de linhas no início de cada aba:
+### Mudança 1: Melhorar detecção de linhas de cabeçalho extra
 
-1. Verificar se a linha 1 contém "colunas1" (ou variações)
-2. Se sim, usar offset de 1 linha:
-   - Linha 2 = Empresa
-   - Linha 3 = Cidade
-   - Linha 4+ = Funcionários
-3. Se não, manter o comportamento atual (offset 0)
+Adicionar detecção para mais padrões de cabeçalho que devem ser ignorados:
+
+```typescript
+// Padrões adicionais para detectar como cabeçalho extra (offset)
+const headerPatterns = [
+  /^COLUNA[S]?\d*$/i,     // colunas1, Coluna1, etc
+  /^COLUMN[S]?\d*$/i,     // Column1, etc
+  /^[A-Z]$/i,             // Letra solta: A, B, C
+];
+
+// Também verificar se a linha parece ser um cabeçalho de tabela
+const tableHeaderPatterns = [
+  "NOME",
+  "FUNCIONARIO", 
+  "COLABORADOR",
+  "MATRICULA",
+  "CODIGO"
+];
+```
+
+### Mudança 2: Detectar linhas de cabeçalho de tabela entre empresa/cidade e funcionários
+
+Algumas abas podem ter:
+- Linha 1: Empresa
+- Linha 2: Cidade
+- Linha 3: **NOME** (cabeçalho de coluna) <- IGNORAR
+- Linha 4+: Funcionários
+
+```typescript
+// Verificar se a primeira linha de "funcionários" é na verdade um cabeçalho
+const firstEmployeeRow = jsonData[startIndex] as unknown[];
+const firstEmployeeValue = String(firstEmployeeRow?.[0] || "").trim().toUpperCase();
+
+if (["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA"].includes(firstEmployeeValue)) {
+  startIndex++; // Pular linha de cabeçalho
+}
+```
+
+### Mudança 3: Relaxar filtro de palavras mínimas
+
+Permitir nomes com apenas 1 palavra, desde que tenha pelo menos 3 caracteres:
+
+```typescript
+// ANTES:
+const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
+if (words.length < 2) continue;
+
+// DEPOIS:
+// Nome válido: pelo menos 3 caracteres total
+if (nomeLimpo.length < 3) continue;
+
+// Se tiver múltiplas palavras, pelo menos 1 deve ter 2+ chars
+const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
+if (words.length === 0) continue;
+```
+
+### Mudança 4: Não adicionar "NOME" como cidade
+
+Adicionar validação extra para cidade:
+
+```typescript
+// Validar que cidade não é um cabeçalho comum
+const invalidCities = ["NOME", "FUNCIONARIO", "COLABORADOR", "EMPRESA", "CIDADE"];
+if (invalidCities.includes(cidade.toUpperCase())) continue;
+```
 
 ---
 
-## Mudanças em `src/lib/excelUtils.ts`
-
-### Função `parseMunicipalitySheets()` - linhas 121-214
-
-Adicionar lógica de detecção de offset antes de extrair empresa/cidade:
+## Código Final para `parseMunicipalitySheets()`
 
 ```typescript
 function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
   const records: EmployeeRecord[] = [];
   const empresasSet = new Set<string>();
   const cidadesSet = new Set<string>();
+
+  // Headers that should be skipped
+  const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO"];
 
   for (const sheetName of workbook.SheetNames) {
     if (normalizeForComparison(sheetName) === "TODOS") continue;
@@ -50,18 +123,16 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     if (jsonData.length < 3) continue;
 
-    // NOVO: Detectar offset se linha 1 contém "colunas1" ou similar
+    // Detect offset for "colunas1" or similar
     let offset = 0;
     const firstRow = jsonData[0] as unknown[];
     const firstCellValue = String(firstRow?.[0] || "").trim().toUpperCase();
     
-    // Verificar se primeira célula é "colunas*" ou similar
     if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || 
         /^COLUMN[S]?\d*$/i.test(firstCellValue) ||
         firstCellValue === "" ||
-        /^[A-Z]$/i.test(firstCellValue)) { // Letra solta como "A", "B"
+        /^[A-Z]$/i.test(firstCellValue)) {
       
-      // Verificar se a próxima linha parece ser a empresa (não vazia, não numérica)
       const secondRow = jsonData[1] as unknown[];
       const secondCellValue = String(secondRow?.[0] || "").trim();
       
@@ -70,10 +141,8 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       }
     }
 
-    // Garantir que temos linhas suficientes após o offset
     if (jsonData.length < (3 + offset)) continue;
 
-    // Usar offset para pegar empresa e cidade
     const empresaRow = jsonData[offset] as unknown[];
     const cidadeRow = jsonData[offset + 1] as unknown[];
 
@@ -85,46 +154,91 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     if (!empresa || !cidade) continue;
     if (empresa.length < 2) continue;
+    
+    // NOVO: Skip if "cidade" is actually a header word
+    if (skipHeaders.includes(cidade.toUpperCase())) continue;
 
     empresasSet.add(empresa);
     cidadesSet.add(cidade);
 
-    // Funcionários começam após empresa + cidade + offset
-    const startIndex = offset + 2;
+    let startIndex = offset + 2;
     
+    // NOVO: Skip table header row if present (e.g., "NOME")
+    const firstDataRow = jsonData[startIndex] as unknown[];
+    const firstDataValue = normalizeForComparison(String(firstDataRow?.[0] || ""));
+    if (skipHeaders.includes(firstDataValue)) {
+      startIndex++;
+    }
+
     for (let i = startIndex; i < jsonData.length; i++) {
-      // ... resto da lógica de parsing de funcionários (sem alteração)
+      const row = jsonData[i] as unknown[];
+      if (!row) continue;
+
+      const colaborador = String(row[0] || "").trim();
+
+      if (!colaborador) continue;
+      
+      const normColaborador = normalizeForComparison(colaborador);
+      if (skipHeaders.includes(normColaborador)) continue;
+      
+      if (/^TOTAL/i.test(colaborador)) continue;
+      if (/^SUBTOTAL/i.test(colaborador)) continue;
+      if (/^SOMA/i.test(colaborador)) continue;
+      if (/^COLUNA/i.test(colaborador)) continue;
+      if (/^R\$\s*[\d.,]/i.test(colaborador)) continue;
+      
+      const nomeLimpo = colaborador
+        .replace(/\s*-?\s*\d+\s*$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      if (!nomeLimpo) continue;
+      
+      // NOVO: Mínimo 3 caracteres (permite nomes curtos)
+      if (nomeLimpo.length < 3) continue;
+
+      // NOVO: Pelo menos 1 palavra com 2+ caracteres
+      const words = nomeLimpo.split(" ").filter((w) => w.length >= 2);
+      if (words.length === 0) continue;
+
+      records.push({
+        empresa,
+        cidade,
+        contrato: sheetName,
+        colaborador: nomeLimpo,
+      });
     }
   }
-  
-  // Log com informação de offset para debug
+
   console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
-  
-  // ... resto igual
+  console.log(`[Excel] Cities found: ${Array.from(cidadesSet).join(", ")}`);
+
+  // Calculate employees per city
+  const funcionariosPorCidade: Record<string, number> = {};
+  for (const record of records) {
+    funcionariosPorCidade[record.cidade] = (funcionariosPorCidade[record.cidade] || 0) + 1;
+  }
+
+  return {
+    records,
+    empresas: Array.from(empresasSet).sort(),
+    cidades: Array.from(cidadesSet).sort(),
+    funcionariosPorCidade,
+    fileName,
+  };
 }
 ```
 
 ---
 
-## Padrões Detectados para Offset
+## Resumo das Mudanças
 
-A linha será considerada "cabeçalho extra" e ignorada se:
-
-| Padrão | Exemplo | Ação |
-|--------|---------|------|
-| `COLUNA` + número | "colunas1", "Coluna1", "COLUNA2" | Offset +1 |
-| `COLUMN` + número | "Column1", "COLUMNS1" | Offset +1 |
-| Célula vazia | "" | Offset +1 (se próxima linha parece empresa) |
-| Letra solta | "A", "B", "C" | Offset +1 |
-
----
-
-## Verificação de Segurança
-
-Para evitar falsos positivos, após detectar potencial offset:
-1. Verificar se a linha seguinte (potencial empresa) não está vazia
-2. Verificar se a linha seguinte tem pelo menos 2 caracteres
-3. Verificar se a linha seguinte não é outro padrão de cabeçalho
+| Problema | Solução |
+|----------|---------|
+| "NOME" sendo detectado como cidade | Adicionar lista de palavras inválidas para cidade |
+| Linha "NOME" sendo lida como funcionário | Detectar e pular linha de cabeçalho de tabela |
+| Nomes de 1 palavra descartados | Relaxar filtro: mínimo 3 chars e 1 palavra válida |
+| Empresas duplicadas (9 ao invés de menos) | Não é erro - offset correto revela mais abas válidas |
 
 ---
 
@@ -132,12 +246,14 @@ Para evitar falsos positivos, após detectar potencial offset:
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `src/lib/excelUtils.ts` | Adicionar lógica de offset dinâmico na função `parseMunicipalitySheets()` |
+| `src/lib/excelUtils.ts` | Melhorar validações e pular cabeçalhos de tabela |
 
 ---
 
 ## Resultado Esperado
 
-- Antes: 931 funcionários (abas com "colunas1" ignoradas)
-- Depois: 1004 funcionários (todas as abas processadas corretamente)
-- Log mostrará detecção de offset quando aplicável
+- Antes: 748 funcionários, 29 cidades (incluindo "NOME")
+- Depois: ~1004 funcionários, ~28 cidades (sem "NOME")
+- Nomes curtos como "ALINE" serão incluídos
+- Cabeçalhos de tabela serão ignorados corretamente
+
