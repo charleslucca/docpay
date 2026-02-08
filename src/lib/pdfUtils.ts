@@ -1,6 +1,7 @@
 import { PDFDocument, rgb } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { getCachedPdf, getCachedBuffer } from './pdfCache';
+import { getCachedPdf, getCachedBuffer, renderPageForOCR, OCR_SCALE_FAST } from './pdfCache';
+import { extractTextWithOCR, initOcrScheduler } from './ocrUtils';
 
 export async function extractTextFromPdf(
   file: File,
@@ -135,7 +136,7 @@ export async function countPagesWithFavorecido(
 
 /**
  * Conta páginas que contêm padrões de nome de funcionário (para holerites)
- * Detecta PDFs escaneados (sem texto nativo) e usa fallback de contagem de páginas
+ * Detecta PDFs escaneados e usa OCR de amostragem para estimar contagem precisa
  */
 export async function countPagesWithEmployeeName(
   file: File,
@@ -151,9 +152,11 @@ export async function countPagesWithEmployeeName(
     /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
   ];
   
-  // Amostragem: verificar algumas páginas para determinar se é PDF escaneado
+  // ETAPA 1: Amostragem de texto nativo - verificar se os PADRÕES aparecem
   const samplePages = [1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)];
-  let pagesWithText = 0;
+  let pagesWithEmployeePattern = 0;
+  
+  console.log(`[countEmployees] Amostrando ${samplePages.length} páginas de ${file.name} (${totalPages} páginas)...`);
   
   for (const pageNum of samplePages) {
     if (pageNum > totalPages) continue;
@@ -164,36 +167,105 @@ export async function countPagesWithEmployeeName(
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase();
     
-    // Verificar se a página tem texto suficiente (não é escaneada)
-    if (normalizedText.length >= 50) {
-      pagesWithText++;
-    }
-  }
-  
-  // Se a maioria das páginas amostradas não tem texto (PDF escaneado)
-  // Usar contagem de páginas como fallback
-  if (pagesWithText < samplePages.length / 2) {
-    console.log(`[countEmployees] PDF escaneado detectado: ${file.name}, usando contagem de páginas`);
-    // Para PDFs grandes, subtrair 1 (página de resumo)
-    return totalPages > 10 ? totalPages - 1 : totalPages;
-  }
-  
-  // PDF com texto nativo - contar todas as páginas com padrões
-  let count = 0;
-  for (let i = 1; i <= totalPages; i++) {
-    const pageText = await extractTextFromPage(file, i, pdf);
-    const normalizedText = pageText
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase();
-    
+    // Verificar se tem PADRÃO de funcionário (não apenas texto genérico)
     const hasEmployee = employeePatterns.some(pattern => pattern.test(normalizedText));
     if (hasEmployee) {
-      count++;
+      pagesWithEmployeePattern++;
+      console.log(`[countEmployees] Página ${pageNum}: padrão de funcionário encontrado no texto nativo`);
     }
   }
   
-  return count;
+  // ETAPA 2: Se encontrou padrões no texto nativo → PDF digital
+  if (pagesWithEmployeePattern >= 1) {
+    console.log(`[countEmployees] PDF digital detectado: ${file.name}, contando por padrões...`);
+    let count = 0;
+    for (let i = 1; i <= totalPages; i++) {
+      const pageText = await extractTextFromPage(file, i, pdf);
+      const normalizedText = pageText
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase();
+      
+      const hasEmployee = employeePatterns.some(pattern => pattern.test(normalizedText));
+      if (hasEmployee) {
+        count++;
+      }
+    }
+    console.log(`[countEmployees] PDF digital: ${count} funcionários em ${totalPages} páginas`);
+    return count;
+  }
+  
+  // ETAPA 3: PDF escaneado → fazer OCR de amostragem
+  console.log(`[countEmployees] PDF escaneado detectado: ${file.name}, executando OCR de amostragem...`);
+  
+  // Inicializar OCR (workers podem já estar ativos)
+  await initOcrScheduler();
+  
+  // Amostrar 5 páginas distribuídas (evitar primeira e última que podem ser capa/resumo)
+  const ocrSampleSize = Math.min(5, Math.max(1, totalPages - 2));
+  const ocrSamplePages: number[] = [];
+  
+  if (totalPages <= 3) {
+    // Poucos páginas: amostrar todas exceto última
+    for (let i = 1; i < totalPages; i++) {
+      ocrSamplePages.push(i);
+    }
+  } else {
+    // Muitas páginas: distribuir igualmente, evitando primeira e última
+    const step = Math.floor((totalPages - 2) / ocrSampleSize);
+    for (let i = 0; i < ocrSampleSize; i++) {
+      const pageNum = 2 + (i * step);
+      if (pageNum <= totalPages - 1) {
+        ocrSamplePages.push(pageNum);
+      }
+    }
+  }
+  
+  console.log(`[countEmployees] OCR amostragem: páginas ${ocrSamplePages.join(', ')}`);
+  
+  // Fazer OCR nas páginas amostradas
+  const foundNames = new Set<string>();
+  
+  for (const pageNum of ocrSamplePages) {
+    try {
+      const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_FAST, true);
+      const ocrText = await extractTextWithOCR(canvas);
+      
+      // Liberar canvas
+      canvas.width = 0;
+      canvas.height = 0;
+      
+      // Extrair nome
+      const name = extractEmployeeName(ocrText);
+      if (name && !foundNames.has(name)) {
+        foundNames.add(name);
+        console.log(`[countEmployees] OCR página ${pageNum}: nome encontrado "${name}"`);
+      } else if (name) {
+        console.log(`[countEmployees] OCR página ${pageNum}: nome duplicado "${name}" (mesmo funcionário)`);
+      } else {
+        console.log(`[countEmployees] OCR página ${pageNum}: nenhum nome extraído`);
+      }
+    } catch (error) {
+      console.warn(`[countEmployees] OCR falhou na página ${pageNum}:`, error);
+    }
+  }
+  
+  const uniqueNames = foundNames.size;
+  
+  // ETAPA 4: Extrapolar para o documento completo
+  if (uniqueNames > 0) {
+    // Calcular páginas por funcionário baseado na amostra
+    const pagesPerEmployee = ocrSamplePages.length / uniqueNames;
+    // Estimar total (menos 1-2 páginas para capa/resumo)
+    const pagesToCount = totalPages - 1; // Desconta página de resumo
+    const estimated = Math.round(pagesToCount / pagesPerEmployee);
+    console.log(`[countEmployees] OCR amostragem: ${uniqueNames} nomes únicos em ${ocrSamplePages.length} páginas → ~${pagesPerEmployee.toFixed(1)} páginas/funcionário → ~${estimated} funcionários`);
+    return Math.max(1, estimated);
+  }
+  
+  // Fallback final: assumir 1 página por funcionário, menos página de resumo
+  console.log(`[countEmployees] Fallback: ${totalPages} páginas - 1 = ${totalPages - 1} funcionários`);
+  return Math.max(1, totalPages - 1);
 }
 
 /**
