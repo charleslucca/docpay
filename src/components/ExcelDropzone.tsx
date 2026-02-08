@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileSpreadsheet, Upload, X, Check, Building2, MapPin, Users } from 'lucide-react';
+import { FileSpreadsheet, Upload, X, Check, Building2, MapPin, Users, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { parseExcelFile, type SpreadsheetData } from '@/lib/excelUtils';
 
 interface ExcelDropzoneProps {
@@ -21,6 +22,7 @@ export function ExcelDropzone({
 }: ExcelDropzoneProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCidades, setShowCidades] = useState(false);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -111,12 +113,53 @@ export function ExcelDropzone({
                   <p className="text-lg font-semibold">{spreadsheetData.empresas.length}</p>
                   <p className="text-xs text-muted-foreground">Empresas</p>
                 </div>
-                <div className="p-2 rounded-lg bg-muted/50">
+                <button
+                  type="button"
+                  onClick={() => setShowCidades(!showCidades)}
+                  className="p-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
+                >
                   <MapPin className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-                  <p className="text-lg font-semibold">{spreadsheetData.cidades.length}</p>
+                  <p className="text-lg font-semibold flex items-center justify-center gap-1">
+                    {spreadsheetData.cidades.length}
+                    {showCidades ? (
+                      <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                    )}
+                  </p>
                   <p className="text-xs text-muted-foreground">Cidades</p>
-                </div>
+                </button>
               </div>
+
+              <AnimatePresence>
+                {showCidades && spreadsheetData.cidades.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="p-3 rounded-lg bg-muted/30 border border-border/50">
+                      <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                        <MapPin className="h-3 w-3" />
+                        Cidades encontradas:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {spreadsheetData.cidades.map((cidade) => (
+                          <Badge
+                            key={cidade}
+                            variant="secondary"
+                            className="text-xs font-normal"
+                          >
+                            {cidade}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ) : (
             <motion.div
