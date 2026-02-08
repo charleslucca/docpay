@@ -115,13 +115,75 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
 }
 
 /**
+ * Detect if a line looks like a city (contains " - ITAU", " - SICREDI", " - PREFEITURA", etc.)
+ */
+function looksLikeCity(value: string): boolean {
+  const cityPatterns = [
+    /\s*-\s*ITAU/i,
+    /\s*-\s*SICREDI/i,
+    /\s*-\s*PREFEITURA/i,
+    /\s*-\s*BRADESCO/i,
+    /\s*-\s*CAIXA/i,
+    /\s*-\s*BB\b/i,
+    /\s*-\s*SANTANDER/i,
+    /\s*-\s*BANRISUL/i,
+    /\s*-\s*LIMPEZA/i,
+    /\s*-\s*PORTEIRO/i,
+    /\s*-\s*COZINHA/i,
+    /\s*-\s*VIGILANCIA/i,
+    /\s*-\s*MANUTENCAO/i,
+  ];
+  return cityPatterns.some((pattern) => pattern.test(value));
+}
+
+/**
+ * Detect if a line is a known company name
+ */
+function looksLikeCompany(value: string): boolean {
+  const normalized = value.trim().toUpperCase();
+  return normalized.startsWith("B SERVICE") || normalized.startsWith("SPACE") || normalized === "B SERVICE" || normalized === "SPACE";
+}
+
+/**
+ * Infer company from sheet name or context
+ */
+function inferCompany(sheetName: string, contextHint: string = ""): string {
+  const normalized = normalizeForComparison(sheetName);
+  const contextNorm = normalizeForComparison(contextHint);
+  
+  // SPACE company sheets typically have these names
+  const spacePatterns = [
+    /CANOAS\s*TEC/i,
+    /CAPAO\s*DO\s*CIPO/i,
+    /ELDORADO/i,
+    /ESTEIO/i,
+    /TUPANDI/i,
+    /AJURICABA/i,
+    /CARLOS\s*BARBOSA/i,
+    /ERECHIM/i,
+  ];
+  
+  if (spacePatterns.some((p) => p.test(sheetName)) || contextNorm.includes("SPACE")) {
+    return "SPACE";
+  }
+  
+  // Default to B SERVICE
+  return "B SERVICE";
+}
+
+/**
  * Parse municipality sheets (one sheet per city)
- * Structure: Row 1 = Company name, Row 2 = City + Bank, Row 3+ = Employee names
+ * Handles multiple structure types:
+ * - Type A: Row 1 = Company (B SERVICE), Row 2 = City - Bank, Row 3+ = Employees
+ * - Type B: Row 1 = "Colunas1", Row 2 = Company, Row 3 = City, Row 4 = "NOME", Row 5+ = Employees
+ * - Type C: Row 1 = City - Bank (no company row), Row 2+ = Employees
+ * - Type D: Row 1 = "Colunas1", Row 2 = City - Bank (no company), Row 3 = "NOME", Row 4+ = Employees
  */
 function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
   const records: EmployeeRecord[] = [];
   const empresasSet = new Set<string>();
   const cidadesSet = new Set<string>();
+  const sheetStats: { name: string; employees: number; cidade: string; empresa: string }[] = [];
 
   // Headers that should be skipped (not valid cities or employee names)
   const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO", "EMPRESA", "CIDADE"];
@@ -133,63 +195,93 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     const sheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
 
-    if (jsonData.length < 3) continue;
+    if (jsonData.length < 2) continue;
 
-    // Detect offset: skip "colunas1" or similar header rows
+    // Step 1: Detect offset for "colunas1" or similar header rows
     let offset = 0;
     const firstRow = jsonData[0] as unknown[];
     const firstCellValue = String(firstRow?.[0] || "").trim().toUpperCase();
     
-    // Check if first cell is "colunas*", empty, or single letter
     if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || 
         /^COLUMN[S]?\d*$/i.test(firstCellValue) ||
         firstCellValue === "" ||
         /^[A-Z]$/i.test(firstCellValue)) {
-      
-      // Verify next row looks like a company name (not empty, not header)
-      const secondRow = jsonData[1] as unknown[];
-      const secondCellValue = String(secondRow?.[0] || "").trim();
-      
-      if (secondCellValue && secondCellValue.length >= 2 && !/^COLUNA/i.test(secondCellValue)) {
-        offset = 1;
-        console.log(`[Excel] Sheet "${sheetName}": detected header offset, skipping row with "${firstCellValue}"`);
-      }
+      offset = 1;
     }
 
     // Ensure enough rows after offset
-    if (jsonData.length < (3 + offset)) continue;
+    if (jsonData.length < (2 + offset)) continue;
 
-    // Use offset to get company and city
-    const empresaRow = jsonData[offset] as unknown[];
-    const cidadeRow = jsonData[offset + 1] as unknown[];
-
-    const empresaRaw = String(empresaRow?.[0] || "").trim();
-    const cidadeRaw = String(cidadeRow?.[0] || "").trim();
-
-    // Extract municipality (before first hyphen)
-    const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
-    const empresa = empresaRaw;
-
-    // Validate: city must exist, company can have numbers/hyphens
-    if (!empresa || !cidade) continue;
-    if (empresa.length < 2) continue;
+    // Step 2: Read the first two meaningful rows
+    const row1 = jsonData[offset] as unknown[];
+    const row2 = jsonData[offset + 1] as unknown[];
     
-    // Skip if "cidade" is actually a header word (e.g., "NOME")
+    const value1 = String(row1?.[0] || "").trim();
+    const value2 = String(row2?.[0] || "").trim();
+
+    let empresa = "";
+    let cidade = "";
+    let startIndex = offset;
+
+    // Step 3: Detect structure type
+    if (looksLikeCompany(value1)) {
+      // Type A/B: Row 1 is Company
+      empresa = value1;
+      
+      if (looksLikeCity(value2) || value2.includes(" - ")) {
+        // City is in row 2
+        cidade = value2.split(/\s*-\s*/)[0]?.trim() || "";
+        startIndex = offset + 2;
+      } else if (skipHeaders.includes(normalizeForComparison(value2))) {
+        // Row 2 is a header like "NOME", check row 3 for city
+        const row3 = jsonData[offset + 2] as unknown[];
+        const value3 = String(row3?.[0] || "").trim();
+        if (looksLikeCity(value3) || value3.includes(" - ")) {
+          cidade = value3.split(/\s*-\s*/)[0]?.trim() || "";
+          startIndex = offset + 3;
+        }
+      }
+    } else if (looksLikeCity(value1) || value1.includes(" - ")) {
+      // Type C/D: Row 1 is City directly (no company row)
+      cidade = value1.split(/\s*-\s*/)[0]?.trim() || "";
+      empresa = inferCompany(sheetName, value1);
+      startIndex = offset + 1;
+    } else if (looksLikeCity(value2) || value2.includes(" - ")) {
+      // Type D variant: Row 1 might be noise, Row 2 is City
+      cidade = value2.split(/\s*-\s*/)[0]?.trim() || "";
+      empresa = inferCompany(sheetName, value2);
+      startIndex = offset + 2;
+    } else {
+      // Fallback: try to use value1 as city, infer company
+      cidade = value1.split(/\s*-\s*/)[0]?.trim() || value1;
+      empresa = inferCompany(sheetName, value1);
+      startIndex = offset + 1;
+    }
+
+    // Validate extracted data
+    if (!cidade || cidade.length < 2) continue;
+    if (!empresa) empresa = inferCompany(sheetName);
+    
+    // Skip if "cidade" is actually a header word
     if (skipHeaders.includes(cidade.toUpperCase())) continue;
 
     empresasSet.add(empresa);
     cidadesSet.add(cidade);
 
-    // Employees start after company + city + offset
-    let startIndex = offset + 2;
-    
-    // Skip table header row if present (e.g., "NOME", "FUNCIONARIO")
-    const firstDataRow = jsonData[startIndex] as unknown[];
-    const firstDataValue = normalizeForComparison(String(firstDataRow?.[0] || ""));
-    if (skipHeaders.includes(firstDataValue)) {
-      startIndex++;
+    // Step 4: Skip table header rows if present (e.g., "NOME", "FUNCIONARIO")
+    while (startIndex < jsonData.length) {
+      const checkRow = jsonData[startIndex] as unknown[];
+      const checkValue = normalizeForComparison(String(checkRow?.[0] || ""));
+      if (skipHeaders.includes(checkValue)) {
+        startIndex++;
+      } else {
+        break;
+      }
     }
 
+    // Step 5: Extract employees
+    let sheetEmployeeCount = 0;
+    
     for (let i = startIndex; i < jsonData.length; i++) {
       const row = jsonData[i] as unknown[];
       if (!row) continue;
@@ -212,6 +304,9 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       // Skip currency values
       if (/^R\$\s*[\d.,]/i.test(colaborador)) continue;
       
+      // Skip if it looks like a city line (shouldn't be in employee list)
+      if (looksLikeCity(colaborador)) continue;
+      
       // Clean name: remove trailing codes/numbers
       const nomeLimpo = colaborador
         .replace(/\s*-?\s*\d+\s*$/, '') // Remove " - 123" or " 123" from end
@@ -233,11 +328,21 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
         contrato: sheetName,
         colaborador: nomeLimpo,
       });
+      sheetEmployeeCount++;
     }
+    
+    sheetStats.push({ name: sheetName, employees: sheetEmployeeCount, cidade, empresa });
   }
 
-  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities`);
+  // Log detailed stats
+  console.log(`[Excel] Parsed ${workbook.SheetNames.length - 1} sheets: ${records.length} employees, ${cidadesSet.size} cities, ${empresasSet.size} companies`);
   console.log(`[Excel] Cities found: ${Array.from(cidadesSet).join(", ")}`);
+  console.log(`[Excel] Companies found: ${Array.from(empresasSet).join(", ")}`);
+  
+  // Log sheets with employees for debugging
+  const nonEmptySheets = sheetStats.filter(s => s.employees > 0);
+  console.log(`[Excel] Sheets with employees (${nonEmptySheets.length}):`);
+  nonEmptySheets.forEach(s => console.log(`  - ${s.name}: ${s.employees} (${s.cidade} / ${s.empresa})`));
 
   // Calculate employees per city
   const funcionariosPorCidade: Record<string, number> = {};
