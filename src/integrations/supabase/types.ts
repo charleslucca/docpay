@@ -14,7 +14,147 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      empresas: {
+        Row: {
+          created_at: string
+          id: string
+          nome: string
+          nome_normalizado: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nome: string
+          nome_normalizado: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nome?: string
+          nome_normalizado?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      excel_upload_history: {
+        Row: {
+          file_name: string
+          file_path: string | null
+          funcionarios_atualizados: number
+          funcionarios_novos: number
+          funcionarios_removidos: number
+          id: string
+          total_empresas: number
+          total_funcionarios: number
+          total_municipios: number
+          uploaded_at: string
+        }
+        Insert: {
+          file_name: string
+          file_path?: string | null
+          funcionarios_atualizados?: number
+          funcionarios_novos?: number
+          funcionarios_removidos?: number
+          id?: string
+          total_empresas?: number
+          total_funcionarios?: number
+          total_municipios?: number
+          uploaded_at?: string
+        }
+        Update: {
+          file_name?: string
+          file_path?: string | null
+          funcionarios_atualizados?: number
+          funcionarios_novos?: number
+          funcionarios_removidos?: number
+          id?: string
+          total_empresas?: number
+          total_funcionarios?: number
+          total_municipios?: number
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
+      funcionarios: {
+        Row: {
+          ativo: boolean
+          banco: string | null
+          cargo: string | null
+          contrato: string | null
+          created_at: string
+          empresa_id: string
+          id: string
+          municipio_id: string
+          nome: string
+          nome_normalizado: string
+          updated_at: string
+        }
+        Insert: {
+          ativo?: boolean
+          banco?: string | null
+          cargo?: string | null
+          contrato?: string | null
+          created_at?: string
+          empresa_id: string
+          id?: string
+          municipio_id: string
+          nome: string
+          nome_normalizado: string
+          updated_at?: string
+        }
+        Update: {
+          ativo?: boolean
+          banco?: string | null
+          cargo?: string | null
+          contrato?: string | null
+          created_at?: string
+          empresa_id?: string
+          id?: string
+          municipio_id?: string
+          nome?: string
+          nome_normalizado?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "funcionarios_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "funcionarios_municipio_id_fkey"
+            columns: ["municipio_id"]
+            isOneToOne: false
+            referencedRelation: "municipios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      municipios: {
+        Row: {
+          created_at: string
+          id: string
+          nome: string
+          nome_normalizado: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nome: string
+          nome_normalizado: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nome?: string
+          nome_normalizado?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
