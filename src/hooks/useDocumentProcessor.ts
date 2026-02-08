@@ -944,6 +944,7 @@ export function useDocumentProcessor() {
 
     matchingLoop: for (let compIdx = 0; compIdx < totalComprovantes; compIdx++) {
       const comprovante = comprovanteList[compIdx];
+      let matchedThisComprovante = false;
 
       // Check cancellation and timeout
       if (cancelledRef.current) break matchingLoop;
@@ -1035,7 +1036,14 @@ export function useDocumentProcessor() {
             comprovante: { ...updatedComprovante, pageNumber: foundPage },
             status: "pending",
           });
+
+          matchedThisComprovante = true;
+          break; // Do not match multiple holerites to the same comprovante
         }
+      }
+
+      if (matchedThisComprovante) {
+        continue; // Move to next comprovante
       }
     }
 
