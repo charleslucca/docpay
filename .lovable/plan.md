@@ -1,78 +1,190 @@
 
 
-# Correção: 1 Página = 1 Funcionário (com 2 Holerites por Página)
+# Integração de Planilha: Identificar Empresa e Município por Funcionário
 
-## Problema Identificado
+## Objetivo
 
-Analisando a imagem, cada **página** contém **2 holerites do MESMO funcionário** (um na parte superior, um na inferior). Isso significa:
-
-- **1 página = 1 funcionário** (não 2)
-- O layout mostra 2 cópias do mesmo holerite por página (via/empresa e via/funcionário)
-- Para 691 páginas (com 1 de resumo): **690 funcionários**
-
-O código atual tenta calcular `pagesPerEmployee` usando amostragem distribuída, o que gera resultados incorretos (552 em vez de 690).
+Adicionar funcionalidade para fazer upload de uma planilha Excel (como a "geral-Empresas-e-funcionarios-SETEMBRO.xlsx") e, após finalizar a extração e criação de PDFs, automaticamente identificar a qual **empresa** e **município** cada funcionário pertence.
 
 ---
 
-## Solução
+## Estrutura da Planilha (Aba "Todos")
 
-Simplificar a lógica: para PDFs escaneados, **cada página = 1 funcionário** (menos página de resumo). A amostragem OCR serve apenas para **confirmar** que o PDF contém holerites válidos (extrai pelo menos 1 nome), não para calcular proporção.
+A Page 1 da planilha contém a estrutura normalizada:
+
+| EMPRESA   | CIDADE           | CONTRATO               | COLABORADOR              |
+|-----------|------------------|------------------------|--------------------------|
+| B SERVICE | ALEGRETE         | PREFEITURA             | BARBARA LENI PRADO       |
+| B SERVICE | CACHOEIRA DO SUL | CEMITERIO VAI COM DEUS | ADRIANA APARECIDA...     |
+
+Colunas necessárias:
+- **EMPRESA**: Nome da empresa (ex: "B SERVICE")
+- **CIDADE**: Município (ex: "ALEGRETE", "CACHOEIRA DO SUL")
+- **COLABORADOR**: Nome do funcionário
 
 ---
 
-## Mudanças no Código
+## Funcionalidades a Implementar
 
-### Arquivo: `src/lib/pdfUtils.ts`
+### 1. Upload da Planilha Excel
+- Adicionar área de upload para arquivo `.xlsx` na interface
+- Posição: Acima das dropzones de holerite/comprovante, ou em aba separada
+- Feedback visual mostrando quantos funcionários foram carregados
 
-**Antes (linhas 255-264):**
-```typescript
-if (uniqueNames > 0) {
-  // Calcular páginas por funcionário baseado na amostra
-  const pagesPerEmployee = ocrSamplePages.length / uniqueNames;
-  // Estimar total (menos 1-2 páginas para capa/resumo)
-  const pagesToCount = totalPages - 1;
-  const estimated = Math.round(pagesToCount / pagesPerEmployee);
-  console.log(`...`);
-  return Math.max(1, estimated);
-}
+### 2. Parser de Excel
+- Criar utilitário `src/lib/excelUtils.ts` para:
+  - Ler arquivo Excel usando biblioteca SheetJS (xlsx)
+  - Extrair dados da aba "Todos" ou primeira aba
+  - Mapear colunas: EMPRESA, CIDADE, COLABORADOR
+  - Retornar lista estruturada de funcionários
+
+### 3. Busca de Funcionário na Planilha
+- Função de matching flexível (normalizar acentos, maiúsculas)
+- Lidar com variações de nome (ex: "ADRIANA APARECIDA DE FREITAS JARDIM" vs "ADRIANA A. DE FREITAS")
+- Retornar `{ empresa, cidade }` ou `null` se não encontrado
+
+### 4. Enriquecer Documentos Gerados
+- Após extração de nomes dos holerites, buscar cada nome na planilha
+- Adicionar campos `empresa` e `municipio` ao `GeneratedDocument`
+- Exibir essa informação no Repositório de Documentos
+
+### 5. Organização por Empresa/Município no Repositório
+- Permitir agrupar documentos por empresa ou município
+- Adicionar filtros por empresa e município
+- Mostrar empresa/município junto ao nome do funcionário
+
+---
+
+## Mudanças Técnicas
+
+### Novos Arquivos
+
+| Arquivo | Descrição |
+|---------|-----------|
+| `src/lib/excelUtils.ts` | Parser de Excel e busca de funcionários |
+| `src/components/ExcelDropzone.tsx` | Componente de upload da planilha |
+
+### Arquivos a Modificar
+
+| Arquivo | Alteração |
+|---------|-----------|
+| `src/types/document.ts` | Adicionar `empresa?` e `municipio?` ao `GeneratedDocument` e criar tipo `EmployeeRecord` |
+| `src/hooks/useDocumentProcessor.ts` | Adicionar estado da planilha, integrar busca após extração |
+| `src/components/DocumentRepository.tsx` | Exibir empresa/município, adicionar filtros |
+| `src/pages/Index.tsx` | Adicionar dropzone da planilha |
+
+### Dependência Necessária
+
+```bash
+npm install xlsx
 ```
 
-**Depois:**
-```typescript
-if (uniqueNames > 0) {
-  // PDF escaneado válido confirmado - cada página = 1 funcionário
-  // (Cada página contém 2 holerites do MESMO funcionário: via empresa + via funcionário)
-  const estimated = totalPages - 1; // Descontar página de resumo
-  console.log(`[countEmployees] OCR confirmou PDF válido: ${uniqueNames} nomes em ${ocrSamplePages.length} páginas amostradas`);
-  console.log(`[countEmployees] Cada página = 1 funcionário → ${totalPages} - 1 (resumo) = ${estimated} funcionários`);
-  return Math.max(1, estimated);
-}
-```
+A biblioteca **SheetJS (xlsx)** é leve (~400KB) e permite ler arquivos Excel no navegador sem servidor.
 
 ---
 
-## Lógica Final
+## Fluxo de Uso
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│  Upload de Holerite (691 páginas)                               │
+│  1. Upload da Planilha Excel                                    │
+│     → Carregar "geral-Empresas-e-funcionarios-SETEMBRO.xlsx"    │
+│     → Exibir: "854 funcionários carregados"                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. Detectar PDF escaneado (sem padrões no texto nativo)        │
-│  2. OCR em 5 páginas para CONFIRMAR que são holerites válidos   │
-│     - Se extrair pelo menos 1 nome → PDF válido                 │
-│  3. Contagem: totalPages - 1 (página de resumo)                 │
-│     - 691 - 1 = 690 funcionários ✓                              │
+│  2. Upload de Holerites e Comprovantes (fluxo existente)        │
+├─────────────────────────────────────────────────────────────────┤
+│  3. Processamento e Extração                                    │
+│     → Para cada nome extraído, buscar na planilha               │
+│     → Enriquecer com empresa e município                        │
+├─────────────────────────────────────────────────────────────────┤
+│  4. Geração de PDFs                                             │
+│     → Nome do arquivo: Empresa_Municipio_Nome.pdf               │
+│     → Ou: Organizar em pastas por empresa no ZIP                │
+├─────────────────────────────────────────────────────────────────┤
+│  5. Repositório de Documentos                                   │
+│     → Exibir: "BARBARA LENI PRADO | B SERVICE - ALEGRETE"       │
+│     → Filtrar por empresa ou município                          │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Interface Proposta
+
+### Área de Upload da Planilha (acima das dropzones)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 📊 Planilha de Funcionários                                    │
+│                                                                │
+│ ┌────────────────────────────────────────────────────────────┐ │
+│ │  📁 Arraste a planilha Excel aqui ou clique para selecionar│ │
+│ │     Suporta .xlsx e .xls                                   │ │
+│ └────────────────────────────────────────────────────────────┘ │
+│                                                                │
+│ ✓ 854 funcionários carregados de "geral-Empresas-SETEMBRO.xlsx"│
+│   Empresas: B SERVICE | Cidades: 42                            │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Repositório com Empresa/Município
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 📄 Repositório de Documentos                                   │
+│                                                                │
+│ [Buscar por nome...]  [Empresa ▼]  [Município ▼]  [Ano ▼]     │
+│                                                                │
+│ ├── Setembro de 2026 (345 arquivos)                           │
+│ │   ├── BARBARA LENI PRADO                                     │
+│ │   │   B SERVICE • ALEGRETE                                   │
+│ │   ├── ADRIANA APARECIDA DE FREITAS JARDIM                   │
+│ │   │   B SERVICE • CACHOEIRA DO SUL                           │
+│ │   └── ...                                                    │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Lógica de Matching de Nomes
+
+Como os nomes podem ter variações (acentos, abreviações), a busca será:
+
+1. **Normalização**: Remover acentos, converter para maiúsculas
+2. **Matching exato**: Comparar strings normalizadas
+3. **Matching parcial**: Se não encontrar exato, usar algoritmo de similaridade
+4. **Fallback**: Se não encontrar, marcar como "Empresa não identificada"
+
+```typescript
+function findEmployeeInSheet(name: string, records: EmployeeRecord[]): EmployeeRecord | null {
+  const normalizedName = normalize(name);
+  
+  // 1. Matching exato
+  const exact = records.find(r => normalize(r.colaborador) === normalizedName);
+  if (exact) return exact;
+  
+  // 2. Matching parcial (primeiro e último nome)
+  const [firstName, ...rest] = normalizedName.split(' ');
+  const lastName = rest[rest.length - 1] || '';
+  
+  const partial = records.find(r => {
+    const rNorm = normalize(r.colaborador);
+    const [rFirst, ...rRest] = rNorm.split(' ');
+    const rLast = rRest[rRest.length - 1] || '';
+    return rFirst === firstName && rLast === lastName;
+  });
+  
+  return partial || null;
+}
 ```
 
 ---
 
 ## Resultado Esperado
 
-| Cenário | Antes | Depois |
-|---------|-------|--------|
-| 691 páginas escaneadas | 552 funcionários ❌ | 690 funcionários ✓ |
-| 50 páginas escaneadas | ~40 funcionários ❌ | 49 funcionários ✓ |
-
-A contagem agora reflete corretamente que **1 página = 1 funcionário** independente de ter 2 cópias do holerite na página.
+Após implementação:
+- Upload de planilha mostra feedback com contagem de funcionários
+- Documentos gerados exibem empresa e município
+- Filtros adicionais no repositório por empresa/município
+- Nome do arquivo PDF pode incluir empresa/município
 
