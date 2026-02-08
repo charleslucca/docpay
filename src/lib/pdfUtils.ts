@@ -252,14 +252,13 @@ export async function countPagesWithEmployeeName(
   
   const uniqueNames = foundNames.size;
   
-  // ETAPA 4: Extrapolar para o documento completo
+  // ETAPA 4: Se encontrou nomes, PDF escaneado é válido
   if (uniqueNames > 0) {
-    // Calcular páginas por funcionário baseado na amostra
-    const pagesPerEmployee = ocrSamplePages.length / uniqueNames;
-    // Estimar total (menos 1-2 páginas para capa/resumo)
-    const pagesToCount = totalPages - 1; // Desconta página de resumo
-    const estimated = Math.round(pagesToCount / pagesPerEmployee);
-    console.log(`[countEmployees] OCR amostragem: ${uniqueNames} nomes únicos em ${ocrSamplePages.length} páginas → ~${pagesPerEmployee.toFixed(1)} páginas/funcionário → ~${estimated} funcionários`);
+    // PDF escaneado válido confirmado - cada página = 1 funcionário
+    // (Cada página contém 2 holerites do MESMO funcionário: via empresa + via funcionário)
+    const estimated = totalPages - 1; // Descontar página de resumo
+    console.log(`[countEmployees] OCR confirmou PDF válido: ${uniqueNames} nomes em ${ocrSamplePages.length} páginas amostradas`);
+    console.log(`[countEmployees] Cada página = 1 funcionário → ${totalPages} - 1 (resumo) = ${estimated} funcionários`);
     return Math.max(1, estimated);
   }
   
