@@ -132,12 +132,36 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
     if (jsonData.length < 3) continue;
 
-    // FIXED: Line 1 = Company, Line 2 = City + Bank
-    const row1 = jsonData[0] as unknown[];
-    const row2 = jsonData[1] as unknown[];
+    // Detect offset: skip "colunas1" or similar header rows
+    let offset = 0;
+    const firstRow = jsonData[0] as unknown[];
+    const firstCellValue = String(firstRow?.[0] || "").trim().toUpperCase();
+    
+    // Check if first cell is "colunas*", empty, or single letter
+    if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || 
+        /^COLUMN[S]?\d*$/i.test(firstCellValue) ||
+        firstCellValue === "" ||
+        /^[A-Z]$/i.test(firstCellValue)) {
+      
+      // Verify next row looks like a company name (not empty, not header)
+      const secondRow = jsonData[1] as unknown[];
+      const secondCellValue = String(secondRow?.[0] || "").trim();
+      
+      if (secondCellValue && secondCellValue.length >= 2 && !/^COLUNA/i.test(secondCellValue)) {
+        offset = 1;
+        console.log(`[Excel] Sheet "${sheetName}": detected header offset, skipping row with "${firstCellValue}"`);
+      }
+    }
 
-    const empresaRaw = String(row1?.[0] || "").trim();
-    const cidadeRaw = String(row2?.[0] || "").trim();
+    // Ensure enough rows after offset
+    if (jsonData.length < (3 + offset)) continue;
+
+    // Use offset to get company and city
+    const empresaRow = jsonData[offset] as unknown[];
+    const cidadeRow = jsonData[offset + 1] as unknown[];
+
+    const empresaRaw = String(empresaRow?.[0] || "").trim();
+    const cidadeRaw = String(cidadeRow?.[0] || "").trim();
 
     // Extract municipality (before first hyphen)
     const cidade = cidadeRaw.split(/\s*-\s*/)[0]?.trim() || "";
@@ -150,8 +174,9 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     empresasSet.add(empresa);
     cidadesSet.add(cidade);
 
-    // Employees from line 3 onwards (index 2)
-    for (let i = 2; i < jsonData.length; i++) {
+    // Employees start after company + city + offset
+    const startIndex = offset + 2;
+    for (let i = startIndex; i < jsonData.length; i++) {
       const row = jsonData[i] as unknown[];
       if (!row) continue;
 
