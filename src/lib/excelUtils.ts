@@ -141,17 +141,91 @@ function looksLikeCity(value: string): boolean {
  */
 function looksLikeCompany(value: string): boolean {
   const normalized = value.trim().toUpperCase();
-  return normalized.startsWith("B SERVICE") || normalized.startsWith("SPACE") || normalized === "B SERVICE" || normalized === "SPACE";
+  const knownCompanies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
+  return knownCompanies.some(c => normalized.startsWith(c) || normalized === c);
+}
+
+/**
+ * Extract city from a municipality line in format:
+ * "[CITY] - [FUNCTION] - [BANK]" or "[PREFIX] - [CITY] - [BANK]"
+ * 
+ * Examples:
+ * - "GRAMADO - PORTEIROS - ITAÚ" → "GRAMADO" (city in 1st position)
+ * - "IPAM - CAXIAS DO SUL - ITAÚ" → "CAXIAS DO SUL" (city in 2nd position, IPAM is prefix)
+ */
+function extractCityFromLine(line: string): string {
+  const parts = line.split(/\s*-\s*/);
+  
+  if (parts.length < 2) {
+    return parts[0]?.trim() || "";
+  }
+  
+  const firstPart = normalizeForComparison(parts[0] || "");
+  const secondPart = parts[1]?.trim() || "";
+  
+  // Known prefixes (NOT cities) - when first part matches, city is in second part
+  const knownPrefixes = [
+    "IPAM",
+    "IFRS",
+    "SESI",
+    "MIN AGRIC",
+    "MINISTERIO",
+    "FARMACIA",
+    "METROPOLITANA",
+    "SS CAI",
+  ];
+  
+  // If first part is a known prefix, city is in second part
+  if (knownPrefixes.some(prefix => firstPart.startsWith(prefix) || firstPart === prefix)) {
+    return secondPart;
+  }
+  
+  // Known functions/roles - when second part matches, city is in first part
+  const knownFunctions = [
+    "PORTEIRO",
+    "LIMPEZA",
+    "COZINHA",
+    "VIGILANCIA",
+    "MANUTENCAO",
+    "CAMARA",
+    "PACO",
+    "OBRAS",
+    "RECEPCAO",
+    "ASSISTENCIA",
+    "ZELADOR",
+  ];
+  
+  // If second part is a function, city is in first part
+  const secondNorm = normalizeForComparison(secondPart);
+  if (knownFunctions.some(func => secondNorm.startsWith(func) || secondNorm.includes(func))) {
+    return parts[0]?.trim() || "";
+  }
+  
+  // Known banks (appear in last position)
+  const knownBanks = ["ITAU", "SICREDI", "BRADESCO", "CAIXA", "BB", "SANTANDER", "BANRISUL", "PREFEITURA"];
+  
+  // If second part is a bank, city is in first part
+  if (knownBanks.some(bank => secondNorm.includes(bank))) {
+    return parts[0]?.trim() || "";
+  }
+  
+  // Default: first part is the city
+  return parts[0]?.trim() || "";
 }
 
 /**
  * Infer company from sheet name or context
  */
 function inferCompany(sheetName: string, contextHint: string = ""): string {
-  const normalized = normalizeForComparison(sheetName);
-  const contextNorm = normalizeForComparison(contextHint);
+  const combined = `${sheetName} ${contextHint}`.toUpperCase();
   
-  // SPACE company sheets typically have these names
+  // Check for known companies in order of specificity
+  if (/FORTCLEAN/i.test(combined)) return "FORTCLEAN";
+  if (/INTERCLEAN/i.test(combined)) return "INTERCLEAN";
+  if (/SPACE/i.test(combined)) return "SPACE";
+  if (/B\s*SERVICE/i.test(combined)) return "B SERVICE";
+  
+  // SPACE company sheets typically have these patterns
   const spacePatterns = [
     /CANOAS\s*TEC/i,
     /CAPAO\s*DO\s*CIPO/i,
@@ -161,9 +235,11 @@ function inferCompany(sheetName: string, contextHint: string = ""): string {
     /AJURICABA/i,
     /CARLOS\s*BARBOSA/i,
     /ERECHIM/i,
+    /PANAMBI/i,
+    /PASSO\s*FUNDO/i,
   ];
   
-  if (spacePatterns.some((p) => p.test(sheetName)) || contextNorm.includes("SPACE")) {
+  if (spacePatterns.some((p) => p.test(sheetName))) {
     return "SPACE";
   }
   
@@ -186,7 +262,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
   const sheetStats: { name: string; employees: number; cidade: string; empresa: string }[] = [];
 
   // Headers that should be skipped (not valid cities or employee names)
-  const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO", "EMPRESA", "CIDADE"];
+  const skipHeaders = ["NOME", "FUNCIONARIO", "COLABORADOR", "MATRICULA", "CODIGO", "EMPRESA", "CIDADE", "B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
 
   for (const sheetName of workbook.SheetNames) {
     // Skip "Todos" sheet
@@ -223,39 +299,58 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     let cidade = "";
     let startIndex = offset;
 
-    // Step 3: Detect structure type
+    // Step 3: Detect structure type based on plan
+    // Rule: Company is ALWAYS in line after offset (row1)
+    // Municipality is ALWAYS in the next line (row2) in format "[CITY/PREFIX] - [DESC] - [BANK]"
+    
     if (looksLikeCompany(value1)) {
-      // Type A/B: Row 1 is Company
+      // Row 1 is Company (B SERVICE, SPACE, FORTCLEAN, INTERCLEAN)
       empresa = value1;
       
-      if (looksLikeCity(value2) || value2.includes(" - ")) {
-        // City is in row 2
-        cidade = value2.split(/\s*-\s*/)[0]?.trim() || "";
+      // Municipality should be in row 2
+      if (value2 && value2.includes(" - ")) {
+        // Use extractCityFromLine to handle IPAM, SESI, etc. prefixes
+        cidade = extractCityFromLine(value2);
+        startIndex = offset + 2;
+      } else if (value2 && !skipHeaders.includes(normalizeForComparison(value2))) {
+        // Row 2 might be city without " - " separator
+        cidade = value2;
         startIndex = offset + 2;
       } else if (skipHeaders.includes(normalizeForComparison(value2))) {
         // Row 2 is a header like "NOME", check row 3 for city
         const row3 = jsonData[offset + 2] as unknown[];
         const value3 = String(row3?.[0] || "").trim();
-        if (looksLikeCity(value3) || value3.includes(" - ")) {
-          cidade = value3.split(/\s*-\s*/)[0]?.trim() || "";
+        if (value3 && value3.includes(" - ")) {
+          cidade = extractCityFromLine(value3);
+          startIndex = offset + 3;
+        } else if (value3) {
+          cidade = value3;
           startIndex = offset + 3;
         }
       }
-    } else if (looksLikeCity(value1) || value1.includes(" - ")) {
-      // Type C/D: Row 1 is City directly (no company row)
-      cidade = value1.split(/\s*-\s*/)[0]?.trim() || "";
+    } else if (value1.includes(" - ")) {
+      // Row 1 is Municipality line directly (no company row visible)
+      cidade = extractCityFromLine(value1);
       empresa = inferCompany(sheetName, value1);
       startIndex = offset + 1;
-    } else if (looksLikeCity(value2) || value2.includes(" - ")) {
-      // Type D variant: Row 1 might be noise, Row 2 is City
-      cidade = value2.split(/\s*-\s*/)[0]?.trim() || "";
+    } else if (value2 && value2.includes(" - ")) {
+      // Row 1 might be noise or unrecognized, Row 2 is Municipality
+      cidade = extractCityFromLine(value2);
       empresa = inferCompany(sheetName, value2);
       startIndex = offset + 2;
     } else {
-      // Fallback: try to use value1 as city, infer company
-      cidade = value1.split(/\s*-\s*/)[0]?.trim() || value1;
+      // Fallback: use value1 as potential city
+      cidade = extractCityFromLine(value1) || value1;
       empresa = inferCompany(sheetName, value1);
       startIndex = offset + 1;
+    }
+    
+    // Validate: city should NOT be a company name
+    const knownCompanies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
+    if (knownCompanies.some(c => cidade.toUpperCase().includes(c))) {
+      // Invalid city - skip this sheet or try to recover
+      console.warn(`[Excel] Sheet "${sheetName}": detected company name "${cidade}" as city, skipping`);
+      continue;
     }
 
     // Validate extracted data
