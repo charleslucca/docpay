@@ -1,52 +1,40 @@
 
+# Separar Menu do Usuario e Menu Admin no Header
 
-# Adicionar Menu de Navegacao no Header
+## O que muda
 
-## Problema
+O menu dropdown atual que combina "Minha Conta", "IP Whitelist" e "Sair" sera dividido em dois elementos separados:
 
-As paginas `/account` e `/admin/ip-whitelist` existem e funcionam, mas nao ha nenhum link ou menu no header da pagina principal para o usuario acessar seu perfil ou para o admin acessar as funcoes administrativas.
+1. **Botao "Perfil"** (renomeado de "Usuario") - dropdown com:
+   - Nome do usuario + badge da role
+   - "Minha Conta" -> `/account`
+   - "Sair"
 
-## Solucao
+2. **Botao "Admin"** (visivel apenas para admins) - dropdown ou botao direto com:
+   - "IP Whitelist" -> `/admin/ip-whitelist`
 
-Adicionar um menu dropdown no canto direito do header da pagina `Index.tsx` com:
-- Nome do usuario e role visivel
-- Link para "Minha Conta" (`/account`)
-- Link para "IP Whitelist" (`/admin/ip-whitelist`) - visivel apenas para admins
-- Botao "Sair" para logout
+## Arquivo a modificar
 
-## Mudancas
+`src/pages/Index.tsx`
 
-### Arquivo: `src/pages/Index.tsx`
+### Alteracoes:
 
-Adicionar no header (ao lado do botao "Recomecar"):
+- Renomear o botao trigger do dropdown de `{profile?.full_name || 'Usuário'}` para `"Perfil"`
+- Remover o item "IP Whitelist" do dropdown de perfil
+- Adicionar um segundo botao separado (visivel somente para `role === 'admin'`) com icone `Shield` e texto "Admin" que navega diretamente para `/admin/ip-whitelist`
 
-1. Importar `useAuth`, `useNavigate`, e componentes de `DropdownMenu`
-2. Criar um menu dropdown com icone de usuario contendo:
-   - Texto: nome do usuario + badge da role
-   - Separador
-   - Item: "Minha Conta" -> navega para `/account`
-   - Item (condicional, so admin): "IP Whitelist" -> navega para `/admin/ip-whitelist`
-   - Separador
-   - Item: "Sair" -> chama `signOut()` e navega para `/login`
-
-### Detalhes Tecnicos
+### Layout do header:
 
 ```text
-Header atual:
-[Logo DocuMerge]                    [Recomecar]
-
-Header novo:
-[Logo DocuMerge]          [Recomecar] [Avatar/Menu ▼]
+Antes:
+[Logo]                    [Recomecar] [Usuario ▼]
                                         |-- Minha Conta
                                         |-- IP Whitelist (admin)
                                         |-- Sair
+
+Depois:
+[Logo]          [Recomecar] [Admin] (so admin) [Perfil ▼]
+                                                  |-- Nome + Role
+                                                  |-- Minha Conta
+                                                  |-- Sair
 ```
-
-Sera usado o componente `DropdownMenu` do Radix (ja instalado no projeto) para consistencia com o design system existente. O icone sera um `UserCircle` do Lucide.
-
-### Arquivo unico a modificar
-
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/pages/Index.tsx` | Adicionar menu dropdown de usuario no header |
-
