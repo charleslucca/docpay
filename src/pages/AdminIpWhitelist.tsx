@@ -49,11 +49,36 @@ const AdminIpWhitelist = () => {
   }, []);
 
   const validateIp = (ip: string) => {
-    // IPv4
     const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
-    // IPv6 (simplified)
     const ipv6 = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
-    return ipv4.test(ip) || ipv6.test(ip);
+    if (ipv4.test(ip)) {
+      return ip.split('.').every((octet) => {
+        const num = parseInt(octet, 10);
+        return num >= 0 && num <= 255;
+      });
+    }
+    return ipv6.test(ip);
+  };
+
+  const handleIpChange = (value: string) => {
+    // Allow only digits and dots for IPv4 input
+    const cleaned = value.replace(/[^0-9.]/g, '');
+    
+    // Split into octets by dots
+    const parts = cleaned.split('.');
+    
+    // Limit to 4 octets
+    const limited = parts.slice(0, 4);
+    
+    // Clamp each octet to 0-255 and limit to 3 digits
+    const masked = limited.map((part) => {
+      if (part === '') return '';
+      const num = parseInt(part.slice(0, 3), 10);
+      if (isNaN(num)) return '';
+      return num > 255 ? '255' : String(num);
+    });
+    
+    setNewIp(masked.join('.'));
   };
 
   const handleAdd = async () => {
@@ -125,8 +150,9 @@ const AdminIpWhitelist = () => {
                 <Input
                   id="newIp"
                   value={newIp}
-                  onChange={(e) => setNewIp(e.target.value)}
+                  onChange={(e) => handleIpChange(e.target.value)}
                   placeholder="192.168.1.1"
+                  maxLength={15}
                 />
               </div>
               <div className="flex-1 space-y-1">
