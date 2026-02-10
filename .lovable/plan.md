@@ -1,201 +1,216 @@
 
 
-# Correção: Extração Inteligente do Município
+# Modulo de Autenticacao, RBAC e IP Whitelist
 
-## Entendimento do Padrão
+## Visao Geral
 
-A linha do município segue o formato: `[PARTE1] - [PARTE2] - [BANCO]`
+Implementar autenticacao completa com login/logout, perfil de usuario, controle de acesso por roles (admin/employee), troca de senha/email com confirmacao, e bloqueio por IP via edge function.
 
-| Exemplo | Parte 1 | Parte 2 | Banco | Cidade Real |
-|---------|---------|---------|-------|-------------|
-| `GRAMADO - PORTEIROS - ITAÚ` | GRAMADO | PORTEIROS | ITAÚ | **GRAMADO** (1a posição) |
-| `IPAM - CAXIAS DO SUL - ITAÚ` | IPAM | CAXIAS DO SUL | ITAÚ | **CAXIAS DO SUL** (2a posição) |
-
-A diferença: **IPAM** é um prefixo/sigla (tipo de contrato), não um município. Precisamos identificar esses prefixos.
+**Nota importante sobre roles**: Por seguranca, as roles serao armazenadas em uma tabela separada (`user_roles`) em vez de na tabela `profiles`, para evitar ataques de escalacao de privilegios. Uma funcao `security definer` sera usada para verificar roles sem recursao no RLS.
 
 ---
 
-## Regras de Extração
+## 1. Banco de Dados (Migrations)
 
-### Estrutura da Planilha
-```
-Linha 1: Empresa (B SERVICE, SPACE, FORTCLEAN, INTERCLEAN)
-         OU "Colunas1" (nesse caso, empresa na Linha 2)
-
-Linha 2: Município no formato "[CIDADE ou PREFIXO] - [DESCRICAO] - [BANCO]"
-         (ou Linha 3 se Linha 1 = "Colunas1")
-
-Linha 3+: Funcionários (pulando linha "NOME" se existir)
-```
-
-### Prefixos Conhecidos (NÃO são cidades)
-Estes termos na primeira posição indicam que a cidade está na segunda posição:
-- IPAM
-- IFRS
-- SESI
-- MIN AGRIC (Ministério Agricultura)
-- FARMACIA
-- METROPOLITANA
-
-### Funções (aparecem na segunda posição quando cidade está na primeira)
-- PORTEIROS
-- LIMPEZA
-- COZINHA
-- VIGILANCIA
-- MANUTENCAO
-- CAMARA
-- PACO
-
----
-
-## Mudanças Técnicas
-
-### Nova Funcao: `extractCityFromLine()`
-
-```typescript
-/**
- * Extrai o município de uma linha no formato:
- * "[CIDADE] - [FUNCAO] - [BANCO]" ou "[PREFIXO] - [CIDADE] - [BANCO]"
- */
-function extractCityFromLine(line: string): string {
-  const parts = line.split(/\s*-\s*/);
-  
-  if (parts.length < 2) {
-    return parts[0]?.trim() || "";
-  }
-  
-  const firstPart = normalizeForComparison(parts[0] || "");
-  const secondPart = parts[1]?.trim() || "";
-  
-  // Lista de prefixos conhecidos (NÃO são cidades)
-  const knownPrefixes = [
-    "IPAM",
-    "IFRS", 
-    "SESI",
-    "MIN AGRIC",
-    "MINISTERIO",
-    "FARMACIA",
-    "METROPOLITANA",
-    "SS CAI",        // São Sebastião do Caí (abreviado)
-  ];
-  
-  // Se primeira parte é um prefixo conhecido, cidade está na segunda parte
-  if (knownPrefixes.some(prefix => firstPart.startsWith(prefix) || firstPart === prefix)) {
-    return secondPart;
-  }
-  
-  // Lista de funções/cargos (indicam que cidade está na primeira parte)
-  const knownFunctions = [
-    "PORTEIRO",
-    "LIMPEZA",
-    "COZINHA",
-    "VIGILANCIA",
-    "MANUTENCAO",
-    "CAMARA",
-    "PACO",
-    "OBRAS",
-    "RECEPCAO",
-    "ASSISTENCIA",
-    "ZELADOR",
-  ];
-  
-  // Se segunda parte é função, cidade está na primeira parte
-  const secondNorm = normalizeForComparison(secondPart);
-  if (knownFunctions.some(func => secondNorm.startsWith(func) || secondNorm.includes(func))) {
-    return parts[0]?.trim() || "";
-  }
-  
-  // Bancos conhecidos (aparecem na última posição)
-  const knownBanks = ["ITAU", "SICREDI", "BRADESCO", "CAIXA", "BB", "SANTANDER", "BANRISUL", "PREFEITURA"];
-  
-  // Se segunda parte é banco, cidade está na primeira
-  if (knownBanks.some(bank => secondNorm.includes(bank))) {
-    return parts[0]?.trim() || "";
-  }
-  
-  // Default: primeira parte é a cidade
-  return parts[0]?.trim() || "";
-}
+### 1.1 Tabela `profiles`
+```sql
+create table public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  full_name text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.profiles enable row level security;
 ```
 
-### Atualizar `looksLikeCompany()`
+### 1.2 Tabela `user_roles` (separada de profiles)
+```sql
+create type public.app_role as enum ('admin', 'employee');
 
-Adicionar todas as empresas conhecidas:
-
-```typescript
-function looksLikeCompany(value: string): boolean {
-  const normalized = value.trim().toUpperCase();
-  const companies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
-  return companies.some(c => normalized.startsWith(c) || normalized === c);
-}
+create table public.user_roles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade not null,
+  role app_role not null default 'employee',
+  unique (user_id, role)
+);
+alter table public.user_roles enable row level security;
 ```
 
-### Atualizar `parseMunicipalitySheets()`
+### 1.3 Funcao `has_role` (security definer)
+```sql
+create or replace function public.has_role(_user_id uuid, _role app_role)
+returns boolean language sql stable security definer
+set search_path = public as $$
+  select exists (
+    select 1 from public.user_roles
+    where user_id = _user_id and role = _role
+  )
+$$;
+```
 
-Simplificar a lógica de extração:
+### 1.4 Trigger para criar profile + role ao cadastrar
+```sql
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer as $$
+begin
+  insert into public.profiles (id, full_name)
+  values (new.id, coalesce(new.raw_user_meta_data->>'full_name', ''))
+  on conflict (id) do nothing;
+  
+  insert into public.user_roles (user_id, role)
+  values (new.id, 'employee')
+  on conflict (user_id, role) do nothing;
+  
+  return new;
+end; $$;
 
-```typescript
-// Passo 1: Detectar offset (Colunas1)
-let offset = 0;
-const firstCellValue = String(jsonData[0]?.[0] || "").trim().toUpperCase();
-if (/^COLUNA[S]?\d*$/i.test(firstCellValue) || firstCellValue === "") {
-  offset = 1;
-}
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute procedure public.handle_new_user();
+```
 
-// Passo 2: Empresa SEMPRE na linha após offset
-const empresaRow = jsonData[offset] as unknown[];
-const empresaValue = String(empresaRow?.[0] || "").trim();
+### 1.5 Tabela `ip_whitelist`
+```sql
+create table public.ip_whitelist (
+  id uuid primary key default gen_random_uuid(),
+  ip text not null,
+  description text,
+  active boolean not null default true,
+  created_by uuid references auth.users(id),
+  created_at timestamptz default now()
+);
+alter table public.ip_whitelist enable row level security;
+```
 
-let empresa = "";
-let cidadeRowIndex = offset + 1;
+### 1.6 Politicas RLS
 
-if (looksLikeCompany(empresaValue)) {
-  empresa = empresaValue;
-} else {
-  // Se linha não é empresa conhecida, pode ser empresa nova ou erro
-  empresa = empresaValue;
-}
+**profiles**: usuario ve/edita o proprio; admin ve/edita todos.
+**user_roles**: somente leitura para o proprio usuario; admin le todos.
+**ip_whitelist**: somente admin (todas operacoes).
 
-// Passo 3: Município na linha seguinte
-const cidadeRow = jsonData[cidadeRowIndex] as unknown[];
-const cidadeValue = String(cidadeRow?.[0] || "").trim();
+```sql
+-- profiles
+create policy "profiles_select" on public.profiles for select
+  using (id = auth.uid() or public.has_role(auth.uid(), 'admin'));
+create policy "profiles_update" on public.profiles for update
+  using (id = auth.uid() or public.has_role(auth.uid(), 'admin'));
 
-// Usar nova função para extrair cidade corretamente
-const cidade = extractCityFromLine(cidadeValue);
+-- user_roles
+create policy "roles_select_own" on public.user_roles for select
+  using (user_id = auth.uid() or public.has_role(auth.uid(), 'admin'));
 
-// Passo 4: Funcionários começam após a linha de cidade
-let startIndex = cidadeRowIndex + 1;
-
-// Pular linha "NOME" se existir
-// ... resto da lógica
+-- ip_whitelist
+create policy "ip_whitelist_admin" on public.ip_whitelist for all
+  using (public.has_role(auth.uid(), 'admin'))
+  with check (public.has_role(auth.uid(), 'admin'));
 ```
 
 ---
 
-## Arquivo a Modificar
+## 2. Edge Function: `check-ip`
 
-| Arquivo | Alteracoes |
+Criada em `supabase/functions/check-ip/index.ts`:
+- Recebe o request, extrai IP de `x-forwarded-for`
+- Consulta `ip_whitelist` com service role key
+- Retorna `{ allowed: true/false }`
+- `verify_jwt = false` no config.toml (validacao manual do JWT em codigo)
+
+---
+
+## 3. Frontend - Novos Arquivos
+
+### Paginas (6 novas)
+
+| Arquivo | Descricao |
 |---------|-----------|
-| `src/lib/excelUtils.ts` | Adicionar `extractCityFromLine()`, atualizar `looksLikeCompany()`, simplificar `parseMunicipalitySheets()` |
+| `src/pages/Login.tsx` | Formulario email/senha com `signInWithPassword` |
+| `src/pages/ForgotPassword.tsx` | Envia email de reset com `resetPasswordForEmail` |
+| `src/pages/ResetPassword.tsx` | Define nova senha com `updateUser({ password })` |
+| `src/pages/Account.tsx` | Editar nome, ver role, botoes trocar senha/email |
+| `src/pages/AdminIpWhitelist.tsx` | CRUD de IPs (somente admin) |
+| `src/pages/Blocked.tsx` | Tela "Acesso nao permitido" |
+
+### Componentes e Hooks (4 novos)
+
+| Arquivo | Descricao |
+|---------|-----------|
+| `src/hooks/useAuth.tsx` | Context de auth: sessao, profile, role, loading |
+| `src/components/ProtectedRoute.tsx` | Wrapper que verifica sessao + IP |
+| `src/components/AdminRoute.tsx` | Wrapper que verifica role admin |
+| `src/components/AuthLayout.tsx` | Layout para paginas de auth (login, forgot, reset) |
 
 ---
 
-## Exemplos de Extração
+## 4. Roteamento Atualizado (App.tsx)
 
-| Linha Original | Parte 1 | Parte 2 | Resultado |
-|----------------|---------|---------|-----------|
-| `GRAMADO - PORTEIROS - ITAÚ` | GRAMADO | PORTEIROS | cidade = **GRAMADO** |
-| `IPAM - CAXIAS DO SUL - ITAÚ` | IPAM | CAXIAS DO SUL | cidade = **CAXIAS DO SUL** |
-| `ALEGRETE - CÂMARA - SICREDI` | ALEGRETE | CÂMARA | cidade = **ALEGRETE** |
-| `SESI - PORTO ALEGRE - ITAÚ` | SESI | PORTO ALEGRE | cidade = **PORTO ALEGRE** |
-| `TORRES - LIMPEZA - PREFEITURA` | TORRES | LIMPEZA | cidade = **TORRES** |
+```text
+/login              -> Login (publica)
+/forgot-password    -> ForgotPassword (publica)
+/reset-password     -> ResetPassword (publica)
+/blocked            -> Blocked (publica)
+/                   -> Index (protegida + IP check)
+/account            -> Account (protegida)
+/admin/ip-whitelist -> AdminIpWhitelist (protegida + admin)
+```
 
 ---
 
-## Resultado Esperado
+## 5. Fluxos Detalhados
 
-- Empresas detectadas: B SERVICE, SPACE, FORTCLEAN, INTERCLEAN
-- IPAM, IFRS, SESI serão reconhecidos como prefixos (não cidades)
-- Cada município terá contagem correta de funcionários
-- Total: ~1004 funcionários
+### Login
+1. Usuario digita email/senha
+2. `signInWithPassword` -> sessao criada
+3. `ProtectedRoute` verifica IP via edge function `check-ip`
+4. Se IP bloqueado -> `/blocked`
+5. Se OK -> renderiza pagina
+
+### Troca de Senha (Minha Conta)
+1. Clica "Trocar senha"
+2. Chama `resetPasswordForEmail` com email do usuario logado
+3. Mostra toast: "Verifique seu email"
+4. Link no email redireciona para `/reset-password`
+
+### Troca de Email
+1. Digita novo email
+2. `updateUser({ email: newEmail })`
+3. Toast: "Verifique ambos os emails para confirmar"
+
+### IP Whitelist
+1. `check-ip` edge function consulta tabela com service role
+2. `ProtectedRoute` chama edge function ao montar
+3. Se `allowed: false` -> redireciona para `/blocked`
+
+---
+
+## 6. Arquivos Modificados vs Novos
+
+| Acao | Arquivo |
+|------|---------|
+| Modificar | `src/App.tsx` (adicionar rotas) |
+| Modificar | `supabase/config.toml` (adicionar config da edge function) |
+| Criar | `src/hooks/useAuth.tsx` |
+| Criar | `src/components/ProtectedRoute.tsx` |
+| Criar | `src/components/AdminRoute.tsx` |
+| Criar | `src/components/AuthLayout.tsx` |
+| Criar | `src/pages/Login.tsx` |
+| Criar | `src/pages/ForgotPassword.tsx` |
+| Criar | `src/pages/ResetPassword.tsx` |
+| Criar | `src/pages/Account.tsx` |
+| Criar | `src/pages/AdminIpWhitelist.tsx` |
+| Criar | `src/pages/Blocked.tsx` |
+| Criar | `supabase/functions/check-ip/index.ts` |
+
+---
+
+## 7. Sequencia de Implementacao
+
+1. Criar migrations (tabelas + RLS + triggers)
+2. Criar edge function `check-ip`
+3. Criar `useAuth` hook
+4. Criar componentes de protecao de rota
+5. Criar paginas de auth (Login, ForgotPassword, ResetPassword)
+6. Criar pagina Account
+7. Criar pagina AdminIpWhitelist e Blocked
+8. Atualizar App.tsx com todas as rotas
+9. Testar fluxo completo
 
