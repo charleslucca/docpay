@@ -326,10 +326,32 @@ export function useDocumentProcessor() {
     }
   }, []);
 
-  const cancelProcessing = useCallback(() => {
+  const cancelProcessing = useCallback(async () => {
     cancelledRef.current = true;
     setIsCancelling(true);
+    clearSlowOperationTimer();
     setStatus((prev) => ({ ...prev, message: "Cancelando..." }));
+
+    // Force-terminate all OCR workers immediately to stop pending jobs
+    try {
+      await terminateOcrWorker();
+      console.log("[Cancel] OCR workers terminated");
+    } catch (error) {
+      console.warn("[Cancel] Error terminating OCR workers:", error);
+    }
+
+    // Clear persisted state
+    try {
+      await clearProcessingState();
+    } catch (error) {
+      console.warn("[Cancel] Error clearing persisted state:", error);
+    }
+
+    // Reset state immediately
+    setIsCancelling(false);
+    setStatus({ step: "idle", progress: 0, message: "" });
+    setMatchedPairs([]);
+    setGeneratedDocs([]);
   }, []);
 
   // Save files to IndexedDB when processing starts
@@ -623,16 +645,27 @@ export function useDocumentProcessor() {
               }));
 
               // Process OCR in parallel with the scheduler
-              const texts = await extractTextBatch(
-                batch.map((b) => b.canvas),
-                (done, total) => {
-                  const overallProgress = ((totalProcessed + done) / totalPages) * 100;
-                  setStatus((prev) => ({
-                    ...prev,
-                    ocrProgress: Math.round(overallProgress),
-                  }));
-                },
-              );
+              let texts: string[];
+              try {
+                texts = await extractTextBatch(
+                  batch.map((b) => b.canvas),
+                  (done, total) => {
+                    const overallProgress = ((totalProcessed + done) / totalPages) * 100;
+                    setStatus((prev) => ({
+                      ...prev,
+                      ocrProgress: Math.round(overallProgress),
+                    }));
+                  },
+                );
+              } catch (ocrError) {
+                // If cancelled/terminated, exit gracefully
+                if (cancelledRef.current) {
+                  console.log("[OCR] Batch interrupted by cancellation");
+                  batch.forEach((b) => { b.canvas.width = 0; b.canvas.height = 0; });
+                  break;
+                }
+                throw ocrError;
+              }
 
               // Extract names and cache results (with optional retry for low-quality OCR)
               for (let i = 0; i < texts.length; i++) {
