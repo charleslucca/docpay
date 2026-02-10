@@ -779,6 +779,9 @@ export function useDocumentProcessor() {
 
         clearSlowOperationTimer();
 
+        // Diagnostic log: extraction summary
+        console.log(`[Extraction Summary] File "${holerite.name}": ${entries.length} names extracted from ${totalPages} pages (native: ${nativeProcessed}, cache: ${cacheHits}, OCR: ${ocrCompleted})`);
+
         // Mark holerite as completed
         const foundCount = entries.length;
         setHolerites((prev) =>
