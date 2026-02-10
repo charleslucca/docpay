@@ -1,6 +1,8 @@
 import { motion } from 'framer-motion';
-import { FileText, Sparkles, RotateCcw, Play, Zap, StopCircle } from 'lucide-react';
+import { FileText, Sparkles, RotateCcw, Play, Zap, StopCircle, UserCircle, LogOut, User, Shield } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
+import { useAuth } from '@/hooks/useAuth';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
@@ -8,9 +10,20 @@ import { MatchedPairCard } from '@/components/MatchedPairCard';
 import { DocumentRepository } from '@/components/DocumentRepository';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const Index = () => {
+  const { profile, role, signOut } = useAuth();
+  const navigate = useNavigate();
   const {
     holerites,
     comprovantes,
@@ -60,17 +73,54 @@ const Index = () => {
                 </p>
               </div>
             </div>
-            {(holerites.length > 0 || comprovantes.length > 0 || generatedDocs.length > 0) && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={reset}
-                disabled={isProcessing}
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Recomeçar
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {(holerites.length > 0 || comprovantes.length > 0 || generatedDocs.length > 0) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={reset}
+                  disabled={isProcessing}
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Recomeçar
+                </Button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <UserCircle className="h-4 w-4" />
+                    <span className="hidden sm:inline">{profile?.full_name || 'Usuário'}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel className="flex items-center gap-2">
+                    <span className="truncate">{profile?.full_name || 'Usuário'}</span>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {role === 'admin' ? 'Admin' : 'Funcionário'}
+                    </Badge>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate('/account')} className="cursor-pointer">
+                    <User className="h-4 w-4 mr-2" />
+                    Minha Conta
+                  </DropdownMenuItem>
+                  {role === 'admin' && (
+                    <DropdownMenuItem onClick={() => navigate('/admin/ip-whitelist')} className="cursor-pointer">
+                      <Shield className="h-4 w-4 mr-2" />
+                      IP Whitelist
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={async () => { await signOut(); navigate('/login'); }}
+                    className="cursor-pointer text-destructive focus:text-destructive"
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Sair
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
       </header>
