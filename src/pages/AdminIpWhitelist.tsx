@@ -61,24 +61,58 @@ const AdminIpWhitelist = () => {
   };
 
   const handleIpChange = (value: string) => {
-    // Allow only digits and dots for IPv4 input
+    // Allow only digits and dots
     const cleaned = value.replace(/[^0-9.]/g, '');
     
-    // Split into octets by dots
-    const parts = cleaned.split('.');
+    // Process digit by digit to auto-insert dots
+    let result = '';
+    let octetCount = 0;
+    let currentOctet = '';
     
-    // Limit to 4 octets
-    const limited = parts.slice(0, 4);
+    for (const char of cleaned) {
+      if (char === '.') {
+        if (currentOctet.length > 0 && octetCount < 3) {
+          result += currentOctet + '.';
+          octetCount++;
+          currentOctet = '';
+        }
+        continue;
+      }
+      
+      // Add digit to current octet
+      const tentative = currentOctet + char;
+      const num = parseInt(tentative, 10);
+      
+      if (tentative.length <= 3 && num <= 255) {
+        currentOctet = tentative;
+        // Auto-insert dot after complete octet (3 digits or value > 25 means no more valid digits)
+        if (octetCount < 3 && (tentative.length === 3 || num > 25)) {
+          result += currentOctet + '.';
+          octetCount++;
+          currentOctet = '';
+        }
+      } else if (tentative.length <= 3 && num > 255) {
+        // Clamp to 255
+        currentOctet = '255';
+        if (octetCount < 3) {
+          result += currentOctet + '.';
+          octetCount++;
+          currentOctet = '';
+        }
+      }
+      
+      if (octetCount >= 4) break;
+    }
     
-    // Clamp each octet to 0-255 and limit to 3 digits
-    const masked = limited.map((part) => {
-      if (part === '') return '';
-      const num = parseInt(part.slice(0, 3), 10);
-      if (isNaN(num)) return '';
-      return num > 255 ? '255' : String(num);
-    });
-    
-    setNewIp(masked.join('.'));
+    result += currentOctet;
+    setNewIp(result);
+  };
+
+  const handleIpKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAdd();
+    }
   };
 
   const handleAdd = async () => {
@@ -151,6 +185,7 @@ const AdminIpWhitelist = () => {
                   id="newIp"
                   value={newIp}
                   onChange={(e) => handleIpChange(e.target.value)}
+                  onKeyDown={handleIpKeyDown}
                   placeholder="192.168.1.1"
                   maxLength={15}
                 />
