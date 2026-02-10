@@ -85,11 +85,22 @@ const Index = () => {
                   Recomeçar
                 </Button>
               )}
+              {role === 'admin' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => navigate('/admin/ip-whitelist')}
+                >
+                  <Shield className="h-4 w-4" />
+                  <span className="hidden sm:inline">Admin</span>
+                </Button>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="gap-2">
                     <UserCircle className="h-4 w-4" />
-                    <span className="hidden sm:inline">{profile?.full_name || 'Usuário'}</span>
+                    <span className="hidden sm:inline">Perfil</span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -104,12 +115,6 @@ const Index = () => {
                     <User className="h-4 w-4 mr-2" />
                     Minha Conta
                   </DropdownMenuItem>
-                  {role === 'admin' && (
-                    <DropdownMenuItem onClick={() => navigate('/admin/ip-whitelist')} className="cursor-pointer">
-                      <Shield className="h-4 w-4 mr-2" />
-                      IP Whitelist
-                    </DropdownMenuItem>
-                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={async () => { await signOut(); navigate('/login'); }}
