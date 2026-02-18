@@ -86,15 +86,24 @@ const Index = () => {
                 </Button>
               )}
               {role === 'admin' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => navigate('/admin/ip-whitelist')}
-                >
-                  <Shield className="h-4 w-4" />
-                  <span className="hidden sm:inline">Admin</span>
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <Shield className="h-4 w-4" />
+                      <span className="hidden sm:inline">Admin</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => navigate('/admin/ip-whitelist')} className="cursor-pointer">
+                      <Shield className="h-4 w-4 mr-2" />
+                      IP Whitelist
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate('/admin/users')} className="cursor-pointer">
+                      <User className="h-4 w-4 mr-2" />
+                      Usuários
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
