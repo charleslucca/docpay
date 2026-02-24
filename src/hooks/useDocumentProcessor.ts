@@ -937,7 +937,7 @@ export function useDocumentProcessor() {
 
       setStatus((prev) => ({
         ...prev,
-        progress: 40 + ((index + 1) / comprovanteList.length) * 20,
+        progress: 40 + ((index + 1) / comprovanteList.length) * 45,
         message: `Extraindo texto do comprovante ${index + 1} de ${comprovanteList.length}...`,
         processedItems: processedSoFar,
         isOcrActive: false,
@@ -966,7 +966,7 @@ export function useDocumentProcessor() {
     // Step 3: MEMORY-ONLY matching with COOPERATIVE loop (no UI freeze)
     setStatus({
       step: "matching",
-      progress: 60,
+      progress: 85,
       message: "Buscando correspondências em memória...",
       matchesFound: 0,
       totalToMatch: allHoleriteEntries.length,
@@ -1047,10 +1047,10 @@ export function useDocumentProcessor() {
         const now = Date.now();
         if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL_MS) {
           lastStatusUpdate = now;
-          const progress = 60 + ((compIdx + entryIdx / totalEntries) / totalComprovantes) * 30;
+          const progress = 85 + ((compIdx + entryIdx / totalEntries) / totalComprovantes) * 10;
           setStatus((prev) => ({
             ...prev,
-            progress: Math.min(90, progress),
+            progress: Math.min(95, progress),
             message: `Matching comprovante ${compIdx + 1}/${totalComprovantes} - funcionário ${entryIdx + 1}/${totalEntries}...`,
             matchesFound: pairs.length,
             totalToMatch: totalEntries,
@@ -1115,7 +1115,7 @@ export function useDocumentProcessor() {
     // Final status with OCR metrics for 0-matches diagnostic
     setStatus({
       step: "matching",
-      progress: 90,
+      progress: 95,
       message: `${pairs.length} correspondência(s) encontrada(s)`,
       matchesFound: pairs.length,
       totalToMatch: totalEntries,
@@ -1141,7 +1141,7 @@ export function useDocumentProcessor() {
 
     // Step 3: Generate previews ONLY for matched pairs (lazy, non-blocking)
     if (pairs.length > 0) {
-      setStatus({ step: "matching", progress: 90, message: "Gerando previews..." });
+      setStatus({ step: "matching", progress: 97, message: "Gerando previews..." });
 
       // Use requestIdleCallback or setTimeout to not block UI
       const generatePreviewsLazy = async () => {
@@ -1184,12 +1184,11 @@ export function useDocumentProcessor() {
     }
 
     setStatus({
-      step: "matching",
+      step: pairs.length > 0 ? "completed" : "matching",
       progress: 100,
       message: `${pairs.length} correspondência(s) encontrada(s)`,
       matchesFound: pairs.length,
       totalToMatch: totalEntries,
-      // Preserve OCR metrics for display
       ocrPagesTotal: aggregatedMetrics.pagesTotal,
       ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
       ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,

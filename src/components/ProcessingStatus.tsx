@@ -79,7 +79,11 @@ export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: Proce
         </div>
         <div className="flex-1">
           <h4 className="font-semibold text-foreground">
-            {isZeroMatchesState ? 'Nenhuma correspondência encontrada' : config.label}
+            {isZeroMatchesState 
+              ? 'Nenhuma correspondência encontrada' 
+              : status.step === 'matching' && status.progress < 85 
+                ? 'Extraindo texto dos comprovantes...' 
+                : config.label}
           </h4>
           <p className="text-sm text-muted-foreground">{status.message}</p>
         </div>
