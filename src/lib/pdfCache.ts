@@ -6,8 +6,11 @@ let pdfjsLib: typeof import('pdfjs-dist') | null = null;
 async function getPdfJs() {
   if (!pdfjsLib) {
     pdfjsLib = await import('pdfjs-dist');
-    // Use local worker for faster loading (downloaded to public folder)
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+    // Usar worker do CDN que corresponde exatamente à versão instalada
+    // Isso garante compatibilidade mesmo se a versão do pacote mudar
+    const version = pdfjsLib.version;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 
+      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${version}/pdf.worker.min.mjs`;
   }
   return pdfjsLib;
 }
