@@ -583,18 +583,26 @@ export function useDocumentProcessor() {
         let nextOcrIndex = 0;
         let renderingComplete = false;
 
-        // Safety timeout to prevent infinite loops (5 minutes)
-        const MAX_LOOP_WAIT_MS = 300000;
-        const loopStartTime = Date.now();
+        // Inactivity watchdog: only abort if no progress for 2 minutes (not absolute time)
+        const INACTIVITY_THRESHOLD_MS = 120000; // 2 minutes without any progress
+        let lastActivityAt = Date.now();
+        let pipelineAborted = false;
+        
+        // Adaptive batch sizing
+        let currentBatchSize = Math.min(workerCount, 4); // Start conservative
+        const MIN_BATCH_SIZE = 2;
+        const MAX_BATCH_SIZE = workerCount;
+        const SLOW_BATCH_THRESHOLD_MS = 45000; // 45s = too slow
 
-        // Render loop: continuously render pages ahead of OCR
+        // Render loop: continuously render pages ahead of OCR (stops if pipeline aborted)
         const renderLoop = async () => {
-          while (nextOcrIndex < pagesNeedingOcr.length && !cancelledRef.current) {
-            // Keep queue with up to workerCount * 2 items for smooth pipeline
+          while (nextOcrIndex < pagesNeedingOcr.length && !cancelledRef.current && !pipelineAborted) {
+            // Keep queue with up to currentBatchSize * 2 items for smooth pipeline
             while (
-              canvasQueue.length < workerCount * 2 &&
+              canvasQueue.length < currentBatchSize * 2 &&
               nextOcrIndex < pagesNeedingOcr.length &&
-              !cancelledRef.current
+              !cancelledRef.current &&
+              !pipelineAborted
             ) {
               const pageNum = pagesNeedingOcr[nextOcrIndex++];
 
@@ -602,10 +610,11 @@ export function useDocumentProcessor() {
               const canvas = await renderPageForOCR(holerite.file, pageNum, OCR_SCALE_FAST, true);
               canvasQueue.push({ pageNum, canvas });
               canvasesQueued++; // FIX: Count pages sent to OCR queue
+              lastActivityAt = Date.now(); // Watchdog: render activity
             }
 
             // Small pause to let OCR loop catch up
-            if (canvasQueue.length >= workerCount * 2) {
+            if (canvasQueue.length >= currentBatchSize * 2) {
               await new Promise((r) => setTimeout(r, 10));
             }
           }
@@ -615,25 +624,33 @@ export function useDocumentProcessor() {
 
         // OCR loop: process batches as canvases become available
         const ocrLoop = async () => {
-          while (!cancelledRef.current) {
-            // Safety timeout check
-            if (Date.now() - loopStartTime > MAX_LOOP_WAIT_MS) {
-              console.error("[OCR] Loop timeout - forcing exit after 5 minutes");
+          while (!cancelledRef.current && !pipelineAborted) {
+            // Inactivity watchdog: abort only if no progress for 2 minutes
+            if (Date.now() - lastActivityAt > INACTIVITY_THRESHOLD_MS) {
+              console.error(`[OCR] Inactivity timeout - no progress for ${INACTIVITY_THRESHOLD_MS / 1000}s. Aborting pipeline.`);
+              pipelineAborted = true;
+              // Clear remaining queue to stop render loop
+              while (canvasQueue.length > 0) {
+                const item = canvasQueue.shift()!;
+                item.canvas.width = 0;
+                item.canvas.height = 0;
+              }
               break;
             }
 
-            // Collect batch up to worker count
+            // Collect batch up to adaptive batch size
             const batch: { pageNum: number; canvas: HTMLCanvasElement }[] = [];
 
-            while (batch.length < workerCount && canvasQueue.length > 0) {
+            while (batch.length < currentBatchSize && canvasQueue.length > 0) {
               batch.push(canvasQueue.shift()!);
             }
 
             if (batch.length > 0) {
-              // Update progress message
+              // Update progress message + continuous global progress (0-40% for holerites)
               const batchStart = batch[0].pageNum;
               const batchEnd = batch[batch.length - 1].pageNum;
               const totalProcessed = nativeProcessed + cacheHits + ocrCompleted;
+              const holeriteProgressFraction = totalProcessed / totalPages;
 
               setStatus((prev) => ({
                 ...prev,
@@ -641,10 +658,13 @@ export function useDocumentProcessor() {
                 currentItemStartTime: Date.now(),
                 message: `OCR em ${holerite.name} (pág. ${batchStart}-${batchEnd} de ${totalPages})...`,
                 isOcrActive: true,
-                ocrProgress: Math.round((totalProcessed / totalPages) * 100),
+                ocrProgress: Math.round(holeriteProgressFraction * 100),
+                // Continuous global progress: map page progress to 0-40% range
+                progress: Math.round(((index / holeriteList.length) + (holeriteProgressFraction / holeriteList.length)) * 40),
               }));
 
-              // Process OCR in parallel with the scheduler
+              // Process OCR in parallel with the scheduler (timed for adaptive batching)
+              const batchStartTime = performance.now();
               let texts: string[];
               try {
                 texts = await extractTextBatch(
@@ -664,7 +684,23 @@ export function useDocumentProcessor() {
                   batch.forEach((b) => { b.canvas.width = 0; b.canvas.height = 0; });
                   break;
                 }
+                // Abort pipeline on unrecoverable error
+                pipelineAborted = true;
+                batch.forEach((b) => { b.canvas.width = 0; b.canvas.height = 0; });
                 throw ocrError;
+              }
+
+              // Watchdog: OCR batch completed = activity
+              lastActivityAt = Date.now();
+
+              // Adaptive batch sizing based on batch duration
+              const batchDurationMs = performance.now() - batchStartTime;
+              if (batchDurationMs > SLOW_BATCH_THRESHOLD_MS && currentBatchSize > MIN_BATCH_SIZE) {
+                currentBatchSize = Math.max(MIN_BATCH_SIZE, currentBatchSize - 1);
+                console.log(`[OCR] Batch slow (${(batchDurationMs / 1000).toFixed(1)}s) → reducing batch to ${currentBatchSize}`);
+              } else if (batchDurationMs < SLOW_BATCH_THRESHOLD_MS * 0.5 && currentBatchSize < MAX_BATCH_SIZE) {
+                currentBatchSize = Math.min(MAX_BATCH_SIZE, currentBatchSize + 1);
+                console.log(`[OCR] Batch fast (${(batchDurationMs / 1000).toFixed(1)}s) → increasing batch to ${currentBatchSize}`);
               }
 
               // Extract names and cache results (with optional retry for low-quality OCR)
@@ -759,9 +795,9 @@ export function useDocumentProcessor() {
             }
 
             // FIX: Correct termination condition using separate counters
-            // Exit when: render is complete AND queue is empty AND all queued items were OCR'd
-            if (renderingComplete && canvasQueue.length === 0 && ocrCompleted >= canvasesQueued) {
-              console.log(`[OCR] Processing complete: ${cacheHits} from cache, ${ocrCompleted} from OCR`);
+            // Exit when: render is complete AND queue is empty AND all queued items were OCR'd, OR pipeline aborted
+            if (pipelineAborted || (renderingComplete && canvasQueue.length === 0 && ocrCompleted >= canvasesQueued)) {
+              console.log(`[OCR] Processing ${pipelineAborted ? 'aborted' : 'complete'}: ${cacheHits} from cache, ${ocrCompleted} from OCR`);
               break;
             } else if (canvasQueue.length === 0) {
               // Wait for more canvases from render loop

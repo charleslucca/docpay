@@ -1,7 +1,7 @@
 import { PDFDocument, rgb } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { getCachedPdf, getCachedBuffer, renderPageForOCR, OCR_SCALE_FAST } from "./pdfCache";
-import { extractTextWithOCR, initOcrScheduler } from "./ocrUtils";
+import { extractTextWithOCR } from "./ocrUtils";
 
 export async function extractTextFromPdf(
   file: File,
@@ -192,79 +192,14 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
     return count;
   }
 
-  // ETAPA 3: PDF escaneado → fazer OCR de amostragem
-  console.log(`[countEmployees] PDF escaneado detectado: ${file.name}, executando OCR de amostragem...`);
+  // ETAPA 3: PDF escaneado → estimativa rápida sem OCR pesado (reservar para processamento principal)
+  console.log(`[countEmployees] PDF escaneado detectado: ${file.name}, usando estimativa rápida...`);
 
-  // Inicializar OCR (workers podem já estar ativos)
-  await initOcrScheduler();
-
-  // Amostrar 5 páginas distribuídas (evitar primeira e última que podem ser capa/resumo)
-  const ocrSampleSize = Math.min(5, Math.max(1, totalPages - 2));
-  const ocrSamplePages: number[] = [];
-
-  if (totalPages <= 3) {
-    // Poucos páginas: amostrar todas exceto última
-    for (let i = 1; i < totalPages; i++) {
-      ocrSamplePages.push(i);
-    }
-  } else {
-    // Muitas páginas: distribuir igualmente, evitando primeira e última
-    const step = Math.floor((totalPages - 2) / ocrSampleSize);
-    for (let i = 0; i < ocrSampleSize; i++) {
-      const pageNum = 2 + i * step;
-      if (pageNum <= totalPages - 1) {
-        ocrSamplePages.push(pageNum);
-      }
-    }
-  }
-
-  console.log(`[countEmployees] OCR amostragem: páginas ${ocrSamplePages.join(", ")}`);
-
-  // Fazer OCR nas páginas amostradas
-  const foundNames = new Set<string>();
-
-  for (const pageNum of ocrSamplePages) {
-    try {
-      const canvas = await renderPageForOCR(file, pageNum, OCR_SCALE_FAST, true);
-      const ocrText = await extractTextWithOCR(canvas);
-
-      // Liberar canvas
-      canvas.width = 0;
-      canvas.height = 0;
-
-      // Extrair nome
-      const name = extractEmployeeName(ocrText);
-      if (name && !foundNames.has(name)) {
-        foundNames.add(name);
-        console.log(`[countEmployees] OCR página ${pageNum}: nome encontrado "${name}"`);
-      } else if (name) {
-        console.log(`[countEmployees] OCR página ${pageNum}: nome duplicado "${name}" (mesmo funcionário)`);
-      } else {
-        console.log(`[countEmployees] OCR página ${pageNum}: nenhum nome extraído`);
-      }
-    } catch (error) {
-      console.warn(`[countEmployees] OCR falhou na página ${pageNum}:`, error);
-    }
-  }
-
-  const uniqueNames = foundNames.size;
-
-  // ETAPA 4: Extrapolar para o documento completo
-  if (uniqueNames > 0) {
-    // Calcular páginas por funcionário baseado na amostra
-    const pagesPerEmployee = ocrSamplePages.length / uniqueNames;
-    // Estimar total (menos 1-2 páginas para capa/resumo)
-    const pagesToCount = totalPages - 1; // Desconta página de resumo
-    const estimated = Math.round(pagesToCount / pagesPerEmployee);
-    console.log(
-      `[countEmployees] OCR amostragem: ${uniqueNames} nomes únicos em ${ocrSamplePages.length} páginas → ~${pagesPerEmployee.toFixed(1)} páginas/funcionário → ~${estimated} funcionários`,
-    );
-    return Math.max(1, estimated);
-  }
-
-  // Fallback final: assumir 1 página por funcionário, menos página de resumo
-  console.log(`[countEmployees] Fallback: ${totalPages} páginas - 1 = ${totalPages - 1} funcionários`);
-  return Math.max(1, totalPages - 1);
+  // Estimativa simples: assumir ~1 funcionário por página (padrão para holerites escaneados)
+  // O OCR completo será feito durante o processamento principal
+  const estimated = Math.max(1, totalPages - 1); // Menos 1 para possível página de resumo
+  console.log(`[countEmployees] Estimativa rápida (sem OCR): ~${estimated} funcionários em ${totalPages} páginas`);
+  return estimated;
 }
 
 /**
