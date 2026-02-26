@@ -7,6 +7,8 @@ export interface GeneratedDocument {
   createdAt: Date;
   blobUrl: string;
   fileName: string;
+  storagePath?: string;
+  publicUrl?: string;
   // Spreadsheet enrichment fields
   empresa?: string;
   municipio?: string;
@@ -16,8 +18,8 @@ export interface UploadedFile {
   id: string;
   file: File;
   name: string;
-  type: 'holerite' | 'comprovante';
-  status: 'pending' | 'processing' | 'completed' | 'error';
+  type: "holerite" | "comprovante";
+  status: "pending" | "processing" | "completed" | "error";
   progress: number;
   extractedName?: string;
   pageNumber?: number;
@@ -36,13 +38,13 @@ export interface MatchedPair {
   employeeName: string;
   holerite: UploadedFile;
   comprovante: UploadedFile & { pageNumber: number };
-  status: 'pending' | 'generating' | 'completed' | 'error';
+  status: "pending" | "generating" | "completed" | "error";
   outputUrl?: string;
   error?: string;
 }
 
 export interface ProcessingStatus {
-  step: 'idle' | 'uploading' | 'extracting' | 'matching' | 'generating' | 'completed';
+  step: "idle" | "uploading" | "extracting" | "matching" | "generating" | "completed";
   progress: number;
   message: string;
   // Time tracking fields
