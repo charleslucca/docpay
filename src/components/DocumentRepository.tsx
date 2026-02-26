@@ -232,19 +232,17 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
                     </span>
                   </h4>
                   <div className="grid gap-2">
-                    {docs.map((doc) => (
+                    {docs.map((doc) => {
+                      if (!(doc.createdAt instanceof Date)) {
+                        doc.createdAt = new Date(doc.createdAt as unknown as string);
+                      }
+                      return (
                       <motion.div
                         key={doc.id}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors group"
                       >
-                        {(() => {
-                          // Normalize createdAt to Date in case it comes as string from persistence/API
-                          if (!(doc.createdAt instanceof Date)) {
-                            doc.createdAt = new Date(doc.createdAt);
-                          }
-                        })()}
                         <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                           <User className="h-4 w-4 text-primary" />
                         </div>
@@ -290,7 +288,8 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
                           <Download className="h-4 w-4" />
                         </Button>
                       </motion.div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </motion.div>
               );
