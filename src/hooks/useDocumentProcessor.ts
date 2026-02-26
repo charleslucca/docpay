@@ -1418,7 +1418,7 @@ export function useDocumentProcessor() {
     const day = now.getDate();
     const monthName = monthNames[month - 1];
 
-    const generatedDocuments: GeneratedDocument[] = [];
+    const generatedDocuments: Array<GeneratedDocument & { storagePath?: string; publicUrl?: string }> = [];
 
     const zip = new JSZip();
 
