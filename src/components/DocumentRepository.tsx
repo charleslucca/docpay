@@ -1,12 +1,18 @@
-import { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Download, Search, Calendar, User, FileText, FolderOpen, Building2, MapPin } from "lucide-react";
-import { GeneratedDocument } from "@/types/document";
-import { type SpreadsheetData } from "@/lib/excelUtils";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Download, Search, Calendar, User, FileText, FolderOpen, Building2, MapPin } from 'lucide-react';
+import { GeneratedDocument } from '@/types/document';
+import { type SpreadsheetData } from '@/lib/excelUtils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface DocumentRepositoryProps {
   documents: GeneratedDocument[];
@@ -15,26 +21,16 @@ interface DocumentRepositoryProps {
 
 // Month names for filter display
 const monthNames = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro",
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
 export function DocumentRepository({ documents, spreadsheetData }: DocumentRepositoryProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedYear, setSelectedYear] = useState<string>("all");
-  const [selectedMonth, setSelectedMonth] = useState<string>("all");
-  const [selectedEmpresa, setSelectedEmpresa] = useState<string>("all");
-  const [selectedCidade, setSelectedCidade] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedYear, setSelectedYear] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedEmpresa, setSelectedEmpresa] = useState<string>('all');
+  const [selectedCidade, setSelectedCidade] = useState<string>('all');
 
   const years = useMemo(() => {
     const uniqueYears = [...new Set(documents.map((d) => d.year))];
@@ -58,18 +54,20 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
 
   const filteredDocuments = useMemo(() => {
     return documents.filter((doc) => {
-      const matchesSearch = doc.employeeName.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesYear = selectedYear === "all" || doc.year === parseInt(selectedYear);
-      const matchesMonth = selectedMonth === "all" || doc.month === parseInt(selectedMonth);
-      const matchesEmpresa = selectedEmpresa === "all" || doc.empresa === selectedEmpresa;
-      const matchesCidade = selectedCidade === "all" || doc.municipio === selectedCidade;
+      const matchesSearch = doc.employeeName
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase());
+      const matchesYear = selectedYear === 'all' || doc.year === parseInt(selectedYear);
+      const matchesMonth = selectedMonth === 'all' || doc.month === parseInt(selectedMonth);
+      const matchesEmpresa = selectedEmpresa === 'all' || doc.empresa === selectedEmpresa;
+      const matchesCidade = selectedCidade === 'all' || doc.municipio === selectedCidade;
       return matchesSearch && matchesYear && matchesMonth && matchesEmpresa && matchesCidade;
     });
   }, [documents, searchQuery, selectedYear, selectedMonth, selectedEmpresa, selectedCidade]);
 
   const groupedDocuments = useMemo(() => {
     const groups: Record<string, GeneratedDocument[]> = {};
-
+    
     filteredDocuments.forEach((doc) => {
       // Use year and month name for grouping
       const key = `${doc.year}/${doc.monthName}`;
@@ -83,9 +81,8 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
   }, [filteredDocuments]);
 
   const handleDownload = (doc: GeneratedDocument) => {
-    const url = doc.publicUrl || doc.blobUrl;
-    const link = document.createElement("a");
-    link.href = url;
+    const link = document.createElement('a');
+    link.href = doc.blobUrl;
     link.download = doc.fileName;
     link.click();
   };
@@ -103,7 +100,9 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
           <div className="text-center text-muted-foreground">
             <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>Nenhum documento gerado ainda</p>
-            <p className="text-sm mt-1">Os documentos aparecerão aqui após o processamento</p>
+            <p className="text-sm mt-1">
+              Os documentos aparecerão aqui após o processamento
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -159,7 +158,7 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
               </SelectContent>
             </Select>
           </div>
-
+          
           {/* Company and City filters - only show if data exists */}
           {(empresas.length > 0 || cidades.length > 0) && (
             <div className="flex flex-col sm:flex-row gap-3">
@@ -201,9 +200,15 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
 
         {/* Stats and download all */}
         <div className="flex items-center justify-between py-2 border-y">
-          <p className="text-sm text-muted-foreground">{filteredDocuments.length} documento(s) encontrado(s)</p>
+          <p className="text-sm text-muted-foreground">
+            {filteredDocuments.length} documento(s) encontrado(s)
+          </p>
           {filteredDocuments.length > 0 && (
-            <Button variant="outline" size="sm" onClick={handleDownloadAll}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadAll}
+            >
               <Download className="h-4 w-4 mr-2" />
               Baixar Todos
             </Button>
@@ -214,7 +219,7 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
         <div className="space-y-6">
           <AnimatePresence>
             {groupedDocuments.map(([period, docs]) => {
-              const [year, monthName] = period.split("/");
+              const [year, monthName] = period.split('/');
               return (
                 <motion.div
                   key={period}
@@ -226,7 +231,7 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
                     <FolderOpen className="h-4 w-4 text-primary" />
                     {monthName} de {year}
                     <span className="text-xs text-muted-foreground">
-                      ({docs.length} arquivo{docs.length > 1 ? "s" : ""})
+                      ({docs.length} arquivo{docs.length > 1 ? 's' : ''})
                     </span>
                   </h4>
                   <div className="grid gap-2">
@@ -241,13 +246,10 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
                           <User className="h-4 w-4 text-primary" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{doc.employeeName}</p>
-                          {doc.storagePath && (
-                            <p className="text-xs text-muted-foreground">
-                              Pasta: {doc.storagePath.substring(0, doc.storagePath.lastIndexOf("/") + 1)}
-                            </p>
-                          )}
-                          {doc.empresa || doc.municipio ? (
+                          <p className="text-sm font-medium truncate">
+                            {doc.employeeName}
+                          </p>
+                          {(doc.empresa || doc.municipio) ? (
                             <p className="text-xs text-muted-foreground flex items-center gap-1">
                               {doc.empresa && (
                                 <span className="flex items-center gap-0.5">
@@ -265,10 +267,10 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
                             </p>
                           ) : (
                             <p className="text-xs text-muted-foreground">
-                              {doc.createdAt.toLocaleDateString("pt-BR")} às{" "}
-                              {doc.createdAt.toLocaleTimeString("pt-BR", {
-                                hour: "2-digit",
-                                minute: "2-digit",
+                              {doc.createdAt.toLocaleDateString('pt-BR')} às{' '}
+                              {doc.createdAt.toLocaleTimeString('pt-BR', {
+                                hour: '2-digit',
+                                minute: '2-digit',
                               })}
                             </p>
                           )}
