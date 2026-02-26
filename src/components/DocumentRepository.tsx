@@ -8,8 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+type RepoDocument = GeneratedDocument & { storagePath?: string; publicUrl?: string };
+
 interface DocumentRepositoryProps {
-  documents: GeneratedDocument[];
+  documents: RepoDocument[];
   spreadsheetData?: SpreadsheetData | null;
 }
 
@@ -82,7 +84,7 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
   }, [filteredDocuments]);
 
-  const handleDownload = (doc: GeneratedDocument) => {
+  const handleDownload = (doc: RepoDocument) => {
     const url = doc.publicUrl || doc.blobUrl;
     const link = document.createElement("a");
     link.href = url;
@@ -237,6 +239,12 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
                         animate={{ opacity: 1 }}
                         className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors group"
                       >
+                        {(() => {
+                          // Normalize createdAt to Date in case it comes as string from persistence/API
+                          if (!(doc.createdAt instanceof Date)) {
+                            doc.createdAt = new Date(doc.createdAt);
+                          }
+                        })()}
                         <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                           <User className="h-4 w-4 text-primary" />
                         </div>
