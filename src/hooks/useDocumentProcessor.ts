@@ -50,12 +50,14 @@ import {
   type ExtractedEntry,
   type PersistedMatch,
 } from "@/lib/processingPersistence";
+import { supabase } from "@/integrations/supabase/client";
 
 const CONCURRENCY_LIMIT = 5;
 const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
+const GENERATED_BUCKET = "excel-uploads"; // Reuse existing public bucket
 
 const namesEquivalent = (a: string, b: string): boolean => {
   const na = normalizeForMatch(a);
@@ -90,6 +92,47 @@ const pauseBetweenBatches = (delayMs: number = 10): Promise<void> =>
       setTimeout(resolve, delayMs);
     }
   });
+
+const formatDuration = (ms: number) => {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+};
+
+const uploadGeneratedPdf = async (
+  fileName: string,
+  pdfBlob: Blob,
+  year: number,
+  month: number,
+  day: number,
+): Promise<{ storagePath?: string; publicUrl?: string }> => {
+  try {
+    const monthStr = String(month).padStart(2, "0");
+    const dayStr = String(day).padStart(2, "0");
+    const storagePath = `generated/${year}/${monthStr}/${dayStr}/${fileName}`;
+
+    const { error } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
+      cacheControl: "3600",
+      upsert: true,
+      contentType: "application/pdf",
+    });
+
+    if (error) {
+      console.error("[Supabase] Upload error:", error);
+      return {};
+    }
+
+    const { data } = supabase.storage.from(GENERATED_BUCKET).getPublicUrl(storagePath);
+    return { storagePath, publicUrl: data.publicUrl };
+  } catch (error) {
+    console.error("[Supabase] Upload failed:", error);
+    return {};
+  }
+};
 
 // Process items in parallel with concurrency limit and cancellation support
 async function processInBatches<T, R>(
@@ -1372,6 +1415,7 @@ export function useDocumentProcessor() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
+    const day = now.getDate();
     const monthName = monthNames[month - 1];
 
     const generatedDocuments: GeneratedDocument[] = [];
@@ -1401,6 +1445,9 @@ export function useDocumentProcessor() {
         const blobUrl = URL.createObjectURL(pdfBlob);
         // Format: Ano_Mês_Nome.pdf (e.g., 2026_Janeiro_ANA_BEATRIZ.pdf)
         const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, "_")}.pdf`;
+
+        // Upload to Supabase storage (organized by year/month/day)
+        const { storagePath, publicUrl } = await uploadGeneratedPdf(fileName, pdfBlob, year, month, day);
 
         // Add to zip
         zip.file(fileName, pdfBlob);
@@ -1436,6 +1483,8 @@ export function useDocumentProcessor() {
           createdAt: now,
           blobUrl,
           fileName,
+          storagePath,
+          publicUrl,
           empresa,
           municipio,
         });
@@ -1478,10 +1527,19 @@ export function useDocumentProcessor() {
       description: `${generatedDocuments.length} PDF(s) compactado(s) em ZIP`,
     });
 
+    const totalDurationMs = Date.now() - processStartTimeRef.current;
+    const durationLabel = formatDuration(totalDurationMs);
+
     setStatus({
       step: "completed",
       progress: 100,
-      message: `${generatedDocuments.length} PDF(s) gerado(s) e baixado(s) em ZIP!`,
+      message: `${generatedDocuments.length} PDF(s) gerado(s), salvo no Supabase e baixado em ZIP em ${durationLabel}`,
+      estimatedTimeRemaining: 0,
+    });
+
+    toast({
+      title: "Processamento concluído",
+      description: `Tempo total: ${durationLabel}. Arquivos salvos no Supabase em ${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}.`,
     });
   }, [matchedPairs]);
 
