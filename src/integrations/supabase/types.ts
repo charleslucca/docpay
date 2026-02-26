@@ -134,6 +134,48 @@ export type Database = {
           },
         ]
       }
+      generated_documents: {
+        Row: {
+          created_at: string
+          employee_name: string
+          empresa: string | null
+          file_name: string
+          id: string
+          month: number
+          month_name: string
+          municipio: string | null
+          storage_path: string
+          user_id: string
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          employee_name: string
+          empresa?: string | null
+          file_name: string
+          id?: string
+          month: number
+          month_name: string
+          municipio?: string | null
+          storage_path: string
+          user_id?: string
+          year: number
+        }
+        Update: {
+          created_at?: string
+          employee_name?: string
+          empresa?: string | null
+          file_name?: string
+          id?: string
+          month?: number
+          month_name?: string
+          municipio?: string | null
+          storage_path?: string
+          user_id?: string
+          year?: number
+        }
+        Relationships: []
+      }
       ip_whitelist: {
         Row: {
           active: boolean
