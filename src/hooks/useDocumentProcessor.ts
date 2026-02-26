@@ -81,13 +81,13 @@ const namesEquivalent = (a: string, b: string): boolean => {
 // Optimized: Align batch size with worker count for balanced CPU usage
 const getOptimalBatchSize = () => Math.max(4, Math.min(6, getWorkerCount()));
 
-// Pause between batches to prevent UI freezing and reduce CPU spikes
-const pauseBetweenBatches = (): Promise<void> =>
+// Pause between batches to prevent UI freezing and reduce CPU spikes (short + tunable)
+const pauseBetweenBatches = (delayMs: number = 10): Promise<void> =>
   new Promise((resolve) => {
     if ("requestIdleCallback" in window) {
-      (window as Window).requestIdleCallback(() => resolve(), { timeout: 100 });
+      (window as Window).requestIdleCallback(() => resolve(), { timeout: delayMs });
     } else {
-      setTimeout(resolve, 50);
+      setTimeout(resolve, delayMs);
     }
   });
 
@@ -149,6 +149,15 @@ export function useDocumentProcessor() {
   const lastSaveRef = useRef<number>(0);
   const pendingStateRef = useRef<Omit<ProcessingState, "id" | "updatedAt"> | null>(null);
   const SAVE_DEBOUNCE_MS = 500; // Maximum ~2 saves per second
+  const flushPendingState = useCallback(async () => {
+    const pending = pendingStateRef.current;
+    if (!pending) return;
+    try {
+      await saveProcessingState(pending);
+    } catch (error) {
+      console.error("[Persistence] Flush failed:", error);
+    }
+  }, []);
 
   // Check for saved state on mount
   useEffect(() => {
@@ -172,6 +181,8 @@ export function useDocumentProcessor() {
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (status.step !== "idle" && status.step !== "completed") {
+        // Best-effort: persist last pending state before refresh/close
+        void flushPendingState();
         // Show browser warning
         e.preventDefault();
         e.returnValue = "O processamento está em andamento. Se você sair, poderá retomar de onde parou ao voltar.";
@@ -179,9 +190,27 @@ export function useDocumentProcessor() {
       }
     };
 
+    const handleVisibilityChange = () => {
+      if (document.hidden && status.step !== "idle" && status.step !== "completed") {
+        void flushPendingState();
+      }
+    };
+    const handlePageHide = () => {
+      if (status.step !== "idle" && status.step !== "completed") {
+        void flushPendingState();
+      }
+    };
+
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [status.step]);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [status.step, flushPendingState]);
 
   // Clear slow operation timer on unmount or cancel
   useEffect(() => {
@@ -523,6 +552,37 @@ export function useDocumentProcessor() {
           prev.map((h) => (h.id === holerite.id ? { ...h, status: "processing", progress: 10 } : h)),
         );
 
+        // Initial checkpoint before heavy work (protects against refresh mid-file)
+        const initialState: Omit<ProcessingState, "id" | "updatedAt"> = {
+          startedAt: savedState?.startedAt || new Date(),
+          status: "extracting",
+          holeritesIds: holeriteList.map((h) => h.id),
+          comprovantesIds: comprovanteList.map((c) => c.id),
+          currentHoleriteIndex: index,
+          currentPageNumber: resumeFromPage,
+          totalPages,
+          extractedEntries: [
+            ...existingEntries.map((e) => ({
+              holeriteId: e.originalHolerite.id,
+              name: e.name,
+              pageNumber: e.pageNumber,
+            })),
+            ...allHoleriteEntries.map((e) => ({
+              holeriteId: e.originalHolerite.id,
+              name: e.name,
+              pageNumber: e.pageNumber,
+            })),
+            ...entries.map((e) => ({
+              holeriteId: e.originalHolerite.id,
+              name: e.name,
+              pageNumber: e.pageNumber,
+            })),
+          ],
+          matchedPairs: [],
+        };
+        pendingStateRef.current = initialState;
+        await saveStateDebounced(initialState);
+
         // OPTIMIZED: First try native text extraction (fast) and only OCR pages that need it
         const nativeTexts = await getCachedPageTexts(holerite.file, () => cancelledRef.current);
         const pagesNeedingOcr: number[] = [];
@@ -595,6 +655,8 @@ export function useDocumentProcessor() {
         const SLOW_BATCH_THRESHOLD_MS = 45000; // 45s = too slow
         const OCR_STATUS_UPDATE_INTERVAL_MS = 200; // Throttle UI updates during OCR
         let lastOcrStatusUpdateAt = 0;
+        const PAUSE_EVERY_BATCHES = 3; // Yield to UI every N OCR batches
+        let batchesSincePause = 0;
 
         // Render loop: continuously render pages ahead of OCR (stops if pipeline aborted)
         const renderLoop = async () => {
@@ -819,8 +881,12 @@ export function useDocumentProcessor() {
                 }
               }
 
-              // Small pause for UI responsiveness
-              await pauseBetweenBatches();
+              // Small pause for UI responsiveness (not every batch)
+              batchesSincePause++;
+              if (batchesSincePause >= PAUSE_EVERY_BATCHES) {
+                await pauseBetweenBatches();
+                batchesSincePause = 0;
+              }
             }
 
             // FIX: Correct termination condition using separate counters
