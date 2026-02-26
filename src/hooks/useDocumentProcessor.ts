@@ -57,7 +57,7 @@ const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
-const GENERATED_BUCKET = "excel-uploads"; // Reuse existing public bucket
+const GENERATED_BUCKET = "generated-documents"; // Dedicated public bucket for generated PDFs
 
 const namesEquivalent = (a: string, b: string): boolean => {
   const na = normalizeForMatch(a);
@@ -108,26 +108,46 @@ const uploadGeneratedPdf = async (
   pdfBlob: Blob,
   year: number,
   month: number,
-  day: number,
+  monthName: string,
+  employeeName: string,
+  empresa?: string,
+  municipio?: string,
 ): Promise<{ storagePath?: string; publicUrl?: string }> => {
   try {
     const monthStr = String(month).padStart(2, "0");
-    const dayStr = String(day).padStart(2, "0");
-    const storagePath = `generated/${year}/${monthStr}/${dayStr}/${fileName}`;
+    const storagePath = `${year}/${monthStr}_${monthName}/${fileName}`;
 
-    const { error } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
+    const { error: uploadError } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
       cacheControl: "3600",
       upsert: true,
       contentType: "application/pdf",
     });
 
-    if (error) {
-      console.error("[Supabase] Upload error:", error);
+    if (uploadError) {
+      console.error("[Supabase] Upload error:", uploadError);
       return {};
     }
 
-    const { data } = supabase.storage.from(GENERATED_BUCKET).getPublicUrl(storagePath);
-    return { storagePath, publicUrl: data.publicUrl };
+    const { data: urlData } = supabase.storage.from(GENERATED_BUCKET).getPublicUrl(storagePath);
+    const publicUrl = urlData.publicUrl;
+
+    // Save metadata to database
+    const { error: dbError } = await supabase.from("generated_documents").insert({
+      employee_name: employeeName,
+      year,
+      month,
+      month_name: monthName,
+      file_name: fileName,
+      storage_path: storagePath,
+      empresa: empresa || null,
+      municipio: municipio || null,
+    });
+
+    if (dbError) {
+      console.error("[Supabase] DB insert error:", dbError);
+    }
+
+    return { storagePath, publicUrl };
   } catch (error) {
     console.error("[Supabase] Upload failed:", error);
     return {};
@@ -1415,7 +1435,6 @@ export function useDocumentProcessor() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
-    const day = now.getDate();
     const monthName = monthNames[month - 1];
 
     const generatedDocuments: Array<GeneratedDocument & { storagePath?: string; publicUrl?: string }> = [];
@@ -1443,24 +1462,7 @@ export function useDocumentProcessor() {
         );
 
         const blobUrl = URL.createObjectURL(pdfBlob);
-        // Format: Ano_Mês_Nome.pdf (e.g., 2026_Janeiro_ANA_BEATRIZ.pdf)
         const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, "_")}.pdf`;
-
-        // Upload to Supabase storage (organized by year/month/day)
-        const { storagePath, publicUrl } = await uploadGeneratedPdf(fileName, pdfBlob, year, month, day);
-
-        // Add to zip
-        zip.file(fileName, pdfBlob);
-
-        setMatchedPairs((prev) =>
-          prev.map((p) => (p.id === pair.id ? { ...p, status: "completed", outputUrl: blobUrl } : p)),
-        );
-
-        setStatus((prev) => ({
-          ...prev,
-          progress: ((index + 1) / matchedPairs.length) * 100,
-          message: `Gerando e baixando PDF ${index + 1} de ${matchedPairs.length}...`,
-        }));
 
         // Look up employee in spreadsheet for enrichment
         let empresa: string | undefined;
@@ -1473,6 +1475,24 @@ export function useDocumentProcessor() {
             municipio = record.cidade;
           }
         }
+
+        // Upload to Supabase storage and save metadata to DB
+        const { storagePath, publicUrl } = await uploadGeneratedPdf(
+          fileName, pdfBlob, year, month, monthName, pair.employeeName, empresa, municipio
+        );
+
+        // Add to zip
+        zip.file(fileName, pdfBlob);
+
+        setMatchedPairs((prev) =>
+          prev.map((p) => (p.id === pair.id ? { ...p, status: "completed", outputUrl: blobUrl } : p)),
+        );
+
+        setStatus((prev) => ({
+          ...prev,
+          progress: ((index + 1) / matchedPairs.length) * 100,
+          message: `Gerando e salvando PDF ${index + 1} de ${matchedPairs.length}...`,
+        }));
 
         generatedDocuments.push({
           id: generateId(),
@@ -1539,7 +1559,7 @@ export function useDocumentProcessor() {
 
     toast({
       title: "Processamento concluído",
-      description: `Tempo total: ${durationLabel}. Arquivos salvos no Supabase em ${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}.`,
+      description: `Tempo total: ${durationLabel}. Arquivos salvos no Supabase em ${year}/${String(month).padStart(2, "0")}/${monthName}.`,
     });
   }, [matchedPairs]);
 
