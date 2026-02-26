@@ -583,16 +583,18 @@ export function useDocumentProcessor() {
         let nextOcrIndex = 0;
         let renderingComplete = false;
 
-        // Inactivity watchdog: only abort if no progress for 2 minutes (not absolute time)
-        const INACTIVITY_THRESHOLD_MS = 120000; // 2 minutes without any progress
+        // Inactivity watchdog: only abort if no progress for 3 minutes (not absolute time)
+        const INACTIVITY_THRESHOLD_MS = 180000; // 3 minutes without any progress
         let lastActivityAt = Date.now();
         let pipelineAborted = false;
-        
+
         // Adaptive batch sizing
         let currentBatchSize = Math.min(workerCount, 4); // Start conservative
         const MIN_BATCH_SIZE = 2;
         const MAX_BATCH_SIZE = workerCount;
         const SLOW_BATCH_THRESHOLD_MS = 45000; // 45s = too slow
+        const OCR_STATUS_UPDATE_INTERVAL_MS = 200; // Throttle UI updates during OCR
+        let lastOcrStatusUpdateAt = 0;
 
         // Render loop: continuously render pages ahead of OCR (stops if pipeline aborted)
         const renderLoop = async () => {
@@ -627,7 +629,9 @@ export function useDocumentProcessor() {
           while (!cancelledRef.current && !pipelineAborted) {
             // Inactivity watchdog: abort only if no progress for 2 minutes
             if (Date.now() - lastActivityAt > INACTIVITY_THRESHOLD_MS) {
-              console.error(`[OCR] Inactivity timeout - no progress for ${INACTIVITY_THRESHOLD_MS / 1000}s. Aborting pipeline.`);
+              console.error(
+                `[OCR] Inactivity timeout - no progress for ${INACTIVITY_THRESHOLD_MS / 1000}s. Aborting pipeline.`,
+              );
               pipelineAborted = true;
               // Clear remaining queue to stop render loop
               while (canvasQueue.length > 0) {
@@ -660,7 +664,9 @@ export function useDocumentProcessor() {
                 isOcrActive: true,
                 ocrProgress: Math.round(holeriteProgressFraction * 100),
                 // Continuous global progress: map page progress to 0-40% range
-                progress: Math.round(((index / holeriteList.length) + (holeriteProgressFraction / holeriteList.length)) * 40),
+                progress: Math.round(
+                  (index / holeriteList.length + holeriteProgressFraction / holeriteList.length) * 40,
+                ),
               }));
 
               // Process OCR in parallel with the scheduler (timed for adaptive batching)
@@ -670,23 +676,34 @@ export function useDocumentProcessor() {
                 texts = await extractTextBatch(
                   batch.map((b) => b.canvas),
                   (done, total) => {
-                    const overallProgress = ((totalProcessed + done) / totalPages) * 100;
-                    setStatus((prev) => ({
-                      ...prev,
-                      ocrProgress: Math.round(overallProgress),
-                    }));
+                    lastActivityAt = Date.now(); // Watchdog: per-page OCR progress within batch
+                    const now = Date.now();
+                    if (now - lastOcrStatusUpdateAt >= OCR_STATUS_UPDATE_INTERVAL_MS || done === total) {
+                      lastOcrStatusUpdateAt = now;
+                      const overallProgress = ((totalProcessed + done) / totalPages) * 100;
+                      setStatus((prev) => ({
+                        ...prev,
+                        ocrProgress: Math.round(overallProgress),
+                      }));
+                    }
                   },
                 );
               } catch (ocrError) {
                 // If cancelled/terminated, exit gracefully
                 if (cancelledRef.current) {
                   console.log("[OCR] Batch interrupted by cancellation");
-                  batch.forEach((b) => { b.canvas.width = 0; b.canvas.height = 0; });
+                  batch.forEach((b) => {
+                    b.canvas.width = 0;
+                    b.canvas.height = 0;
+                  });
                   break;
                 }
                 // Abort pipeline on unrecoverable error
                 pipelineAborted = true;
-                batch.forEach((b) => { b.canvas.width = 0; b.canvas.height = 0; });
+                batch.forEach((b) => {
+                  b.canvas.width = 0;
+                  b.canvas.height = 0;
+                });
                 throw ocrError;
               }
 
@@ -697,10 +714,14 @@ export function useDocumentProcessor() {
               const batchDurationMs = performance.now() - batchStartTime;
               if (batchDurationMs > SLOW_BATCH_THRESHOLD_MS && currentBatchSize > MIN_BATCH_SIZE) {
                 currentBatchSize = Math.max(MIN_BATCH_SIZE, currentBatchSize - 1);
-                console.log(`[OCR] Batch slow (${(batchDurationMs / 1000).toFixed(1)}s) → reducing batch to ${currentBatchSize}`);
+                console.log(
+                  `[OCR] Batch slow (${(batchDurationMs / 1000).toFixed(1)}s) → reducing batch to ${currentBatchSize}`,
+                );
               } else if (batchDurationMs < SLOW_BATCH_THRESHOLD_MS * 0.5 && currentBatchSize < MAX_BATCH_SIZE) {
                 currentBatchSize = Math.min(MAX_BATCH_SIZE, currentBatchSize + 1);
-                console.log(`[OCR] Batch fast (${(batchDurationMs / 1000).toFixed(1)}s) → increasing batch to ${currentBatchSize}`);
+                console.log(
+                  `[OCR] Batch fast (${(batchDurationMs / 1000).toFixed(1)}s) → increasing batch to ${currentBatchSize}`,
+                );
               }
 
               // Extract names and cache results (with optional retry for low-quality OCR)
@@ -715,10 +736,12 @@ export function useDocumentProcessor() {
 
                 // Retry with higher scale if OCR text is too short and no name was found
                 if (!extractedName && text.trim().length < OCR_RETRY_TEXT_LEN) {
+                  lastActivityAt = Date.now(); // Watchdog: retry started
                   const retryCanvas = await renderPageForOCR(holerite.file, pageNum, OCR_SCALE_RETRY, false);
                   const retryResult = await extractTextWithOCRResult(retryCanvas, undefined, {
                     timeoutMs: OCR_RETRY_TIMEOUT_MS,
                   });
+                  lastActivityAt = Date.now(); // Watchdog: retry completed
 
                   retryCanvas.width = 0;
                   retryCanvas.height = 0;
@@ -753,41 +776,47 @@ export function useDocumentProcessor() {
               });
 
               // Save state after every batch using debounced save (max every 500ms)
-              const allExtracted: ExtractedEntry[] = [
-                ...existingEntries.map((e) => ({
-                  holeriteId: e.originalHolerite.id,
-                  name: e.name,
-                  pageNumber: e.pageNumber,
-                })),
-                ...allHoleriteEntries.map((e) => ({
-                  holeriteId: e.originalHolerite.id,
-                  name: e.name,
-                  pageNumber: e.pageNumber,
-                })),
-                ...entries.map((e) => ({
-                  holeriteId: e.originalHolerite.id,
-                  name: e.name,
-                  pageNumber: e.pageNumber,
-                })),
-              ];
+              // Build extractedEntries only when we will actually save to reduce CPU/GC
+              const now = Date.now();
+              const shouldDebounceSave = now - lastSaveRef.current >= SAVE_DEBOUNCE_MS;
+              const shouldSave = totalDone === totalPages || shouldDebounceSave;
+              if (shouldSave) {
+                const allExtracted: ExtractedEntry[] = [
+                  ...existingEntries.map((e) => ({
+                    holeriteId: e.originalHolerite.id,
+                    name: e.name,
+                    pageNumber: e.pageNumber,
+                  })),
+                  ...allHoleriteEntries.map((e) => ({
+                    holeriteId: e.originalHolerite.id,
+                    name: e.name,
+                    pageNumber: e.pageNumber,
+                  })),
+                  ...entries.map((e) => ({
+                    holeriteId: e.originalHolerite.id,
+                    name: e.name,
+                    pageNumber: e.pageNumber,
+                  })),
+                ];
 
-              const stateToSave = {
-                startedAt: savedState?.startedAt || new Date(),
-                status: "extracting" as const,
-                holeritesIds: holeriteList.map((h) => h.id),
-                comprovantesIds: comprovanteList.map((c) => c.id),
-                currentHoleriteIndex: index,
-                currentPageNumber: totalDone + resumeFromPage,
-                totalPages,
-                extractedEntries: allExtracted,
-                matchedPairs: [],
-              };
+                const stateToSave = {
+                  startedAt: savedState?.startedAt || new Date(),
+                  status: "extracting" as const,
+                  holeritesIds: holeriteList.map((h) => h.id),
+                  comprovantesIds: comprovanteList.map((c) => c.id),
+                  currentHoleriteIndex: index,
+                  currentPageNumber: totalDone + resumeFromPage,
+                  totalPages,
+                  extractedEntries: allExtracted,
+                  matchedPairs: [],
+                };
 
-              // Use immediate save at the end of each file, debounced otherwise
-              if (totalDone === totalPages) {
-                await saveStateImmediate(stateToSave);
-              } else {
-                await saveStateDebounced(stateToSave);
+                // Use immediate save at the end of each file, debounced otherwise
+                if (totalDone === totalPages) {
+                  await saveStateImmediate(stateToSave);
+                } else {
+                  await saveStateDebounced(stateToSave);
+                }
               }
 
               // Small pause for UI responsiveness
@@ -797,7 +826,9 @@ export function useDocumentProcessor() {
             // FIX: Correct termination condition using separate counters
             // Exit when: render is complete AND queue is empty AND all queued items were OCR'd, OR pipeline aborted
             if (pipelineAborted || (renderingComplete && canvasQueue.length === 0 && ocrCompleted >= canvasesQueued)) {
-              console.log(`[OCR] Processing ${pipelineAborted ? 'aborted' : 'complete'}: ${cacheHits} from cache, ${ocrCompleted} from OCR`);
+              console.log(
+                `[OCR] Processing ${pipelineAborted ? "aborted" : "complete"}: ${cacheHits} from cache, ${ocrCompleted} from OCR`,
+              );
               break;
             } else if (canvasQueue.length === 0) {
               // Wait for more canvases from render loop
@@ -816,7 +847,9 @@ export function useDocumentProcessor() {
         clearSlowOperationTimer();
 
         // Diagnostic log: extraction summary
-        console.log(`[Extraction Summary] File "${holerite.name}": ${entries.length} names extracted from ${totalPages} pages (native: ${nativeProcessed}, cache: ${cacheHits}, OCR: ${ocrCompleted})`);
+        console.log(
+          `[Extraction Summary] File "${holerite.name}": ${entries.length} names extracted from ${totalPages} pages (native: ${nativeProcessed}, cache: ${cacheHits}, OCR: ${ocrCompleted})`,
+        );
 
         // Mark holerite as completed
         const foundCount = entries.length;
@@ -1319,7 +1352,7 @@ export function useDocumentProcessor() {
         // Look up employee in spreadsheet for enrichment
         let empresa: string | undefined;
         let municipio: string | undefined;
-        
+
         if (spreadsheetData?.records) {
           const record = findEmployeeInSpreadsheet(pair.employeeName, spreadsheetData.records);
           if (record) {
