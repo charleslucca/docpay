@@ -23,6 +23,7 @@ export function ExcelDropzone({
   spreadsheetData,
   onSpreadsheetLoaded,
   onSpreadsheetRemoved,
+  onSyncComplete,
   disabled = false,
 }: ExcelDropzoneProps) {
   const [isLoading, setIsLoading] = useState(false);
