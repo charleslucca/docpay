@@ -13,6 +13,7 @@ interface ExcelDropzoneProps {
   spreadsheetData: SpreadsheetData | null;
   onSpreadsheetLoaded: (data: SpreadsheetData) => void;
   onSpreadsheetRemoved: () => void;
+  onSyncComplete?: () => void;
   disabled?: boolean;
 }
 
