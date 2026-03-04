@@ -164,7 +164,6 @@ export function ExcelDropzone({
         <CardTitle className="text-base flex items-center gap-2">
           <FileSpreadsheet className="h-5 w-5 text-primary" />
           Planilha de Funcionários
-          <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
