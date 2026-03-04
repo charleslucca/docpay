@@ -1221,7 +1221,7 @@ export function useDocumentProcessor() {
 
       const { preparedPages, pageTexts } = extracted;
       const totalPages = preparedPages.length;
-      const matchedPages = new Set<number>(); // avoid multiple holerites on same comprovante page
+      // matchedPages removed: comprovantes bancarios podem ter multiplos funcionarios por pagina
 
       // Early exit: if all employees already matched, stop
       if (matchedEntryKeys.size === totalEntries) {
@@ -1262,21 +1262,12 @@ export function useDocumentProcessor() {
         let foundPage = -1;
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
           if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-            const comprovanteText = pageTexts[pageIdx] ?? "";
-            const comprovanteName = extractEmployeeName(comprovanteText, false);
-            if (comprovanteName && !namesEquivalent(entry.name, comprovanteName)) {
-              continue; // name mismatch - keep searching other pages
-            }
             foundPage = pageIdx + 1; // 1-indexed
             break;
           }
         }
 
         if (foundPage > 0) {
-          if (matchedPages.has(foundPage)) {
-            continue;
-          }
-          matchedPages.add(foundPage);
           matchedEntryKeys.add(entryKey);
 
           const updatedComprovante: UploadedFile = {
