@@ -13,6 +13,7 @@ interface ExcelDropzoneProps {
   spreadsheetData: SpreadsheetData | null;
   onSpreadsheetLoaded: (data: SpreadsheetData) => void;
   onSpreadsheetRemoved: () => void;
+  onSyncComplete?: () => void;
   disabled?: boolean;
 }
 
@@ -22,6 +23,7 @@ export function ExcelDropzone({
   spreadsheetData,
   onSpreadsheetLoaded,
   onSpreadsheetRemoved,
+  onSyncComplete,
   disabled = false,
 }: ExcelDropzoneProps) {
   const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +60,7 @@ export function ExcelDropzone({
         setSyncStatus('success');
         setSyncResult(result);
         setSyncProgress(null);
+        onSyncComplete?.();
       } else {
         setSyncStatus('error');
         setSyncResult(result);
@@ -162,7 +165,6 @@ export function ExcelDropzone({
         <CardTitle className="text-base flex items-center gap-2">
           <FileSpreadsheet className="h-5 w-5 text-primary" />
           Planilha de Funcionários
-          <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
