@@ -1,47 +1,51 @@
 
 
-# Corrigir erro de build TS2322 em DocumentRepository.tsx
+# Reorganizar tela principal em fluxo por etapas (wizard)
 
-## Problema
+## Estrutura proposta
 
-Na linha 242, um IIFE (Immediately Invoked Function Expression) e usado como filho JSX. A funcao nao retorna nada (`void`), mas React espera `ReactNode`. O TypeScript rejeita `void` como `ReactNode`.
+Substituir o layout atual (tudo visivel ao mesmo tempo) por um stepper horizontal com 4 etapas:
 
-## Correcao
-
-Arquivo: `src/components/DocumentRepository.tsx`, linha 247
-
-Adicionar `return null;` no final do IIFE para que ele retorne `ReactNode` valido:
-
-```typescript
-{(() => {
-  if (!(doc.createdAt instanceof Date)) {
-    doc.createdAt = new Date(doc.createdAt);
-  }
-  return null;  // <-- adicionar esta linha
-})()}
+```text
+ ┌─────────────┐   ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
+ │ 1. Planilha │──▶│ 2. Arquivos │──▶│ 3. Processar │──▶│ 4. Resultado │
+ └─────────────┘   └─────────────┘   └──────────────┘   └──────────────┘
 ```
 
-Alternativamente (abordagem mais limpa): mover a normalizacao para fora do JSX, no inicio do `.map()` callback, antes do `return`. Isso elimina o IIFE completamente e e mais idiomatico em React:
+**Etapa 1 - Planilha Excel**: Upload da planilha com dados de empresa, municipio, funcionario e valor. So avanca quando a planilha estiver carregada e sincronizada. Exibe resumo (qtd funcionarios, empresas, cidades).
 
-```typescript
-{docs.map((doc) => {
-  // Normalize createdAt before rendering
-  if (!(doc.createdAt instanceof Date)) {
-    doc.createdAt = new Date(doc.createdAt as unknown as string);
-  }
-  return (
-    <motion.div key={doc.id} ...>
-      {/* resto do JSX sem o IIFE */}
-    </motion.div>
-  );
-})}
-```
+**Etapa 2 - Upload de PDFs**: Duas areas lado a lado (holerites + comprovantes), identico ao atual. Botoes "Voltar" e "Avançar" (avanca quando ambos tem pelo menos 1 arquivo).
 
-Vou aplicar a segunda abordagem (mais limpa) que remove o IIFE por completo.
+**Etapa 3 - Processamento**: Botao "Iniciar Processamento", barra de progresso (ProcessingStatus), botao de cancelar. Ao concluir matching, mostra matched pairs e botao "Gerar PDFs". Quando geração termina, avança automaticamente para etapa 4.
 
-## Arquivo alterado
+**Etapa 4 - Resultado**: Mostra matched pairs gerados + link para o Repositorio. Botao "Recomeçar" volta para etapa 1.
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/components/DocumentRepository.tsx` (linhas 235-247) | Mover normalizacao de `createdAt` para fora do JSX, remover IIFE |
+**Repositorio**: Permanece acessivel via tab/link no header ou como rota separada, independente do wizard.
+
+## Alteracoes
+
+### Arquivo: `src/pages/Index.tsx`
+- Adicionar state `currentStep` (1-4)
+- Criar componente `StepIndicator` com 4 passos visuais (circulo numerado + label + linha conectora)
+- Renderizar conteudo condicional por step:
+  - Step 1: `<ExcelDropzone />` centralizado + botao "Proximo" (habilitado so quando spreadsheetData != null e sync concluido)
+  - Step 2: grid com 2 `<FileDropzone />` + botoes "Voltar"/"Proximo"
+  - Step 3: botoes de acao + `<ProcessingStatus />` + `<MatchedPairCard />` grid + botao cancelar
+  - Step 4: resumo final + cards gerados + botao "Ver Repositorio" e "Recomeçar"
+- Tab `Repositorio` permanece no topo como antes
+- Botao "Recomeçar" no header reseta `currentStep` para 1
+
+### Arquivo: `src/components/ExcelDropzone.tsx`
+- Remover label "(opcional)" do titulo — agora e obrigatorio como primeira etapa
+- Expor status de sync para o pai (callback `onSyncComplete`) para que Index saiba quando habilitar "Proximo"
+
+### Nenhuma alteracao em:
+- `FileDropzone`, `ProcessingStatus`, `MatchedPairCard`, `DocumentRepository` — reutilizados como estao
+- `useDocumentProcessor` — logica de processamento intacta
+
+## Comportamento UX
+- O stepper mostra visualmente qual etapa esta ativa, quais ja foram concluidas
+- Navegacao "Voltar" disponivel em etapas 2-4 (exceto durante processamento ativo)
+- Animacoes de transicao entre etapas (framer-motion, slide horizontal)
+- Em mobile, stepper compacto (so numeros, sem labels)
 
