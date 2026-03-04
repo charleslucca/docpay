@@ -369,7 +369,7 @@ const Index = () => {
               {matchedPairs.length > 0 && (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {matchedPairs
-                    .filter((p) => p.status === 'done')
+                    .filter((p) => p.status === 'completed')
                     .map((pair, index) => (
                       <MatchedPairCard key={pair.id} pair={pair} index={index} />
                     ))}
