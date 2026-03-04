@@ -65,7 +65,7 @@ const Index = () => {
 
   // Auto-advance to step 4 when generation completes
   useEffect(() => {
-    if (status.step === 'complete' && currentStep === 3 && generatedDocs.length > 0) {
+    if (status.step === 'completed' && currentStep === 3 && generatedDocs.length > 0) {
       goToStep(4);
     }
   }, [status.step, generatedDocs.length]);
