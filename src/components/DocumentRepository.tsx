@@ -47,8 +47,9 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
       }
 
       if (data) {
-        const docs: RepoDocument[] = data.map((row) => {
-          const { data: urlData } = supabase.storage.from(GENERATED_BUCKET).getPublicUrl(row.storage_path);
+        const docs: RepoDocument[] = await Promise.all(data.map(async (row) => {
+          const { data: urlData } = await supabase.storage.from(GENERATED_BUCKET).createSignedUrl(row.storage_path, 3600);
+          const signedUrl = urlData?.signedUrl || "";
           return {
             id: row.id,
             employeeName: row.employee_name,
@@ -56,14 +57,14 @@ export function DocumentRepository({ documents, spreadsheetData }: DocumentRepos
             month: row.month,
             monthName: row.month_name,
             createdAt: new Date(row.created_at),
-            blobUrl: urlData.publicUrl,
+            blobUrl: signedUrl,
             fileName: row.file_name,
             storagePath: row.storage_path,
-            publicUrl: urlData.publicUrl,
+            publicUrl: signedUrl,
             empresa: row.empresa || undefined,
             municipio: row.municipio || undefined,
           };
-        });
+        }));
         setPersistedDocs(docs);
       }
     } catch (err) {

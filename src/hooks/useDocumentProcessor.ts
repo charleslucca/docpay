@@ -128,8 +128,8 @@ const uploadGeneratedPdf = async (
       return {};
     }
 
-    const { data: urlData } = supabase.storage.from(GENERATED_BUCKET).getPublicUrl(storagePath);
-    const publicUrl = urlData.publicUrl;
+    const { data: urlData } = await supabase.storage.from(GENERATED_BUCKET).createSignedUrl(storagePath, 3600);
+    const publicUrl = urlData?.signedUrl || "";
 
     // Save metadata to database
     const { error: dbError } = await supabase.from("generated_documents").insert({
