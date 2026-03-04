@@ -1,47 +1,56 @@
 
 
-# Corrigir erro de build TS2322 em DocumentRepository.tsx
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Problema
+## Diagnostico
 
-Na linha 242, um IIFE (Immediately Invoked Function Expression) e usado como filho JSX. A funcao nao retorna nada (`void`), mas React espera `ReactNode`. O TypeScript rejeita `void` como `ReactNode`.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
+
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
+
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
 ## Correcao
 
-Arquivo: `src/components/DocumentRepository.tsx`, linha 247
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-Adicionar `return null;` no final do IIFE para que ele retorne `ReactNode` valido:
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
 
-```typescript
-{(() => {
-  if (!(doc.createdAt instanceof Date)) {
-    doc.createdAt = new Date(doc.createdAt);
-  }
-  return null;  // <-- adicionar esta linha
-})()}
-```
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
 
-Alternativamente (abordagem mais limpa): mover a normalizacao para fora do JSX, no inicio do `.map()` callback, antes do `return`. Isso elimina o IIFE completamente e e mais idiomatico em React:
+### Logica resultante simplificada:
 
 ```typescript
-{docs.map((doc) => {
-  // Normalize createdAt before rendering
-  if (!(doc.createdAt instanceof Date)) {
-    doc.createdAt = new Date(doc.createdAt as unknown as string);
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
   }
-  return (
-    <motion.div key={doc.id} ...>
-      {/* resto do JSX sem o IIFE */}
-    </motion.div>
-  );
-})}
+}
 ```
 
-Vou aplicar a segunda abordagem (mais limpa) que remove o IIFE por completo.
+## Impacto
 
-## Arquivo alterado
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `src/components/DocumentRepository.tsx` (linhas 235-247) | Mover normalizacao de `createdAt` para fora do JSX, remover IIFE |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
