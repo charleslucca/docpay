@@ -60,6 +60,7 @@ export function ExcelDropzone({
         setSyncStatus('success');
         setSyncResult(result);
         setSyncProgress(null);
+        onSyncComplete?.();
       } else {
         setSyncStatus('error');
         setSyncResult(result);
