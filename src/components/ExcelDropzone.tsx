@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { parseExcelFile, type SpreadsheetData } from '@/lib/excelUtils';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { parseExcelFile, type SpreadsheetData, type ValidationResult } from '@/lib/excelUtils';
 import { syncSpreadsheetToDatabase, type SyncResult, type SyncProgress } from '@/lib/supabaseExcelSync';
 
 interface ExcelDropzoneProps {
@@ -32,6 +35,8 @@ export function ExcelDropzone({
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [previewData, setPreviewData] = useState<SpreadsheetData | null>(null);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const fileRef = useRef<File | null>(null);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
@@ -43,38 +48,63 @@ export function ExcelDropzone({
     setError(null);
     setSyncStatus('idle');
     setSyncResult(null);
+    setPreviewData(null);
+    setValidationResult(null);
 
     try {
-      const data = await parseExcelFile(file);
-      onSpreadsheetLoaded(data);
+      const { data, validation } = await parseExcelFile(file);
+      setValidationResult(validation);
 
-      // Automatically sync to database after parsing with progress tracking
-      setSyncStatus('syncing');
-      setSyncProgress(null);
-      
-      const result = await syncSpreadsheetToDatabase(data, file, (progress) => {
+      if (!validation.valid) {
+        // Show validation error but still set preview if we got data
+        setPreviewData(data);
+        onSpreadsheetLoaded(data);
+      } else {
+        // Valid structure - show preview for confirmation
+        setPreviewData(data);
+        onSpreadsheetLoaded(data);
+      }
+    } catch (err) {
+      console.error('[ExcelDropzone] Error:', err);
+      setError(err instanceof Error ? err.message : 'Erro ao processar planilha');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onSpreadsheetLoaded]);
+
+  const handleConfirmImport = async () => {
+    if (!previewData || !fileRef.current) return;
+
+    setSyncStatus('syncing');
+    setSyncProgress(null);
+
+    try {
+      const result = await syncSpreadsheetToDatabase(previewData, fileRef.current, (progress) => {
         setSyncProgress(progress);
       });
-      
+
       if (result.success) {
         setSyncStatus('success');
         setSyncResult(result);
         setSyncProgress(null);
+        setPreviewData(null);
         onSyncComplete?.();
       } else {
         setSyncStatus('error');
         setSyncResult(result);
         setSyncProgress(null);
-        setSyncResult(result);
       }
     } catch (err) {
-      console.error('[ExcelDropzone] Error:', err);
-      setError(err instanceof Error ? err.message : 'Erro ao processar planilha');
-      setSyncStatus('idle');
-    } finally {
-      setIsLoading(false);
+      console.error('[ExcelDropzone] Sync error:', err);
+      setSyncStatus('error');
+      setSyncResult({
+        success: false,
+        error: err instanceof Error ? err.message : 'Erro ao sincronizar',
+        stats: { empresas: 0, municipios: 0, funcionariosNovos: 0, funcionariosAtualizados: 0, funcionariosRemovidos: 0, totalFuncionarios: 0 },
+      });
+      setSyncProgress(null);
     }
-  }, [onSpreadsheetLoaded]);
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -93,6 +123,8 @@ export function ExcelDropzone({
     setSyncStatus('idle');
     setSyncResult(null);
     setSyncProgress(null);
+    setPreviewData(null);
+    setValidationResult(null);
     fileRef.current = null;
   };
 
@@ -106,6 +138,122 @@ export function ExcelDropzone({
       case 'finalizing': return 95;
       default: return 0;
     }
+  };
+
+  const renderValidationAlert = () => {
+    if (!validationResult || validationResult.valid) return null;
+
+    return (
+      <Alert variant="destructive" className="mb-3">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Estrutura de colunas inválida</AlertTitle>
+        <AlertDescription>
+          <p className="mb-2">
+            A planilha deve conter uma aba "Todos" com as seguintes colunas:
+          </p>
+          <div className="flex flex-wrap gap-1 mb-2">
+            {['EMPRESA', 'CIDADE', 'CONTRATO', 'COLABORADOR', 'TOTAL FUNCIONARIOS', 'BANCO', 'TIPO'].map((col) => (
+              <Badge
+                key={col}
+                variant={validationResult.missingColumns.includes(col) ? 'destructive' : 'secondary'}
+                className="text-xs"
+              >
+                {col}
+              </Badge>
+            ))}
+          </div>
+          {validationResult.missingColumns.length > 0 && (
+            <p className="text-xs">
+              Colunas faltantes: <strong>{validationResult.missingColumns.join(', ')}</strong>
+            </p>
+          )}
+          <p className="text-xs mt-1 text-muted-foreground">
+            Os dados foram importados usando o formato alternativo (abas por município).
+          </p>
+        </AlertDescription>
+      </Alert>
+    );
+  };
+
+  const renderPreviewTable = () => {
+    if (!previewData || syncStatus === 'success') return null;
+
+    const displayRecords = previewData.records.slice(0, 20);
+    const hasMore = previewData.records.length > 20;
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="space-y-3"
+      >
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium text-muted-foreground">
+            Preview: {previewData.records.length} funcionários encontrados
+          </p>
+        </div>
+
+        <ScrollArea className="h-[300px] rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-xs font-semibold">EMPRESA</TableHead>
+                <TableHead className="text-xs font-semibold">CIDADE</TableHead>
+                <TableHead className="text-xs font-semibold">CONTRATO</TableHead>
+                <TableHead className="text-xs font-semibold">COLABORADOR</TableHead>
+                <TableHead className="text-xs font-semibold text-center">TOTAL</TableHead>
+                <TableHead className="text-xs font-semibold">BANCO</TableHead>
+                <TableHead className="text-xs font-semibold">TIPO</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {displayRecords.map((record, idx) => (
+                <TableRow key={idx}>
+                  <TableCell className="text-xs py-1.5">{record.empresa}</TableCell>
+                  <TableCell className="text-xs py-1.5">{record.cidade}</TableCell>
+                  <TableCell className="text-xs py-1.5">{record.contrato}</TableCell>
+                  <TableCell className="text-xs py-1.5">{record.colaborador}</TableCell>
+                  <TableCell className="text-xs py-1.5 text-center">{record.totalFuncionarios ?? idx + 1}</TableCell>
+                  <TableCell className="text-xs py-1.5">{record.banco || '-'}</TableCell>
+                  <TableCell className="text-xs py-1.5">{record.tipo || '-'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+
+        {hasMore && (
+          <p className="text-xs text-muted-foreground text-center">
+            Mostrando 20 de {previewData.records.length} registros
+          </p>
+        )}
+
+        <div className="flex gap-2 justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRemove}
+            disabled={syncStatus === 'syncing'}
+          >
+            Cancelar
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleConfirmImport}
+            disabled={syncStatus === 'syncing'}
+          >
+            {syncStatus === 'syncing' ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Importando...
+              </>
+            ) : (
+              'Confirmar Importação'
+            )}
+          </Button>
+        </div>
+      </motion.div>
+    );
   };
 
   const renderSyncStatus = () => {
@@ -202,6 +350,8 @@ export function ExcelDropzone({
                 </Button>
               </div>
 
+              {renderValidationAlert()}
+              {renderPreviewTable()}
               {renderSyncStatus()}
 
               <div className="grid grid-cols-3 gap-2 text-center">
