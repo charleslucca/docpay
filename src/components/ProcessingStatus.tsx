@@ -31,7 +31,7 @@ function formatTime(seconds: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: ProcessingStatusProps) {
+export function ProcessingStatus({ status, onReset }: ProcessingStatusProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   
   const config = stepConfig[status.step];
