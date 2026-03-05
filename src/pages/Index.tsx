@@ -476,6 +476,10 @@ function Header({
                     <User className="h-4 w-4 mr-2" />
                     Usuários
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate('/admin/funcionarios')} className="cursor-pointer">
+                    <User className="h-4 w-4 mr-2" />
+                    Funcionários
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}

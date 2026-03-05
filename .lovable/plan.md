@@ -1,41 +1,56 @@
 
 
-# Painel de Administracao de Funcionarios (CRUD)
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Objetivo
+## Diagnostico
 
-Criar uma nova pagina `/admin/funcionarios` para gerenciar os registros da tabela `funcionarios`, com listagem, busca, edicao, exclusao e adicao manual.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-## Estrutura
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-A tabela `funcionarios` ja possui: `id`, `nome`, `nome_normalizado`, `empresa_id`, `municipio_id`, `cargo`, `banco`, `contrato`, `ativo`. As tabelas `empresas` e `municipios` fornecem os nomes para exibicao e selecao.
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-## Alteracoes
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### 1. Novo arquivo: `src/pages/AdminFuncionarios.tsx`
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-Pagina com:
-- **Listagem** em tabela: nome, empresa, municipio, cargo, banco, contrato, status (ativo/inativo), acoes
-- **Busca** por nome com input de filtro
-- **Botao "Adicionar"**: abre Dialog com formulario (nome, empresa via Select, municipio via Select, cargo, banco, contrato)
-- **Botao "Editar"** por linha: abre Dialog pre-preenchido com os dados do funcionario
-- **Botao "Excluir"** por linha: AlertDialog de confirmacao, deleta o registro
-- Carrega empresas e municipios para popular os Selects
-- `nome_normalizado` gerado automaticamente a partir do `nome` (uppercase, sem acentos)
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-### 2. Arquivo: `src/App.tsx`
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-- Importar `AdminFuncionarios` e adicionar rota `/admin/funcionarios` dentro de `AdminRoute`
+## Correcao
 
-### 3. Navegacao
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-- Adicionar link para o painel de funcionarios no header da pagina Index (junto aos links de admin existentes)
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
 
-### Arquivos alterados
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
+```
+
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `src/pages/AdminFuncionarios.tsx` | Novo - pagina CRUD completa |
-| `src/App.tsx` | Adicionar rota `/admin/funcionarios` |
-| `src/pages/Index.tsx` | Adicionar link de navegacao no menu admin |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
