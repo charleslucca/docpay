@@ -121,7 +121,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Create user (trigger handle_new_user will create profile + employee role)
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
       password,
@@ -136,7 +135,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // If admin role requested, update the role created by trigger
     if (role === "admin" && newUser.user) {
       await adminClient
         .from("user_roles")
@@ -145,6 +143,131 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ success: true, user_id: newUser.user?.id }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Handle PUT: update user
+  if (req.method === "PUT") {
+    let body: { user_id?: string; full_name?: string; role?: string; password?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { user_id, full_name, role, password } = body;
+
+    if (!user_id) {
+      return new Response(JSON.stringify({ error: "user_id is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Prevent admin from removing own admin role
+    if (user_id === callerId && role && role !== "admin") {
+      return new Response(JSON.stringify({ error: "Você não pode remover seu próprio papel de admin" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (password && password.length < 6) {
+      return new Response(JSON.stringify({ error: "Password must be at least 6 characters" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (role && !["admin", "employee"].includes(role)) {
+      return new Response(JSON.stringify({ error: "Invalid role" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Update auth user (name and/or password)
+    const updatePayload: Record<string, unknown> = {};
+    if (full_name !== undefined) {
+      updatePayload.user_metadata = { full_name };
+    }
+    if (password) {
+      updatePayload.password = password;
+    }
+
+    if (Object.keys(updatePayload).length > 0) {
+      const { error: updateError } = await adminClient.auth.admin.updateUserById(user_id, updatePayload);
+      if (updateError) {
+        return new Response(JSON.stringify({ error: updateError.message }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // Update profile name
+    if (full_name !== undefined) {
+      await adminClient
+        .from("profiles")
+        .update({ full_name })
+        .eq("id", user_id);
+    }
+
+    // Update role
+    if (role) {
+      await adminClient
+        .from("user_roles")
+        .update({ role })
+        .eq("user_id", user_id);
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Handle DELETE: remove user
+  if (req.method === "DELETE") {
+    let body: { user_id?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { user_id } = body;
+
+    if (!user_id) {
+      return new Response(JSON.stringify({ error: "user_id is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Prevent self-deletion
+    if (user_id === callerId) {
+      return new Response(JSON.stringify({ error: "Você não pode excluir a si mesmo" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { error: deleteError } = await adminClient.auth.admin.deleteUser(user_id);
+    if (deleteError) {
+      return new Response(JSON.stringify({ error: deleteError.message }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
