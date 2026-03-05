@@ -48,6 +48,11 @@ const App = () => (
                 <AdminRoute><AdminUsers /></AdminRoute>
               </ProtectedRoute>
             } />
+            <Route path="/admin/funcionarios" element={
+              <ProtectedRoute>
+                <AdminRoute><AdminFuncionarios /></AdminRoute>
+              </ProtectedRoute>
+            } />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
