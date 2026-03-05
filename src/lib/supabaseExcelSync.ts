@@ -229,7 +229,7 @@ async function syncFuncionariosBatch(
       continue;
     }
 
-    const banco = extractBancoFromContrato(record.contrato);
+    const banco = record.banco || extractBancoFromContrato(record.contrato);
     const key = `${empresaId}|${municipioId}|${nomeNorm}`;
     const existing = existingMap.get(key);
 

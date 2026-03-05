@@ -1,49 +1,56 @@
 
 
-# Preview e Validação de Excel na Página Funcionários
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Objetivo
+## Diagnostico
 
-Ao importar um Excel na página de funcionários, o sistema deve:
-1. **Validar a estrutura de colunas** — verificar se o Excel contém as colunas obrigatórias: EMPRESA, CIDADE, CONTRATO, COLABORADOR, TOTAL FUNCIONARIOS, BANCO, TIPO
-2. **Mostrar preview tabular** dos dados antes de confirmar a importação, exatamente como na imagem (tabela com todas as colunas visíveis)
-3. Se a estrutura não corresponder, alertar o usuário com mensagem clara sobre o formato esperado
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-## Alterações
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-### 1. `src/lib/excelUtils.ts`
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-- Adicionar campos `banco` e `tipo` ao `EmployeeRecord` (atualmente só tem empresa, cidade, contrato, colaborador)
-- Adicionar campo `totalFuncionarios` (número sequencial da planilha)
-- Na função `parseTodosSheet`, mapear as novas colunas: BANCO, TIPO, TOTAL FUNCIONARIOS
-- Criar nova função `validateExcelStructure(workbook)` que verifica se existe uma aba "Todos" com as colunas obrigatórias (EMPRESA, CIDADE, CONTRATO, COLABORADOR, TOTAL FUNCIONARIOS, BANCO, TIPO). Retorna `{ valid: boolean, missingColumns: string[] }`
-- Atualizar `parseExcelFile` para usar `parseTodosSheet` quando a aba "Todos" existir e tiver a estrutura correta
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### 2. `src/components/ExcelDropzone.tsx`
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-- Após o parsing, em vez de sincronizar automaticamente, mostrar um **preview em tabela** com os dados extraídos (EMPRESA, CIDADE, CONTRATO, COLABORADOR, TOTAL FUNCIONARIOS, BANCO, TIPO)
-- Adicionar estado `previewMode: boolean` — quando true, exibe a tabela de preview com botão "Confirmar Importação"
-- Se a validação de colunas falhar, exibir alerta com as colunas faltantes e o formato esperado (listar: EMPRESA, CIDADE, CONTRATO, COLABORADOR, TOTAL FUNCIONARIOS, BANCO, TIPO)
-- Botão "Confirmar" dispara a sincronização; botão "Cancelar" limpa os dados
-- A tabela de preview usa paginação simples (mostrar primeiros 20 registros com scroll)
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-### 3. `src/lib/supabaseExcelSync.ts`
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-- Atualizar para receber os novos campos `banco` e `tipo` do `EmployeeRecord` e salvá-los no banco (campo `banco` já existe na tabela `funcionarios`)
+## Correcao
 
-## Fluxo
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-1. Usuário arrasta/seleciona Excel
-2. Sistema valida estrutura de colunas
-3. Se inválido → mostra alerta com formato esperado
-4. Se válido → mostra preview tabular dos dados
-5. Usuário confirma → sincroniza com banco de dados
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
+```
+
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
 ## Arquivos alterados
 
-| Arquivo | Alteração |
+| Arquivo | Alteracao |
 |---------|-----------|
-| `src/lib/excelUtils.ts` | Adicionar campos banco/tipo ao EmployeeRecord, criar validateExcelStructure, atualizar parsing |
-| `src/components/ExcelDropzone.tsx` | Adicionar preview tabular com validação antes da sincronização |
-| `src/lib/supabaseExcelSync.ts` | Mapear novos campos banco/tipo na sincronização |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
