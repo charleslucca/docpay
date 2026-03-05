@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -19,7 +20,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Pencil, Trash2, Search, Users } from "lucide-react";
+import { ArrowLeft, Plus, Pencil, Trash2, Search, Users, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Funcionario {
   id: string;
@@ -56,6 +57,14 @@ const AdminFuncionarios = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
+  // Selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   // Dialog states
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingFuncionario, setEditingFuncionario] = useState<Funcionario | null>(null);
@@ -74,6 +83,12 @@ const AdminFuncionarios = () => {
   useEffect(() => {
     fetchAll();
   }, []);
+
+  // Reset page and selection when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+  }, [search]);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -94,6 +109,34 @@ const AdminFuncionarios = () => {
   const filtered = funcionarios.filter((f) =>
     f.nome_normalizado.includes(normalizeText(search))
   );
+
+  // Pagination calculations
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, filtered.length);
+  const paginatedItems = filtered.slice(startIndex, endIndex);
+
+  // Selection helpers
+  const allPageSelected = paginatedItems.length > 0 && paginatedItems.every((f) => selectedIds.has(f.id));
+  const somePageSelected = paginatedItems.some((f) => selectedIds.has(f.id));
+
+  const toggleSelectAll = () => {
+    const newSet = new Set(selectedIds);
+    if (allPageSelected) {
+      paginatedItems.forEach((f) => newSet.delete(f.id));
+    } else {
+      paginatedItems.forEach((f) => newSet.add(f.id));
+    }
+    setSelectedIds(newSet);
+  };
+
+  const toggleSelect = (id: string) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedIds(newSet);
+  };
 
   const openCreate = () => {
     setEditingFuncionario(null);
@@ -168,6 +211,25 @@ const AdminFuncionarios = () => {
     fetchAll();
   };
 
+  const handleDeleteSelected = async () => {
+    const ids = Array.from(selectedIds);
+    const { error } = await supabase.from("funcionarios").delete().in("id", ids);
+    if (error) {
+      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: `${ids.length} funcionário(s) excluído(s)` });
+    }
+    setSelectedIds(new Set());
+    setDeleteSelectedOpen(false);
+    fetchAll();
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    setPageSize(Number(value));
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -187,7 +249,7 @@ const AdminFuncionarios = () => {
         </div>
 
         {/* Toolbar */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -203,6 +265,31 @@ const AdminFuncionarios = () => {
           </Button>
         </div>
 
+        {/* Bulk actions bar */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 mb-4 p-3 rounded-lg border border-destructive/30 bg-destructive/5">
+            <span className="text-sm font-medium text-foreground">
+              {selectedIds.size} selecionado(s)
+            </span>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteSelectedOpen(true)}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir selecionados
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Limpar seleção
+            </Button>
+          </div>
+        )}
+
         {/* Table */}
         {loading ? (
           <div className="flex justify-center py-12">
@@ -213,6 +300,14 @@ const AdminFuncionarios = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allPageSelected}
+                      onCheckedChange={toggleSelectAll}
+                      aria-label="Selecionar todos"
+                      {...(somePageSelected && !allPageSelected ? { "data-state": "indeterminate" } : {})}
+                    />
+                  </TableHead>
                   <TableHead>Nome</TableHead>
                   <TableHead>Empresa</TableHead>
                   <TableHead className="hidden md:table-cell">Município</TableHead>
@@ -224,15 +319,22 @@ const AdminFuncionarios = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.length === 0 ? (
+                {paginatedItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       Nenhum funcionário encontrado.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((f) => (
-                    <TableRow key={f.id}>
+                  paginatedItems.map((f) => (
+                    <TableRow key={f.id} data-state={selectedIds.has(f.id) ? "selected" : undefined}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.has(f.id)}
+                          onCheckedChange={() => toggleSelect(f.id)}
+                          aria-label={`Selecionar ${f.nome}`}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">{f.nome}</TableCell>
                       <TableCell>{empresaMap[f.empresa_id] || "—"}</TableCell>
                       <TableCell className="hidden md:table-cell">{municipioMap[f.municipio_id] || "—"}</TableCell>
@@ -259,6 +361,51 @@ const AdminFuncionarios = () => {
                 )}
               </TableBody>
             </Table>
+
+            {/* Pagination bar */}
+            {filtered.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>Itens por página:</span>
+                  <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+                    <SelectTrigger className="w-[70px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <span className="text-sm text-muted-foreground">
+                  Mostrando {startIndex + 1}–{endIndex} de {filtered.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={safePage <= 1}
+                    onClick={() => { setCurrentPage(safePage - 1); setSelectedIds(new Set()); }}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm px-2 text-muted-foreground">
+                    {safePage} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={safePage >= totalPages}
+                    onClick={() => { setCurrentPage(safePage + 1); setSelectedIds(new Set()); }}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -332,7 +479,7 @@ const AdminFuncionarios = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirmation */}
+      {/* Delete single confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -345,6 +492,24 @@ const AdminFuncionarios = () => {
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete selected confirmation */}
+      <AlertDialog open={deleteSelectedOpen} onOpenChange={setDeleteSelectedOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir {selectedIds.size} funcionário(s)?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir <strong>{selectedIds.size}</strong> funcionário(s) selecionado(s)? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteSelected} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Excluir {selectedIds.size}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
