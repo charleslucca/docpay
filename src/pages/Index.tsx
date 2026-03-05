@@ -286,7 +286,6 @@ const Index = () => {
                 <div className="space-y-4">
                   <ProcessingStatus
                     status={status}
-                    onReprocessEnhanced={reprocessWithEnhancedOcr}
                     onReset={reset}
                   />
                   {isProcessing && (

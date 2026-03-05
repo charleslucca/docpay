@@ -10,7 +10,6 @@ import { getWorkerCount, isOcrWorkerReady } from '@/lib/ocrUtils';
 
 interface ProcessingStatusProps {
   status: ProcessingStatusType;
-  onReprocessEnhanced?: () => void;
   onReset?: () => void;
 }
 
@@ -32,7 +31,7 @@ function formatTime(seconds: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: ProcessingStatusProps) {
+export function ProcessingStatus({ status, onReset }: ProcessingStatusProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   
   const config = stepConfig[status.step];
@@ -112,54 +111,16 @@ export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: Proce
                 <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
                 <div className="space-y-2">
                   <p className="text-sm text-foreground font-medium">
-                    O processo terminou mas não encontrou correspondências entre holerites e comprovantes.
+                    Nenhuma correspondência foi encontrada.
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Isso normalmente acontece quando o OCR não conseguiu extrair texto legível do comprovante ou quando os nomes dos funcionários não aparecem no documento.
+                    Verifique se os arquivos enviados estão corretos e tente novamente.
                   </p>
                 </div>
               </div>
               
-              {/* OCR Metrics if available */}
-              {status.ocrPagesTotal !== undefined && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-border/50">
-                  <div className="text-center p-2 rounded bg-background/50">
-                    <p className="text-lg font-bold text-foreground">{status.ocrPagesTotal}</p>
-                    <p className="text-xs text-muted-foreground">Páginas totais</p>
-                  </div>
-                  <div className="text-center p-2 rounded bg-background/50">
-                    <p className="text-lg font-bold text-foreground">{status.ocrPagesNeedingOcr ?? 0}</p>
-                    <p className="text-xs text-muted-foreground">Páginas OCR</p>
-                  </div>
-                  <div className="text-center p-2 rounded bg-background/50">
-                    <p className={`text-lg font-bold ${(status.ocrPagesEmptyOrShort ?? 0) > 0 ? 'text-destructive' : 'text-foreground'}`}>
-                      {status.ocrPagesEmptyOrShort ?? 0}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Páginas vazias</p>
-                  </div>
-                  <div className="text-center p-2 rounded bg-background/50">
-                    <p className={`text-lg font-bold ${(status.ocrTimeoutCount ?? 0) > 0 ? 'text-destructive' : 'text-foreground'}`}>
-                      {status.ocrTimeoutCount ?? 0}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Timeouts</p>
-                  </div>
-                </div>
-              )}
-              
-              {/* Action buttons */}
-              <div className="flex flex-wrap gap-2 pt-2">
-                {onReprocessEnhanced && (
-                  <Button 
-                    onClick={onReprocessEnhanced} 
-                    variant="default"
-                    size="sm"
-                    className="gap-2"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    Reprocessar com OCR reforçado
-                  </Button>
-                )}
-                {onReset && (
+              {onReset && (
+                <div className="pt-2">
                   <Button 
                     onClick={onReset} 
                     variant="outline"
@@ -169,8 +130,8 @@ export function ProcessingStatus({ status, onReprocessEnhanced, onReset }: Proce
                     <RotateCcw className="h-4 w-4" />
                     Reiniciar
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
