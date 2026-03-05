@@ -10,7 +10,6 @@ import { getWorkerCount, isOcrWorkerReady } from '@/lib/ocrUtils';
 
 interface ProcessingStatusProps {
   status: ProcessingStatusType;
-  onReprocessEnhanced?: () => void;
   onReset?: () => void;
 }
 
