@@ -13,6 +13,7 @@ import ResetPassword from "./pages/ResetPassword";
 import Account from "./pages/Account";
 import AdminIpWhitelist from "./pages/AdminIpWhitelist";
 import AdminUsers from "./pages/AdminUsers";
+import AdminFuncionarios from "./pages/AdminFuncionarios";
 import Blocked from "./pages/Blocked";
 import NotFound from "./pages/NotFound";
 

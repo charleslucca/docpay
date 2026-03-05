@@ -1,0 +1,356 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { ArrowLeft, Plus, Pencil, Trash2, Search, Users } from "lucide-react";
+
+interface Funcionario {
+  id: string;
+  nome: string;
+  nome_normalizado: string;
+  empresa_id: string;
+  municipio_id: string;
+  cargo: string | null;
+  banco: string | null;
+  contrato: string | null;
+  ativo: boolean;
+}
+
+interface Empresa {
+  id: string;
+  nome: string;
+}
+
+interface Municipio {
+  id: string;
+  nome: string;
+}
+
+const normalizeText = (text: string) =>
+  text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+
+const AdminFuncionarios = () => {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
+  const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [municipios, setMunicipios] = useState<Municipio[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  // Dialog states
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingFuncionario, setEditingFuncionario] = useState<Funcionario | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Funcionario | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Form state
+  const [formNome, setFormNome] = useState("");
+  const [formEmpresaId, setFormEmpresaId] = useState("");
+  const [formMunicipioId, setFormMunicipioId] = useState("");
+  const [formCargo, setFormCargo] = useState("");
+  const [formBanco, setFormBanco] = useState("");
+  const [formContrato, setFormContrato] = useState("");
+  const [formAtivo, setFormAtivo] = useState(true);
+
+  useEffect(() => {
+    fetchAll();
+  }, []);
+
+  const fetchAll = async () => {
+    setLoading(true);
+    const [funcRes, empRes, munRes] = await Promise.all([
+      supabase.from("funcionarios").select("*").order("nome"),
+      supabase.from("empresas").select("id, nome").order("nome"),
+      supabase.from("municipios").select("id, nome").order("nome"),
+    ]);
+    if (funcRes.data) setFuncionarios(funcRes.data);
+    if (empRes.data) setEmpresas(empRes.data);
+    if (munRes.data) setMunicipios(munRes.data);
+    setLoading(false);
+  };
+
+  const empresaMap = Object.fromEntries(empresas.map((e) => [e.id, e.nome]));
+  const municipioMap = Object.fromEntries(municipios.map((m) => [m.id, m.nome]));
+
+  const filtered = funcionarios.filter((f) =>
+    f.nome_normalizado.includes(normalizeText(search))
+  );
+
+  const openCreate = () => {
+    setEditingFuncionario(null);
+    setFormNome("");
+    setFormEmpresaId("");
+    setFormMunicipioId("");
+    setFormCargo("");
+    setFormBanco("");
+    setFormContrato("");
+    setFormAtivo(true);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (f: Funcionario) => {
+    setEditingFuncionario(f);
+    setFormNome(f.nome);
+    setFormEmpresaId(f.empresa_id);
+    setFormMunicipioId(f.municipio_id);
+    setFormCargo(f.cargo || "");
+    setFormBanco(f.banco || "");
+    setFormContrato(f.contrato || "");
+    setFormAtivo(f.ativo);
+    setDialogOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!formNome.trim() || !formEmpresaId || !formMunicipioId) {
+      toast({ title: "Preencha os campos obrigatórios", description: "Nome, empresa e município são obrigatórios.", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    const payload = {
+      nome: formNome.trim(),
+      nome_normalizado: normalizeText(formNome),
+      empresa_id: formEmpresaId,
+      municipio_id: formMunicipioId,
+      cargo: formCargo.trim() || null,
+      banco: formBanco.trim() || null,
+      contrato: formContrato.trim() || null,
+      ativo: formAtivo,
+    };
+
+    if (editingFuncionario) {
+      const { error } = await supabase.from("funcionarios").update(payload).eq("id", editingFuncionario.id);
+      if (error) {
+        toast({ title: "Erro ao atualizar", description: error.message, variant: "destructive" });
+      } else {
+        toast({ title: "Funcionário atualizado" });
+      }
+    } else {
+      const { error } = await supabase.from("funcionarios").insert(payload);
+      if (error) {
+        toast({ title: "Erro ao criar", description: error.message, variant: "destructive" });
+      } else {
+        toast({ title: "Funcionário adicionado" });
+      }
+    }
+    setSaving(false);
+    setDialogOpen(false);
+    fetchAll();
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const { error } = await supabase.from("funcionarios").delete().eq("id", deleteTarget.id);
+    if (error) {
+      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Funcionário excluído" });
+    }
+    setDeleteTarget(null);
+    fetchAll();
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto px-4 py-8 max-w-6xl">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6">
+          <Button variant="outline" size="sm" onClick={() => navigate("/")}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Voltar
+          </Button>
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            <h1 className="text-2xl font-bold text-foreground">Funcionários</h1>
+          </div>
+          <Badge variant="secondary" className="ml-auto">
+            {filtered.length} de {funcionarios.length}
+          </Badge>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por nome..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Adicionar
+          </Button>
+        </div>
+
+        {/* Table */}
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          </div>
+        ) : (
+          <div className="rounded-lg border bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Empresa</TableHead>
+                  <TableHead className="hidden md:table-cell">Município</TableHead>
+                  <TableHead className="hidden lg:table-cell">Cargo</TableHead>
+                  <TableHead className="hidden lg:table-cell">Banco</TableHead>
+                  <TableHead className="hidden xl:table-cell">Contrato</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      Nenhum funcionário encontrado.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((f) => (
+                    <TableRow key={f.id}>
+                      <TableCell className="font-medium">{f.nome}</TableCell>
+                      <TableCell>{empresaMap[f.empresa_id] || "—"}</TableCell>
+                      <TableCell className="hidden md:table-cell">{municipioMap[f.municipio_id] || "—"}</TableCell>
+                      <TableCell className="hidden lg:table-cell">{f.cargo || "—"}</TableCell>
+                      <TableCell className="hidden lg:table-cell">{f.banco || "—"}</TableCell>
+                      <TableCell className="hidden xl:table-cell">{f.contrato || "—"}</TableCell>
+                      <TableCell>
+                        <Badge variant={f.ativo ? "default" : "secondary"}>
+                          {f.ativo ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon" onClick={() => openEdit(f)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(f)} className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+
+      {/* Create / Edit Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingFuncionario ? "Editar Funcionário" : "Adicionar Funcionário"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Nome *</Label>
+              <Input value={formNome} onChange={(e) => setFormNome(e.target.value)} placeholder="Nome completo" />
+            </div>
+            <div>
+              <Label>Empresa *</Label>
+              <Select value={formEmpresaId} onValueChange={setFormEmpresaId}>
+                <SelectTrigger><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
+                <SelectContent>
+                  {empresas.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Município *</Label>
+              <Select value={formMunicipioId} onValueChange={setFormMunicipioId}>
+                <SelectTrigger><SelectValue placeholder="Selecione o município" /></SelectTrigger>
+                <SelectContent>
+                  {municipios.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Cargo</Label>
+                <Input value={formCargo} onChange={(e) => setFormCargo(e.target.value)} />
+              </div>
+              <div>
+                <Label>Banco</Label>
+                <Input value={formBanco} onChange={(e) => setFormBanco(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Contrato</Label>
+                <Input value={formContrato} onChange={(e) => setFormContrato(e.target.value)} />
+              </div>
+              <div>
+                <Label>Status</Label>
+                <Select value={formAtivo ? "true" : "false"} onValueChange={(v) => setFormAtivo(v === "true")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="true">Ativo</SelectItem>
+                    <SelectItem value="false">Inativo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir funcionário?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir <strong>{deleteTarget?.nome}</strong>? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+};
+
+export default AdminFuncionarios;
