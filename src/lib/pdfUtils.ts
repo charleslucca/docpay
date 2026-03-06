@@ -540,19 +540,20 @@ export function matchNameDirect(targetNormalized: string, candidateNormalized: s
   const candidateWords = candidateNormalized.split(" ").filter(w => w.length >= 3);
   if (targetWords.length === 0 || candidateWords.length === 0) return false;
 
-  // First + last name must match (exact or fuzzy)
+  // First + last name must match (exact or very close fuzzy)
+  // STRICT: First name allows only 1 edit max to avoid false positives (e.g. DIOVANA ≠ GIOVANA)
   const tFirst = targetWords[0], tLast = targetWords[targetWords.length - 1];
   const cFirst = candidateWords[0], cLast = candidateWords[candidateWords.length - 1];
 
-  const firstOk = tFirst === cFirst || levenshteinDistance(tFirst, cFirst) <= (tFirst.length <= 5 ? 1 : 2);
-  const lastOk = tLast === cLast || levenshteinDistance(tLast, cLast) <= (tLast.length <= 5 ? 1 : 2);
+  const firstOk = tFirst === cFirst || levenshteinDistance(tFirst, cFirst) <= 1;
+  const lastOk = tLast === cLast || levenshteinDistance(tLast, cLast) <= 1;
   if (!firstOk || !lastOk) return false;
 
-  // Count matched words
+  // Count matched words (stricter: max 1 edit for words ≤ 6 chars, 2 for longer)
   let matched = 0;
   for (const tw of targetWords) {
     for (const cw of candidateWords) {
-      const maxErr = tw.length <= 5 ? 1 : tw.length <= 8 ? 2 : 3;
+      const maxErr = tw.length <= 6 ? 1 : 2;
       if (tw === cw || levenshteinDistance(tw, cw) <= maxErr) {
         matched++;
         break;
