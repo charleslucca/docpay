@@ -1409,6 +1409,9 @@ export function useDocumentProcessor() {
 
     // Store unprocessed count for toast reference
     (window as any).__unprocessedCount = unprocessedReport.length;
+    
+    // Save to React state for UI display
+    setUnprocessedList(unprocessedReport as UnprocessedEmployee[]);
 
 
     // Final status with OCR metrics for 0-matches diagnostic
