@@ -1698,7 +1698,14 @@ export function useDocumentProcessor() {
     });
 
     const zipUrl = URL.createObjectURL(zipBlob);
-    const zipFileName = `${year}_${monthName}_PDFs.zip`;
+    // Use most frequent empresa in ZIP name
+    let topEmpresa = "";
+    let topCount = 0;
+    empresaCount.forEach((count, emp) => {
+      if (count > topCount) { topEmpresa = emp; topCount = count; }
+    });
+    const zipPrefix = topEmpresa ? sanitizeForStorage(topEmpresa.replace(/\s+/g, "_")) : String(year);
+    const zipFileName = `${zipPrefix}_${sanitizeForStorage(monthName)}_${year}_PDFs.zip`;
     triggerDownload(zipUrl, zipFileName);
 
     // Show success toast with download count
