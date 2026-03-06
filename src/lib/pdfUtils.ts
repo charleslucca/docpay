@@ -249,7 +249,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     /([A-Z][A-Z\s]{8,60}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO|COZINHEIRA|SERVENTE)/,
 
     // 3a. Label composto "NOME DO FUNCIONARIO" e variantes
-    /NOME\s+D[OA]\s+(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
+    /NOME\s+D[OA]\s+(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR)\s*:?\s*([A-Z][A-Z\s]{4,65}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
 
     // 3b. Labels explícitos brasileiros (palavra única)
     /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
