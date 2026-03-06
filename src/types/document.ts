@@ -7,8 +7,6 @@ export interface GeneratedDocument {
   createdAt: Date;
   blobUrl: string;
   fileName: string;
-  storagePath?: string;
-  publicUrl?: string;
   // Spreadsheet enrichment fields
   empresa?: string;
   municipio?: string;

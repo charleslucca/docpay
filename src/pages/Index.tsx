@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText, Sparkles, RotateCcw, Play, Zap, StopCircle,
-  UserCircle, LogOut, User, Shield, ArrowLeft, ArrowRight, FolderOpen,
+  UserCircle, LogOut, User, Shield, ArrowLeft, ArrowRight, FolderOpen, History,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
@@ -11,7 +11,7 @@ import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
 
-import { DocumentRepository } from '@/components/DocumentRepository';
+import { ProcessingHistory } from '@/components/ProcessingHistory';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
 import { Button } from '@/components/ui/button';
@@ -102,9 +102,9 @@ const Index = () => {
               <ArrowLeft className="h-4 w-4 mr-2" />
               Voltar
             </Button>
-            <h2 className="text-xl font-semibold text-foreground">Repositório de Documentos</h2>
+            <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
           </div>
-          <DocumentRepository documents={generatedDocs} spreadsheetData={spreadsheetData} />
+          <ProcessingHistory />
         </main>
       </div>
     );
@@ -342,8 +342,8 @@ const Index = () => {
                   <Sparkles className="h-8 w-8 text-primary" />
                 </div>
                 <h2 className="text-2xl font-bold text-foreground">Documentos Gerados</h2>
-                <p className="text-muted-foreground text-sm">
-                  {generatedDocs.length} documento(s) gerado(s) com sucesso e salvo(s) no repositório.
+            <p className="text-muted-foreground text-sm">
+                  {generatedDocs.length} documento(s) gerado(s) com sucesso.
                 </p>
               </div>
 
@@ -355,8 +355,8 @@ const Index = () => {
                   onClick={() => setShowRepository(true)}
                   className="gap-2"
                 >
-                  <FolderOpen className="h-5 w-5" />
-                  Ver Repositório
+              <History className="h-5 w-5" />
+              Ver Histórico
                 </Button>
                 <Button size="lg" onClick={handleReset} className="gap-2">
                   <RotateCcw className="h-4 w-4" />
@@ -416,7 +416,7 @@ function Header({
               className="gap-2"
             >
               <FolderOpen className="h-4 w-4" />
-              <span className="hidden sm:inline">Repositório</span>
+              <span className="hidden sm:inline">Histórico</span>
               {docCount > 0 && (
                 <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
                   {docCount}

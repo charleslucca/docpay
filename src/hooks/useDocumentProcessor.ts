@@ -59,7 +59,7 @@ const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
-const GENERATED_BUCKET = "generated-documents"; // Dedicated public bucket for generated PDFs
+
 
 const namesEquivalent = (a: string, b: string): boolean => {
   const na = normalizeForMatch(a);
@@ -112,66 +112,6 @@ const sanitizeForStorage = (text: string): string => {
     .replace(/[^a-zA-Z0-9_\-./]/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "");
-};
-
-const uploadGeneratedPdf = async (
-  fileName: string,
-  pdfBlob: Blob,
-  year: number,
-  month: number,
-  monthName: string,
-  employeeName: string,
-  empresa?: string,
-  municipio?: string,
-): Promise<{ storagePath?: string; publicUrl?: string }> => {
-  try {
-    // Get current user ID for scoped storage path
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      console.error("[Supabase] No authenticated user for upload");
-      return {};
-    }
-
-    const monthStr = String(month).padStart(2, "0");
-    const safeMonthName = sanitizeForStorage(monthName);
-    const safeFileName = sanitizeForStorage(fileName);
-    const storagePath = `${user.id}/${year}/${monthStr}_${safeMonthName}/${safeFileName}`;
-
-    const { error: uploadError } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
-      cacheControl: "3600",
-      upsert: true,
-      contentType: "application/pdf",
-    });
-
-    if (uploadError) {
-      console.error("[Supabase] Upload error:", uploadError);
-      return {};
-    }
-
-    const { data: urlData } = await supabase.storage.from(GENERATED_BUCKET).createSignedUrl(storagePath, 3600);
-    const publicUrl = urlData?.signedUrl || "";
-
-    // Save metadata to database
-    const { error: dbError } = await supabase.from("generated_documents").insert({
-      employee_name: employeeName,
-      year,
-      month,
-      month_name: monthName,
-      file_name: fileName,
-      storage_path: storagePath,
-      empresa: empresa || null,
-      municipio: municipio || null,
-    });
-
-    if (dbError) {
-      console.error("[Supabase] DB insert error:", dbError);
-    }
-
-    return { storagePath, publicUrl };
-  } catch (error) {
-    console.error("[Supabase] Upload failed:", error);
-    return {};
-  }
 };
 
 // Process items in parallel with concurrency limit and cancellation support
@@ -1636,11 +1576,6 @@ export function useDocumentProcessor() {
           empresaCount.set(empresa, (empresaCount.get(empresa) || 0) + 1);
         }
 
-        // Upload to Supabase storage and save metadata to DB
-        const { storagePath, publicUrl } = await uploadGeneratedPdf(
-          fileName, pdfBlob, year, month, monthName, pair.employeeName, empresa || undefined, cidade || undefined
-        );
-
         // Add to zip
         zip.file(fileName, pdfBlob);
 
@@ -1651,7 +1586,7 @@ export function useDocumentProcessor() {
         setStatus((prev) => ({
           ...prev,
           progress: ((index + 1) / matchedPairs.length) * 100,
-          message: `Gerando e salvando PDF ${index + 1} de ${matchedPairs.length}...`,
+          message: `Gerando PDF ${index + 1} de ${matchedPairs.length}...`,
         }));
 
         generatedDocuments.push({
@@ -1663,8 +1598,6 @@ export function useDocumentProcessor() {
           createdAt: now,
           blobUrl,
           fileName,
-          storagePath,
-          publicUrl,
           empresa,
           municipio: cidade || undefined,
         });
@@ -1717,16 +1650,29 @@ export function useDocumentProcessor() {
     const totalDurationMs = Date.now() - processStartTimeRef.current;
     const durationLabel = formatDuration(totalDurationMs);
 
+    // Save processing history
+    try {
+      await supabase.from("processing_history").insert({
+        pdf_count: generatedDocuments.length,
+        duration_seconds: Math.round(totalDurationMs / 1000),
+        month,
+        year,
+        month_name: monthName,
+      });
+    } catch (err) {
+      console.error("[History] Failed to save processing history:", err);
+    }
+
     setStatus({
       step: "completed",
       progress: 100,
-      message: `${generatedDocuments.length} PDF(s) gerado(s), salvo no Supabase e baixado em ZIP em ${durationLabel}`,
+      message: `${generatedDocuments.length} PDF(s) gerado(s) e baixado(s) em ZIP em ${durationLabel}`,
       estimatedTimeRemaining: 0,
     });
 
     toast({
       title: "Processamento concluído",
-      description: `Tempo total: ${durationLabel}. Arquivos salvos no Supabase em ${year}/${String(month).padStart(2, "0")}/${monthName}.`,
+      description: `Tempo total: ${durationLabel}. ${generatedDocuments.length} PDF(s) gerado(s).`,
     });
   }, [matchedPairs]);
 
