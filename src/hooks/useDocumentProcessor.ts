@@ -1406,6 +1406,9 @@ export function useDocumentProcessor() {
     console.log(`  FIM DO RELATÓRIO`);
     console.log(`${"=".repeat(70)}\n`);
 
+    // Store unprocessed count for toast reference
+    (window as any).__unprocessedCount = unprocessedReport.length;
+
 
     // Final status with OCR metrics for 0-matches diagnostic
     setStatus({
