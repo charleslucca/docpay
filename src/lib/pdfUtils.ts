@@ -574,20 +574,45 @@ export function calculateNameMatchScore(
     return { score: 0.1, reason: "SEM SOBRENOME EM COMUM" };
   }
 
+  // Check last surname match (fuzzy) for boosting
+  const lastSurname1 = tokens1.surnames[tokens1.surnames.length - 1] || "";
+  const lastSurname2 = tokens2.surnames[tokens2.surnames.length - 1] || "";
+  const lastSurnameMatches = lastSurname1 && lastSurname2 && (
+    lastSurname1 === lastSurname2 ||
+    levenshteinDistance(lastSurname1, lastSurname2) <= 1 ||
+    (lastSurname1.length >= 4 && lastSurname2.length >= 4 && (
+      lastSurname1.startsWith(lastSurname2) || lastSurname2.startsWith(lastSurname1)
+    ))
+  );
+
   // Jaro-Winkler on full normalized names (without particles)
   const clean1 = removeParticles(name1Normalized);
   const clean2 = removeParticles(name2Normalized);
   const jwScore = jaroWinklerSimilarity(clean1, clean2);
 
-  // Composite score
+  // First-name similarity factor
+  const firstNameJW = jaroWinklerSimilarity(tokens1.firstName, tokens2.firstName);
+
+  // Composite score: weighted combination
   let score = jwScore;
+
+  // BOOST: If first name + last surname both match, guarantee high score
+  // This handles "same person, different middle name" cases
+  if (firstNameJW >= 0.85 && lastSurnameMatches) {
+    score = Math.max(score, 0.87);
+  }
 
   // Bonus for distinctive surname match
   if (surnameCheck.hasDistinctive) score = Math.min(1.0, score + 0.05);
 
-  // Penalty if only common surnames match
+  // Penalty if only common surnames match and first names aren't exact
   if (surnameCheck.count > 0 && !surnameCheck.hasDistinctive && tokens1.surnames.length > 1) {
     score = Math.min(score, 0.75);
+  }
+
+  // Penalty if first names are fuzzy (not exact) - reduce confidence
+  if (tokens1.firstName !== tokens2.firstName) {
+    score = score * (0.5 + 0.5 * firstNameJW);
   }
 
   let reason: string;
