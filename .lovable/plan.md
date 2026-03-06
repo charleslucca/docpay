@@ -1,56 +1,50 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Correção: Nomes sendo truncados na extração
 
-## Diagnostico
+## Problema identificado
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+Dois fatores causam o truncamento:
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+1. **Limites de caracteres baixos nas regex**: Vários padrões usam `{5,35}`, `{5,40}`, `{8,45}` — nomes brasileiros compostos como "ANA CRISTIANE MAIRESSE DE MEDEIROS HENI" (40 chars) atingem ou ultrapassam esses limites.
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+2. **Quantificadores lazy (`?`)**: O `?` após `{5,40}` faz a regex capturar o **mínimo possível** de caracteres. Se um dígito (CPF parcial, código) aparece no meio do texto OCR, o lookahead para prematuramente, cortando o nome.
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+### Exemplos do erro:
+- `ANA CRISTIANE MAIRESSE DE MEDEIROS HENI` → captura `ANA CRISTIANE MAIRESSE DE MEDE` (para no primeiro `\d{3}` do CPF próximo)
+- `CARINA ANDREIA DOS SANTOS DA ROSA` → captura `CARINA ANDREIA DOS SANTOS DA R` (para em algum anchor)
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+## Alterações
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+### `src/lib/pdfUtils.ts`
 
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+**1. extractEmployeeName — padrões de regex (linhas 238-270)**
 
-## Correcao
+Aumentar limites e ajustar quantificadores em todos os padrões:
 
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
+| Padrão | Atual | Novo |
+|--------|-------|------|
+| 1 (B SERVICE) | `{5,35}` | `{5,55}` |
+| 1.5 (OCR) | `{5,40}` | `{5,55}` |
+| 2 (cargo) | `{8,45}` | `{8,60}` |
+| 3a (label composto) | `{4,50}` | `{4,65}` |
+| 3b (label simples) | `{4,50}` | `{4,65}` |
+| 4 (recibo) | `{5,40}` | `{5,60}` |
+| 5 (favorecido) | `{5,40}` | `{5,60}` |
+| 6 (antes CPF) | `{5,40}` | `{5,60}` |
+| 8 (linha isolada) | `{8,40}` | `{8,60}` |
 
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+**2. extractFavorecidoNames — regex principal (linha 700)**
 
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+Alterar `[A-Z][A-Z ]{4,60}?` para `[A-Z][A-Z ]{4,80}` (greedy, limite 80 chars). O lookahead já garante que para no ponto correto — o lazy é contraproducente aqui.
 
-### Logica resultante simplificada:
+**3. extractFavorecidoNames — fallback (linhas 731-735)**
 
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
-```
+O fallback word-by-word já funciona sem limite de caracteres, não precisa de alteração.
 
-## Impacto
+### Resumo
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
-
-## Arquivos alterados
-
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+- Aumentar limites de captura de `35-50` para `55-80` chars em todas as regex
+- Trocar quantificadores lazy por greedy nos padrões de FAVORECIDO para capturar o nome completo até o próximo anchor real
+- Nenhuma outra alteração (sem mudanças em matching, UI, ou outros fluxos)
 
