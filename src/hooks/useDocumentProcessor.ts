@@ -514,12 +514,8 @@ export function useDocumentProcessor() {
       resumeFromPage: number = 1,
     ): Promise<HoleriteEntry[]> => {
       if (cancelledRef.current) {
-        clearSlowOperationTimer();
         return [];
       }
-
-      // Start slow operation timer for this file
-      startSlowOperationTimer(holerite.name);
 
       try {
         // Get total pages in PDF
