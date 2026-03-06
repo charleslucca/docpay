@@ -355,8 +355,8 @@ const Index = () => {
                   onClick={() => setShowRepository(true)}
                   className="gap-2"
                 >
-                  <FolderOpen className="h-5 w-5" />
-                  Ver Repositório
+              <History className="h-5 w-5" />
+              Ver Histórico
                 </Button>
                 <Button size="lg" onClick={handleReset} className="gap-2">
                   <RotateCcw className="h-4 w-4" />
