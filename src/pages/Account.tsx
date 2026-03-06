@@ -24,10 +24,25 @@ const Account = () => {
 
   const handleSaveName = async () => {
     if (!user) return;
+
+    const trimmed = fullName.trim();
+    if (!trimmed || trimmed.length < 2) {
+      toast({ title: "Erro", description: "O nome deve ter pelo menos 2 caracteres.", variant: "destructive" });
+      return;
+    }
+    if (trimmed.length > 100) {
+      toast({ title: "Erro", description: "O nome deve ter no máximo 100 caracteres.", variant: "destructive" });
+      return;
+    }
+    if (!/^[a-zA-ZÀ-ÿ\s'-]+$/.test(trimmed)) {
+      toast({ title: "Erro", description: "O nome contém caracteres inválidos.", variant: "destructive" });
+      return;
+    }
+
     setSavingName(true);
     const { error } = await supabase
       .from("profiles")
-      .update({ full_name: fullName })
+      .update({ full_name: trimmed })
       .eq("id", user.id);
 
     if (error) {
