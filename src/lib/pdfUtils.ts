@@ -373,7 +373,7 @@ export function extractCPF(text: string): string | null {
 }
 
 // Debug flag - disable logs for performance
-const DEBUG_MATCH = false;
+const DEBUG_MATCH = true;
 
 // Levenshtein distance for fuzzy matching (tolerates OCR errors)
 function levenshteinDistance(a: string, b: string): number {
@@ -488,8 +488,42 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
     }
   }
 
-  if (DEBUG_MATCH && names.length > 0) {
-    console.log(`[FavorecidoExtract] Found ${names.length} names:`, names.slice(0, 5));
+  // Fallback: busca direta quando regex falha
+  if (names.length === 0) {
+    const labelsList = ["NOME DO FAVORECIDO", "NOME DO BENEFICIARIO", "NOME FAVORECIDO", 
+                         "NOME BENEFICIARIO", "FAVORECIDO", "BENEFICIARIO", "DESTINATARIO"];
+    const stopWords = new Set(["CPF", "CNPJ", "AGENCIA", "CONTA", "BANCO", "VALOR", 
+      "COOPERATIVA", "DATA", "MODALIDADE", "CODIGO", "NUMERO", "TIPO", "CREDITO", 
+      "DEBITO", "PAGAMENTO", "TRANSFERENCIA", "PIX", "TED", "DOC", "CHAVE", "INSTITUICAO",
+      "AG", "CONTA", "SICREDI", "BRADESCO", "ITAU", "SANTANDER", "CAIXA", "BB"]);
+    
+    for (const label of labelsList) {
+      const idx = text.indexOf(label);
+      if (idx === -1) continue;
+      
+      let afterLabel = text.substring(idx + label.length).replace(/^\s*:?\s*/, "");
+      const words: string[] = [];
+      for (const word of afterLabel.split(/\s+/)) {
+        if (stopWords.has(word) || /^\d/.test(word) || word.length === 0) break;
+        if (/^[A-Z]{2,}$/.test(word)) words.push(word);
+        else break;
+      }
+      if (words.length >= 2) {
+        const normalized = normalizeForMatch(words.join(" "));
+        if (!names.includes(normalized)) {
+          console.log(`[FavorecidoExtract] Fallback found name: "${words.join(" ")}" via label "${label}"`);
+          names.push(normalized);
+        }
+        break;
+      }
+    }
+  }
+
+  if (names.length > 0) {
+    if (DEBUG_MATCH) console.log(`[FavorecidoExtract] Found ${names.length} names:`, names.slice(0, 5));
+  } else {
+    const hasLabel = ["FAVORECIDO", "BENEFICIARIO", "DESTINATARIO"].some(l => text.includes(l));
+    console.warn(`[FavorecidoExtract] 0 nomes extraídos. Label encontrado: ${hasLabel}. Texto (200 chars):`, text.substring(0, 200));
   }
 
   return names;
