@@ -258,7 +258,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CARGO))/,
 
     // 5. Padrão para "FAVORECIDO" em comprovantes bancários
-    /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
+    /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
 
     // 6. Nome imediatamente antes de CPF
     /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
