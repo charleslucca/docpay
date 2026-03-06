@@ -977,12 +977,8 @@ export function useDocumentProcessor() {
 
     const preExtractComprovante = async (comprovante: UploadedFile, index: number) => {
       if (cancelledRef.current) {
-        clearSlowOperationTimer();
         return;
       }
-
-      // Start slow operation timer for this file
-      startSlowOperationTimer(comprovante.name);
 
       setStatus((prev) => ({
         ...prev,
