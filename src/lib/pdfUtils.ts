@@ -428,20 +428,70 @@ export function normalizeForMatch(text: string): string {
 }
 
 /**
- * Extract all "FAVORECIDO" names from a comprovante page text.
- * Returns normalized names found after FAVORECIDO labels.
+ * Normalize text lightly for label extraction: keep letters, digits, colons, slashes, spaces.
+ * Less aggressive than normalizeForMatch — preserves anchors needed by regex lookaheads.
  */
-export function extractFavorecidoNames(normalizedText: string): string[] {
+function normalizeLightForExtraction(text: string): string {
+  return text
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[-‐‑–—']/g, " ")
+    .replace(/([A-Z])0([A-Z])/g, "$1O$2")
+    .replace(/([A-Z])1([A-Z])/g, "$1I$2")
+    .replace(/([A-Z])5([A-Z])/g, "$1S$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extract all employee names from a comprovante page text using common bank labels.
+ * Searches for FAVORECIDO, BENEFICIARIO, DESTINATARIO, NOME DO BENEFICIARIO, etc.
+ * Receives RAW page text (not pre-normalized) for maximum regex accuracy.
+ */
+export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
   const names: string[] = [];
-  // Match FAVORECIDO followed by a name (with optional colon/spaces)
-  const regex = /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{4,60}?)(?=\s*(?:CPF|CNPJ|AG[E\s]|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|\d{3}[.\s]?\d{3}|\d{2}\/\d{2}|$))/g;
+  const text = normalizeLightForExtraction(rawOrNormalizedText);
+
+  // Labels commonly used in Brazilian bank comprovantes
+  const labels = [
+    "FAVORECIDO",
+    "BENEFICIARIO",
+    "DESTINATARIO",
+    "NOME DO BENEFICIARIO",
+    "NOME DO FAVORECIDO",
+    "NOME BENEFICIARIO",
+    "NOME FAVORECIDO",
+    "NOME DESTINATARIO",
+    "NOME DO DESTINATARIO",
+  ];
+
+  const labelPattern = labels.join("|");
+
+  // Regex: label + optional colon + name + lookahead for common anchors
+  // Uses light normalization so digits/colons/slashes are preserved for accurate anchoring
+  const regex = new RegExp(
+    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,60}?)(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
+    "g",
+  );
+
   let match;
-  while ((match = regex.exec(normalizedText)) !== null) {
+  while ((match = regex.exec(text)) !== null) {
     const name = match[1].trim().replace(/\s+/g, " ");
-    if (name.split(" ").filter(w => w.length > 1).length >= 2) {
-      names.push(normalizeForMatch(name));
+    const words = name.split(" ").filter(w => w.length > 1);
+    if (words.length >= 2 && name.length >= 5) {
+      const normalized = normalizeForMatch(name);
+      // Avoid duplicates
+      if (!names.includes(normalized)) {
+        names.push(normalized);
+      }
     }
   }
+
+  if (DEBUG_MATCH && names.length > 0) {
+    console.log(`[FavorecidoExtract] Found ${names.length} names:`, names.slice(0, 5));
+  }
+
   return names;
 }
 
@@ -505,6 +555,8 @@ export interface PreparedTarget {
 
 /**
  * Prepare a page text for fast matching - call ONCE per page
+ * Uses RAW text for favorecido extraction (better regex accuracy)
+ * and normalized text for fuzzy/substring matching.
  */
 export function preparePageForMatch(pageText: string): PreparedPage {
   const normalized = normalizeForMatch(pageText);
@@ -521,7 +573,9 @@ export function preparePageForMatch(pageText: string): PreparedPage {
     wordsByLength.get(len)!.push(word);
   }
 
-  const favorecidoNames = extractFavorecidoNames(normalized);
+  // CRITICAL FIX: Pass RAW text to extractFavorecidoNames, not the fully-stripped normalized text.
+  // normalizeForMatch strips digits/colons/slashes which are needed by the regex lookaheads.
+  const favorecidoNames = extractFavorecidoNames(pageText);
 
   return { normalized, wordSet, wordsByLength, favorecidoNames };
 }

@@ -1314,43 +1314,100 @@ export function useDocumentProcessor() {
 
     console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
 
-    // === DIAGNOSTIC LOGS ===
-    const unmatchedNames = preparedEntries
-      .filter(e => !matchedEntryKeys.has(`${e.originalHolerite.id}_${e.pageNumber}`))
-      .map(e => e.name);
+    // === COMPREHENSIVE DIAGNOSTIC LOGS ===
+    const unmatchedEntries = preparedEntries
+      .filter(e => !matchedEntryKeys.has(`${e.originalHolerite.id}_${e.pageNumber}`));
+    const unmatchedNames = unmatchedEntries.map(e => e.name);
 
     // Count pages with text and favorecido names
     let pagesWithText = 0;
     let totalFavorecidoNames = 0;
+    let totalComprovantePages = 0;
     const favorecidoSamples: string[] = [];
-    const pageSamples: string[] = [];
+    const pageSamples: { pageIdx: number; textLen: number; text: string; favNames: string[] }[] = [];
+    const allFavorecidoNames: string[] = [];
 
-    for (const [, extracted] of comprovanteTextsMap) {
+    for (const [compId, extracted] of comprovanteTextsMap) {
       for (let i = 0; i < extracted.preparedPages.length; i++) {
+        totalComprovantePages++;
         const pp = extracted.preparedPages[i];
         if (pp.normalized.length > 50) pagesWithText++;
         if (pp.favorecidoNames.length > 0) {
           totalFavorecidoNames += pp.favorecidoNames.length;
-          if (favorecidoSamples.length < 5) {
-            favorecidoSamples.push(...pp.favorecidoNames.slice(0, 2));
+          allFavorecidoNames.push(...pp.favorecidoNames);
+          if (favorecidoSamples.length < 10) {
+            favorecidoSamples.push(...pp.favorecidoNames.slice(0, 3));
           }
         }
-        if (pageSamples.length < 3) {
-          pageSamples.push(pp.normalized.substring(0, 200));
+        if (pageSamples.length < 5) {
+          pageSamples.push({
+            pageIdx: i + 1,
+            textLen: pp.normalized.length,
+            text: pp.normalized.substring(0, 300),
+            favNames: pp.favorecidoNames,
+          });
         }
       }
     }
 
-    console.log(`[Match Diagnostics]`, {
-      totalHoleriteEntries: totalEntries,
-      matchesFound: pairs.length,
-      unmatched: unmatchedNames.length,
-      unmatchedSample: unmatchedNames.slice(0, 10),
-      comprovantePagesWithText: pagesWithText,
-      totalFavorecidoNamesExtracted: totalFavorecidoNames,
-      favorecidoSamples: favorecidoSamples.slice(0, 5),
-      pageTextSamples: pageSamples,
+    // Diagnostic: sample unmatched entries with their normalized forms
+    const unmatchedDiagnostic = unmatchedEntries.slice(0, 15).map(e => ({
+      name: e.name,
+      normalized: e.prepared.normalized,
+      firstName: e.prepared.firstName,
+      lastName: e.prepared.lastName,
+    }));
+
+    // Diagnostic: check if unmatched names appear in any comprovante text
+    const unmatchedWithReason = unmatchedEntries.slice(0, 10).map(e => {
+      const norm = e.prepared.normalized;
+      let foundInText = false;
+      let foundInFavorecido = false;
+      let closestFavMatch = "";
+      let closestFavDistance = Infinity;
+
+      for (const [, extracted] of comprovanteTextsMap) {
+        for (const pp of extracted.preparedPages) {
+          if (pp.normalized.includes(norm)) foundInText = true;
+          for (const fav of pp.favorecidoNames) {
+            if (fav === norm) foundInFavorecido = true;
+            // Check partial match
+            const sharedWords = norm.split(" ").filter(w => w.length >= 3 && fav.includes(w));
+            if (sharedWords.length > 0 && sharedWords.length > (closestFavDistance === Infinity ? 0 : closestFavDistance)) {
+              closestFavMatch = fav;
+              closestFavDistance = sharedWords.length;
+            }
+          }
+        }
+      }
+
+      return {
+        name: e.name,
+        normalized: norm,
+        foundInFullText: foundInText,
+        foundInFavorecido: foundInFavorecido,
+        closestFavMatch: closestFavMatch || "none",
+        reason: !foundInText && !foundInFavorecido
+          ? "Nome não encontrado no texto do comprovante"
+          : foundInText && !foundInFavorecido
+          ? "Nome está no texto mas não como FAVORECIDO/BENEFICIARIO"
+          : "Possível divergência de formatação",
+      };
     });
+
+    console.log(`[DIAG] ========== MATCHING DIAGNOSTICS ==========`);
+    console.log(`[DIAG] Holerite: ${totalEntries} funcionários extraídos`);
+    console.log(`[DIAG] Comprovante: ${totalComprovantePages} páginas, ${pagesWithText} com texto (>50 chars)`);
+    console.log(`[DIAG] Favorecido/Beneficiário: ${totalFavorecidoNames} nomes extraídos de comprovantes`);
+    console.log(`[DIAG] Matches encontrados: ${pairs.length}`);
+    console.log(`[DIAG] Não correspondidos: ${unmatchedNames.length}`);
+    console.log(`[DIAG] Amostra de nomes FAVORECIDO:`, favorecidoSamples.slice(0, 10));
+    console.log(`[DIAG] Amostra de páginas:`, pageSamples);
+    console.log(`[DIAG] Amostra não-correspondidos:`, unmatchedDiagnostic);
+    console.log(`[DIAG] Motivos de não-match:`, unmatchedWithReason);
+    console.log(`[DIAG] Amostra de nomes de holerite (primeiros 10):`, preparedEntries.slice(0, 10).map(e => e.name));
+    console.log(`[DIAG] Todos FAVORECIDO extraídos (${allFavorecidoNames.length}):`, allFavorecidoNames.slice(0, 30));
+    console.log(`[DIAG] ============================================`);
 
 
     // Final status with OCR metrics for 0-matches diagnostic
