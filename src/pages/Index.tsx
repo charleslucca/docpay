@@ -42,7 +42,7 @@ const Index = () => {
   const { profile, role, signOut } = useAuth();
   const navigate = useNavigate();
   const {
-    holerites, comprovantes, matchedPairs, generatedDocs, spreadsheetData,
+    holerites, comprovantes, matchedPairs, generatedDocs, unprocessedList, spreadsheetData,
     setSpreadsheetData, status, isCancelling, hasSavedState, isCheckingState,
     addFiles, removeFile, processDocuments, generatePdfs, cancelProcessing,
     reset, resumeProcessing, discardSavedState, reprocessWithEnhancedOcr,
