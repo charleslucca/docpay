@@ -148,6 +148,7 @@ export function useDocumentProcessor() {
   const [comprovantes, setComprovantes] = useState<UploadedFile[]>([]);
   const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
   const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocument[]>([]);
+  const [unprocessedList, setUnprocessedList] = useState<UnprocessedEmployee[]>([]);
   const [spreadsheetData, setSpreadsheetData] = useState<SpreadsheetData | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>({
     step: "idle",
