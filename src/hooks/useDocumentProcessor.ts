@@ -1595,23 +1595,50 @@ export function useDocumentProcessor() {
         );
 
         const blobUrl = URL.createObjectURL(pdfBlob);
-        const fileName = `${year}_${sanitizeForStorage(monthName)}_${sanitizeForStorage(pair.employeeName.replace(/\s+/g, "_"))}.pdf`;
 
-        // Look up employee in spreadsheet for enrichment
-        let empresa: string | undefined;
-        let municipio: string | undefined;
+        // Look up employee in spreadsheet (priority) then DB (fallback)
+        let empresa = "";
+        let cidade = "";
+        let contrato = "";
 
         if (spreadsheetData?.records) {
           const record = findEmployeeInSpreadsheet(pair.employeeName, spreadsheetData.records);
           if (record) {
-            empresa = record.empresa;
-            municipio = record.cidade;
+            empresa = record.empresa || "";
+            cidade = record.cidade || "";
+            contrato = record.contrato || "";
           }
+        }
+
+        // Fallback: database lookup
+        if (!empresa || !cidade || !contrato) {
+          const normalized = normalizeForMatch(pair.employeeName);
+          const dbInfo = dbLookup.get(normalized);
+          if (dbInfo) {
+            empresa = empresa || dbInfo.empresa;
+            cidade = cidade || dbInfo.cidade;
+            contrato = contrato || dbInfo.contrato;
+          }
+        }
+
+        const sanitize = (s: string) => sanitizeForStorage(s.replace(/\s+/g, "_"));
+        const namePart = sanitize(pair.employeeName);
+
+        let fileName: string;
+        if (empresa && cidade && contrato) {
+          fileName = `${sanitize(empresa)}_${sanitize(cidade)}_${sanitize(contrato)}_${namePart}.pdf`;
+        } else {
+          fileName = `${sanitize(empresa || "EMPRESA")}_${sanitize(cidade || "CIDADE")}_${sanitize(contrato || "CONTRATO")}_${namePart}.pdf`;
+        }
+
+        // Track empresa frequency for ZIP naming
+        if (empresa) {
+          empresaCount.set(empresa, (empresaCount.get(empresa) || 0) + 1);
         }
 
         // Upload to Supabase storage and save metadata to DB
         const { storagePath, publicUrl } = await uploadGeneratedPdf(
-          fileName, pdfBlob, year, month, monthName, pair.employeeName, empresa, municipio
+          fileName, pdfBlob, year, month, monthName, pair.employeeName, empresa || undefined, cidade || undefined
         );
 
         // Add to zip
