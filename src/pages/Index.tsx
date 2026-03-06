@@ -11,7 +11,7 @@ import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
 
-import { DocumentRepository } from '@/components/DocumentRepository';
+import { ProcessingHistory } from '@/components/ProcessingHistory';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
 import { Button } from '@/components/ui/button';
