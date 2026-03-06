@@ -145,7 +145,7 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
     /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR)\s*:?\s*/i,
     /NOME\s+DO\s+FUNCIONARIO/i,
     /RECIBO\s+DE\s+PAGAMENTO/i,
-    /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
+    /\b\d{3,5}\s+[A-Z][A-Z\s]{5,55}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
   ];
 
   // ETAPA 1: Amostragem de texto nativo - verificar se os PADRÕES aparecem
