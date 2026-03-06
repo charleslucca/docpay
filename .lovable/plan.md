@@ -1,23 +1,56 @@
 
 
-# Remover alerta de processamento lento
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## O que será feito
+## Diagnostico
 
-Remover completamente o mecanismo de "operação lenta detectada" que exibe um toast após 10 segundos de processamento por arquivo.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-## Alterações
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-### `src/hooks/useDocumentProcessor.ts`
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-1. **Remover** a constante `SLOW_OPERATION_THRESHOLD_MS` (linha 58)
-2. **Remover** o ref `slowOperationTimerRef` e `currentItemStartTimeRef` (linhas 167-168)
-3. **Remover** o cleanup `useEffect` do timer (linhas 239-245)
-4. **Remover** as funções `startSlowOperationTimer` e `clearSlowOperationTimer` (linhas 247-276)
-5. **Remover** `isSlowOperation: false` do `updateProgress` (linha 291)
-6. **Remover** todas as chamadas a `startSlowOperationTimer()` e `clearSlowOperationTimer()` espalhadas pelo código (~15 ocorrências)
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### `src/types/document.ts`
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-- Remover o campo `isSlowOperation` do tipo `ProcessingStatus` (linha 55)
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
+```
+
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 

@@ -55,7 +55,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 
 const CONCURRENCY_LIMIT = 5;
-const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
+
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
@@ -164,8 +164,6 @@ export function useDocumentProcessor() {
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Time tracking refs
-  const slowOperationTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const currentItemStartTimeRef = useRef<number>(0);
   const processStartTimeRef = useRef<number>(0);
 
   // Persistence refs for debounced saves
@@ -235,45 +233,6 @@ export function useDocumentProcessor() {
     };
   }, [status.step, flushPendingState]);
 
-  // Clear slow operation timer on unmount or cancel
-  useEffect(() => {
-    return () => {
-      if (slowOperationTimerRef.current) {
-        clearTimeout(slowOperationTimerRef.current);
-      }
-    };
-  }, []);
-
-  const startSlowOperationTimer = (fileName: string) => {
-    // Clear any existing timer
-    if (slowOperationTimerRef.current) {
-      clearTimeout(slowOperationTimerRef.current);
-    }
-
-    currentItemStartTimeRef.current = Date.now();
-
-    slowOperationTimerRef.current = setTimeout(() => {
-      if (!cancelledRef.current) {
-        toast({
-          title: "⚠️ Operação lenta detectada",
-          description: `A extração de "${fileName}" está demorando mais de 10 segundos. O documento pode estar escaneado ou ser muito grande.`,
-          variant: "destructive",
-        });
-
-        setStatus((prev) => ({
-          ...prev,
-          isSlowOperation: true,
-        }));
-      }
-    }, SLOW_OPERATION_THRESHOLD_MS);
-  };
-
-  const clearSlowOperationTimer = () => {
-    if (slowOperationTimerRef.current) {
-      clearTimeout(slowOperationTimerRef.current);
-      slowOperationTimerRef.current = null;
-    }
-  };
 
   const updateTimeEstimate = (processedItems: number, totalItems: number) => {
     if (processedItems === 0) return;
@@ -288,7 +247,6 @@ export function useDocumentProcessor() {
       processedItems,
       totalItems,
       estimatedTimeRemaining: estimatedRemaining,
-      isSlowOperation: false, // Reset slow flag when item completes
     }));
   };
 
@@ -385,7 +343,6 @@ export function useDocumentProcessor() {
   const cancelProcessing = useCallback(async () => {
     cancelledRef.current = true;
     setIsCancelling(true);
-    clearSlowOperationTimer();
     setStatus((prev) => ({ ...prev, message: "Cancelando..." }));
 
     // Force-terminate all OCR workers immediately to stop pending jobs
@@ -557,12 +514,8 @@ export function useDocumentProcessor() {
       resumeFromPage: number = 1,
     ): Promise<HoleriteEntry[]> => {
       if (cancelledRef.current) {
-        clearSlowOperationTimer();
         return [];
       }
-
-      // Start slow operation timer for this file
-      startSlowOperationTimer(holerite.name);
 
       try {
         // Get total pages in PDF
@@ -659,7 +612,6 @@ export function useDocumentProcessor() {
         );
 
         if (cancelledRef.current) {
-          clearSlowOperationTimer();
           return [];
         }
 
@@ -937,8 +889,6 @@ export function useDocumentProcessor() {
           setHolerites((prev) => prev.map((h) => (h.id === holerite.id ? { ...h, progress: 90 } : h)));
         }
 
-        clearSlowOperationTimer();
-
         // Diagnostic log: extraction summary
         console.log(
           `[Extraction Summary] File "${holerite.name}": ${entries.length} names extracted from ${totalPages} pages (native: ${nativeProcessed}, cache: ${cacheHits}, OCR: ${ocrCompleted})`,
@@ -974,7 +924,6 @@ export function useDocumentProcessor() {
 
         return entries;
       } catch (error) {
-        clearSlowOperationTimer();
         console.error(`[OCR] Error processing ${holerite.name}:`, error);
         setHolerites((prev) =>
           prev.map((h) =>
@@ -1028,12 +977,8 @@ export function useDocumentProcessor() {
 
     const preExtractComprovante = async (comprovante: UploadedFile, index: number) => {
       if (cancelledRef.current) {
-        clearSlowOperationTimer();
         return;
       }
-
-      // Start slow operation timer for this file
-      startSlowOperationTimer(comprovante.name);
 
       setStatus((prev) => ({
         ...prev,
@@ -1072,9 +1017,6 @@ export function useDocumentProcessor() {
         aggregatedMetrics.timeoutCount += metrics.timeoutCount;
         aggregatedMetrics.retryCount += metrics.retryCount;
 
-        // Clear timer when done
-        clearSlowOperationTimer();
-
         // Don't store if cancelled
         if (cancelledRef.current) return;
 
@@ -1088,7 +1030,6 @@ export function useDocumentProcessor() {
 
         setComprovantes((prev) => prev.map((c) => (c.id === comprovante.id ? { ...c, progress: 60 } : c)));
       } catch (error) {
-        clearSlowOperationTimer();
         console.error(`[Comprovante] Error processing ${comprovante.name}:`, error);
         setComprovantes((prev) =>
           prev.map((c) =>
