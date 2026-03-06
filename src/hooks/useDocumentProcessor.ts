@@ -1804,6 +1804,7 @@ export function useDocumentProcessor() {
     comprovantes,
     matchedPairs,
     generatedDocs,
+    unprocessedList,
     spreadsheetData,
     setSpreadsheetData,
     status,
