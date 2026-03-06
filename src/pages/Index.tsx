@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
-import { MatchedPairCard } from '@/components/MatchedPairCard';
+
 import { DocumentRepository } from '@/components/DocumentRepository';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
