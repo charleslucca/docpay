@@ -1257,10 +1257,10 @@ export function useDocumentProcessor() {
 
     const unprocessedReport: UnprocessedReport[] = unmatchedEntries.map((e, idx) => {
       const norm = e.prepared.normalized;
-      const normWords = norm.split(" ").filter(w => w.length >= 3);
       let foundInText = false;
       let foundAsFavorecido = false;
       let closestCandidate = "";
+      let bestScore = 0;
       let bestSharedWords = 0;
 
       // Check every comprovante page
@@ -1270,51 +1270,37 @@ export function useDocumentProcessor() {
           if (!foundInText && pp.normalized.includes(norm)) {
             foundInText = true;
           }
-          // Check each favorecido name
+          // Check each favorecido name with new scoring
           for (const fav of pp.favorecidoNames) {
             if (fav === norm) {
               foundAsFavorecido = true;
             }
-            // Calculate word overlap for closest candidate
-            const favWords = fav.split(" ").filter(w => w.length >= 3);
-            const shared = normWords.filter(w => favWords.includes(w)).length;
-            if (shared > bestSharedWords) {
-              bestSharedWords = shared;
+            // Use calculateNameMatchScore for proper candidate evaluation
+            const { score } = calculateNameMatchScore(norm, fav);
+            if (score > bestScore) {
+              bestScore = score;
               closestCandidate = fav;
-            }
-            // Also check first name match without last name
-            if (shared === 0 && favWords.length > 0 && normWords.length > 0) {
-              if (favWords[0] === normWords[0]) {
-                // Same first name but different rest
-                if (bestSharedWords === 0) {
-                  closestCandidate = fav;
-                  bestSharedWords = 0.5; // marker for "first name only"
-                }
-              }
+              // Calculate word overlap for backward compatibility
+              const normWords = norm.split(" ").filter(w => w.length >= 3);
+              const favWords = fav.split(" ").filter(w => w.length >= 3);
+              bestSharedWords = normWords.filter(w => favWords.includes(w)).length;
             }
           }
         }
       }
 
-      // Determine specific reason
+      // Determine specific reason using new scoring system
       let reason: string;
       if (foundAsFavorecido) {
         reason = "FAVORECIDO encontrado mas matchNameDirect rejeitou (divergência primeiro/último nome)";
       } else if (foundInText) {
         reason = "Nome está no texto do comprovante mas NÃO foi extraído como FAVORECIDO/BENEFICIÁRIO";
-      } else if (closestCandidate && bestSharedWords >= 2) {
-        const candidateWords = closestCandidate.split(" ").filter(w => w.length >= 3);
-        const firstDiff = normWords[0] !== candidateWords[0];
-        const lastDiff = normWords[normWords.length - 1] !== candidateWords[candidateWords.length - 1];
-        if (firstDiff) {
-          reason = `Primeiro nome diverge: "${normWords[0]}" vs "${candidateWords[0]}" (candidato: ${closestCandidate})`;
-        } else if (lastDiff) {
-          reason = `Último sobrenome diverge: "${normWords[normWords.length - 1]}" vs "${candidateWords[candidateWords.length - 1]}" (candidato: ${closestCandidate})`;
-        } else {
-          reason = `Palavras intermediárias insuficientes para match (candidato: ${closestCandidate})`;
-        }
-      } else if (closestCandidate && bestSharedWords > 0) {
-        reason = `Similaridade baixa - apenas ${Math.floor(bestSharedWords)} palavra(s) em comum (candidato: ${closestCandidate})`;
+      } else if (closestCandidate && bestScore >= 0.70) {
+        const { reason: scoreReason } = calculateNameMatchScore(norm, closestCandidate);
+        reason = `${scoreReason} (candidato: ${closestCandidate})`;
+      } else if (closestCandidate && bestScore > 0) {
+        const { reason: scoreReason } = calculateNameMatchScore(norm, closestCandidate);
+        reason = `${scoreReason} (candidato: ${closestCandidate})`;
       } else {
         reason = "Nenhum FAVORECIDO/BENEFICIÁRIO similar encontrado nos comprovantes";
       }
