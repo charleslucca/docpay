@@ -85,6 +85,39 @@ export function validateExcelStructure(workbook: XLSX.WorkBook): ValidationResul
 /**
  * Parse the "Todos" sheet with the validated tabular structure
  */
+/**
+ * Flexible column detection: exact → startsWith → contains, with aliases
+ */
+function findColumnIndex(headers: string[], possibleNames: string[]): number {
+  const normalizedHeaders = headers.map(h => h ? normalizeForComparison(String(h)) : "");
+  const normalizedNames = possibleNames.map(normalizeForComparison);
+
+  // Priority 1: Exact match
+  for (const name of normalizedNames) {
+    const idx = normalizedHeaders.indexOf(name);
+    if (idx !== -1) return idx;
+  }
+  // Priority 2: Starts with
+  for (const name of normalizedNames) {
+    const idx = normalizedHeaders.findIndex(h => h.startsWith(name));
+    if (idx !== -1) return idx;
+  }
+  // Priority 3: Contains
+  for (const name of normalizedNames) {
+    const idx = normalizedHeaders.findIndex(h => h.includes(name));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+const EMPRESA_ALIASES = ["EMPRESA", "EMPRESA CONVENIADA", "RAZAO SOCIAL", "COMPANY"];
+const CIDADE_ALIASES = ["CIDADE", "MUNICIPIO", "LOCALIDADE", "CITY"];
+const CONTRATO_ALIASES = ["CONTRATO", "NUMERO CONTRATO", "CONTRACT"];
+const COLABORADOR_ALIASES = ["COLABORADOR", "FUNCIONARIO", "NOME", "EMPREGADO", "NOME FUNCIONARIO"];
+const TOTAL_FUNC_ALIASES = ["TOTAL FUNCIONARIOS", "TOTAL FUNC", "QTD FUNCIONARIOS"];
+const BANCO_ALIASES = ["BANCO", "INSTITUICAO", "BANK"];
+const TIPO_ALIASES = ["TIPO", "MODALIDADE", "TYPE"];
+
 function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: string): SpreadsheetData {
   const sheet = workbook.Sheets[sheetName];
   const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
@@ -102,16 +135,15 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
     const row = jsonData[i] as unknown[];
     if (!row) continue;
 
-    for (let j = 0; j < row.length; j++) {
-      const cell = normalizeForComparison(String(row[j] || ""));
-      if (cell === "EMPRESA") empresaCol = j;
-      if (cell === "CIDADE") cidadeCol = j;
-      if (cell === "CONTRATO") contratoCol = j;
-      if (cell === "COLABORADOR") colaboradorCol = j;
-      if (cell === "TOTAL FUNCIONARIOS") totalFuncCol = j;
-      if (cell === "BANCO") bancoCol = j;
-      if (cell === "TIPO") tipoCol = j;
-    }
+    const headerStrings = row.map(cell => String(cell || ""));
+
+    empresaCol = findColumnIndex(headerStrings, EMPRESA_ALIASES);
+    cidadeCol = findColumnIndex(headerStrings, CIDADE_ALIASES);
+    contratoCol = findColumnIndex(headerStrings, CONTRATO_ALIASES);
+    colaboradorCol = findColumnIndex(headerStrings, COLABORADOR_ALIASES);
+    totalFuncCol = findColumnIndex(headerStrings, TOTAL_FUNC_ALIASES);
+    bancoCol = findColumnIndex(headerStrings, BANCO_ALIASES);
+    tipoCol = findColumnIndex(headerStrings, TIPO_ALIASES);
 
     if (empresaCol >= 0 && cidadeCol >= 0 && colaboradorCol >= 0) {
       headerRowIndex = i;
