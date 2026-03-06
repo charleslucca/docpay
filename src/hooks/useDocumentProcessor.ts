@@ -1598,8 +1598,6 @@ export function useDocumentProcessor() {
           createdAt: now,
           blobUrl,
           fileName,
-          storagePath,
-          publicUrl,
           empresa,
           municipio: cidade || undefined,
         });
