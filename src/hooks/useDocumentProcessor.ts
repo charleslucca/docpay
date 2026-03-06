@@ -233,45 +233,6 @@ export function useDocumentProcessor() {
     };
   }, [status.step, flushPendingState]);
 
-  // Clear slow operation timer on unmount or cancel
-  useEffect(() => {
-    return () => {
-      if (slowOperationTimerRef.current) {
-        clearTimeout(slowOperationTimerRef.current);
-      }
-    };
-  }, []);
-
-  const startSlowOperationTimer = (fileName: string) => {
-    // Clear any existing timer
-    if (slowOperationTimerRef.current) {
-      clearTimeout(slowOperationTimerRef.current);
-    }
-
-    currentItemStartTimeRef.current = Date.now();
-
-    slowOperationTimerRef.current = setTimeout(() => {
-      if (!cancelledRef.current) {
-        toast({
-          title: "⚠️ Operação lenta detectada",
-          description: `A extração de "${fileName}" está demorando mais de 10 segundos. O documento pode estar escaneado ou ser muito grande.`,
-          variant: "destructive",
-        });
-
-        setStatus((prev) => ({
-          ...prev,
-          isSlowOperation: true,
-        }));
-      }
-    }, SLOW_OPERATION_THRESHOLD_MS);
-  };
-
-  const clearSlowOperationTimer = () => {
-    if (slowOperationTimerRef.current) {
-      clearTimeout(slowOperationTimerRef.current);
-      slowOperationTimerRef.current = null;
-    }
-  };
 
   const updateTimeEstimate = (processedItems: number, totalItems: number) => {
     if (processedItems === 0) return;
