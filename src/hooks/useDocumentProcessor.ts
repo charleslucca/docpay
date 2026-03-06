@@ -164,8 +164,6 @@ export function useDocumentProcessor() {
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Time tracking refs
-  const slowOperationTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const currentItemStartTimeRef = useRef<number>(0);
   const processStartTimeRef = useRef<number>(0);
 
   // Persistence refs for debounced saves
