@@ -487,6 +487,7 @@ export interface PreparedPage {
   normalized: string;
   wordSet: Set<string>;
   wordsByLength: Map<number, string[]>;
+  favorecidoNames: string[]; // Pre-extracted FAVORECIDO names for fast matching
 }
 
 /**
