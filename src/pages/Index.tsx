@@ -342,8 +342,8 @@ const Index = () => {
                   <Sparkles className="h-8 w-8 text-primary" />
                 </div>
                 <h2 className="text-2xl font-bold text-foreground">Documentos Gerados</h2>
-                <p className="text-muted-foreground text-sm">
-                  {generatedDocs.length} documento(s) gerado(s) com sucesso e salvo(s) no repositório.
+            <p className="text-muted-foreground text-sm">
+                  {generatedDocs.length} documento(s) gerado(s) com sucesso.
                 </p>
               </div>
 

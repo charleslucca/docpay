@@ -1650,16 +1650,29 @@ export function useDocumentProcessor() {
     const totalDurationMs = Date.now() - processStartTimeRef.current;
     const durationLabel = formatDuration(totalDurationMs);
 
+    // Save processing history
+    try {
+      await supabase.from("processing_history").insert({
+        pdf_count: generatedDocuments.length,
+        duration_seconds: Math.round(totalDurationMs / 1000),
+        month,
+        year,
+        month_name: monthName,
+      });
+    } catch (err) {
+      console.error("[History] Failed to save processing history:", err);
+    }
+
     setStatus({
       step: "completed",
       progress: 100,
-      message: `${generatedDocuments.length} PDF(s) gerado(s), salvo no Supabase e baixado em ZIP em ${durationLabel}`,
+      message: `${generatedDocuments.length} PDF(s) gerado(s) e baixado(s) em ZIP em ${durationLabel}`,
       estimatedTimeRemaining: 0,
     });
 
     toast({
       title: "Processamento concluído",
-      description: `Tempo total: ${durationLabel}. Arquivos salvos no Supabase em ${year}/${String(month).padStart(2, "0")}/${monthName}.`,
+      description: `Tempo total: ${durationLabel}. ${generatedDocuments.length} PDF(s) gerado(s).`,
     });
   }, [matchedPairs]);
 
