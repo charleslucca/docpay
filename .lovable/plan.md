@@ -1,56 +1,75 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Correção: Extração de nomes FAVORECIDO falhando no comprovante
 
-## Diagnostico
+## Diagnóstico
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+O matching via `matchNameDirect` **já suporta** o typo "FERNANDDES" vs "FERNANDES" (Levenshtein = 1, threshold = 2). O problema real é que `extractFavorecidoNames` **não está extraindo o nome** do comprovante.
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+A regex na linha 474 exige um **lookahead** após o nome — precisa encontrar CPF, CNPJ, CONTA, dígitos de CPF, etc. imediatamente após o nome. Se o formato do PDF Sicredi não tem essas âncoras logo após o nome (ex: tem uma quebra de linha, ou campo diferente), o regex falha silenciosamente e retorna 0 nomes.
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+## Correção
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+### Arquivo: `src/lib/pdfUtils.ts`
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+**1. Adicionar fallback de extração manual** em `extractFavorecidoNames` (após o regex, linhas 489-495):
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
-
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
-
-## Correcao
-
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
-
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
-
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
-
-### Logica resultante simplificada:
+Quando o regex retorna 0 nomes, fazer busca direta:
+- Localizar cada label ("FAVORECIDO", "BENEFICIARIO", etc.) no texto
+- Após o label + `:`, capturar palavras consecutivas em maiúscula (A-Z) até encontrar uma stop-word, dígito isolado, ou fim de texto
+- Validar: mínimo 2 palavras, 5+ caracteres
 
 ```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
+// Fallback: busca direta quando regex falha
+if (names.length === 0) {
+  const labelsList = ["NOME DO FAVORECIDO", "NOME DO BENEFICIARIO", "NOME FAVORECIDO", 
+                       "NOME BENEFICIARIO", "FAVORECIDO", "BENEFICIARIO", "DESTINATARIO"];
+  const stopWords = new Set(["CPF", "CNPJ", "AGENCIA", "CONTA", "BANCO", "VALOR", 
+    "COOPERATIVA", "DATA", "MODALIDADE", "CODIGO", "NUMERO", "TIPO", "CREDITO", 
+    "DEBITO", "PAGAMENTO", "TRANSFERENCIA", "PIX", "TED", "DOC", "CHAVE", "INSTITUICAO"]);
+  
+  for (const label of labelsList) {
+    const idx = text.indexOf(label);
+    if (idx === -1) continue;
+    
+    let afterLabel = text.substring(idx + label.length).replace(/^\s*:?\s*/, "");
+    // Extrair palavras até stop-word ou dígito
+    const words: string[] = [];
+    for (const word of afterLabel.split(/\s+/)) {
+      if (stopWords.has(word) || /^\d/.test(word) || word.length === 0) break;
+      if (/^[A-Z]{2,}$/.test(word)) words.push(word);
+      else break;
+    }
+    if (words.length >= 2) {
+      const normalized = normalizeForMatch(words.join(" "));
+      if (!names.includes(normalized)) names.push(normalized);
+      break; // Usar primeiro label encontrado
+    }
   }
 }
 ```
 
+**2. Adicionar log diagnóstico** quando 0 nomes são encontrados (mesmo após fallback):
+
+```typescript
+if (names.length === 0) {
+  const hasLabel = labels.some(l => text.includes(l));
+  console.warn(`[FavorecidoExtract] 0 nomes extraídos. Label encontrado: ${hasLabel}. Texto (200 chars):`, text.substring(0, 200));
+}
+```
+
+**3. Ativar `DEBUG_MATCH = true`** temporariamente para diagnóstico.
+
 ## Impacto
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+- Se o regex principal funciona, nada muda
+- Se o regex falha por falta de lookahead anchor, o fallback extrai o nome por busca direta
+- O matching com typo (FERNANDDES ↔ FERNANDES) já funciona via Levenshtein — só precisa que o nome seja extraído
+- Sem risco de falsos positivos: exige label explícito + nome com 2+ palavras uppercase
 
-## Arquivos alterados
+## Arquivo alterado
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+| Arquivo | Alteração |
+|---|---|
+| `src/lib/pdfUtils.ts` | Fallback de extração manual em `extractFavorecidoNames` + log diagnóstico + DEBUG_MATCH=true |
 
