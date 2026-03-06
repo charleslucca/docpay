@@ -1,56 +1,62 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Diagnóstico: Dois problemas identificados
 
-## Diagnostico
+## 1. Uploads falhando (problema PRINCIPAL visível nos logs)
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+Os logs do console mostram que o matching **está funcionando** — o sistema encontrou correspondências para múltiplos funcionários (AGDA, EDIANE, MARILDA, ARIANE, EVERTON, JOSE, LUIS, ADRIANA, CLAUDIO, ERONI, TAIANE...). Porém, **todos os uploads falham** com `StorageApiError: Invalid key`.
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+**Causa raiz**: O caminho de storage contém "Março" (com `ç`), que é um caractere inválido para chaves do Supabase Storage. Na linha 120:
+```
+storagePath = `${year}/${monthStr}_${monthName}/${fileName}`
+// Resultado: "2026/03_Março/2026_Março_ARIANE_CASTRO_FERNANDES.pdf" ← INVÁLIDO
+```
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+**Correção**: Sanitizar o `storagePath` e `fileName` removendo acentos antes do upload, mantendo os nomes com acento apenas para exibição e metadados no banco.
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+## 2. Matching pode não estar 100% (secundário)
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+Embora o matching esteja funcionando melhor que antes (era 1, agora são vários), pode não estar capturando todos os 690 funcionários. Para garantir diagnóstico, ativar `DEBUG_MATCH` temporariamente e melhorar a robustez do regex FAVORECIDO.
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
-
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
-
-## Correcao
+## Alterações
 
 ### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
-
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
-
-### Logica resultante simplificada:
-
+**a) Função utilitária `sanitizeForStorage`**: Criar função que remove acentos e caracteres especiais de strings usadas em paths de storage:
 ```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
+function sanitizeForStorage(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_\-./\s]/g, "")
+    .replace(/\s+/g, "_");
 }
 ```
 
-## Impacto
+**b) Aplicar em `uploadGeneratedPdf`** (linha 120): Sanitizar o `storagePath`:
+```typescript
+const safeMonthName = sanitizeForStorage(monthName);
+const safeFileName = sanitizeForStorage(fileName);
+const storagePath = `${year}/${monthStr}_${safeMonthName}/${safeFileName}`;
+```
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+**c) Aplicar na geração do fileName** (linha 1506): Sanitizar o nome do funcionário no fileName:
+```typescript
+const safeName = sanitizeForStorage(pair.employeeName);
+const safeMonth = sanitizeForStorage(monthName);
+const fileName = `${year}_${safeMonth}_${safeName}.pdf`;
+```
 
-## Arquivos alterados
+### Arquivo: `src/lib/pdfUtils.ts`
 
-| Arquivo | Alteracao |
+**d) Melhorar regex FAVORECIDO**: Adicionar mais keywords no lookahead (`COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO`) e remover patterns com `\d` que nunca funcionam no texto normalizado.
+
+**e) Ativar DEBUG_MATCH**: Mudar `DEBUG_MATCH` para `true` temporariamente para diagnóstico.
+
+## Resumo
+
+| Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+| `src/hooks/useDocumentProcessor.ts` | Sanitizar paths de storage (remover acentos), sanitizar fileNames |
+| `src/lib/pdfUtils.ts` | Melhorar regex FAVORECIDO, ativar debug |
 
