@@ -485,19 +485,27 @@ export function tokenizeName(normalizedName: string): { firstName: string; surna
 
 /**
  * Check if first names are similar enough to pass blocking.
- * Uses Jaro-Winkler ≥ 0.82 OR Levenshtein ≤ 2 for OCR tolerance.
+ * Requires same first character + (Levenshtein ≤ 2 or Jaro-Winkler ≥ 0.85).
+ * This blocks clearly different names (DIOVANA≠GIOVANA, SIMONE≠JULIANA)
+ * while allowing OCR errors (JOICE≈JOICI, GISELE≈GISELA, KELLI≈KELLY).
  */
 export function firstNameBlocking(firstName1: string, firstName2: string): boolean {
   if (firstName1 === firstName2) return true;
   if (!firstName1 || !firstName2) return false;
 
+  // CRITICAL: Different first character = different name (blocks DIOVANA/GIOVANA, ENTIMA/FATIMA)
+  if (firstName1[0] !== firstName2[0]) return false;
+
+  // For short names (≤ 4 chars), require exact match to prevent MARIA/MARTA false positives
+  if (Math.min(firstName1.length, firstName2.length) <= 4) return false;
+
   // Levenshtein tolerance for OCR errors (JOICE/JOICI, GISELE/GISELA, KELLI/KELLY)
   const lev = levenshteinDistance(firstName1, firstName2);
-  if (lev <= 2 && Math.min(firstName1.length, firstName2.length) >= 3) return true;
+  if (lev <= 2 && Math.min(firstName1.length, firstName2.length) >= 4) return true;
 
   // Jaro-Winkler for similar sounding names
   const jw = jaroWinklerSimilarity(firstName1, firstName2);
-  if (jw >= 0.82) return true;
+  if (jw >= 0.85) return true;
 
   return false;
 }
