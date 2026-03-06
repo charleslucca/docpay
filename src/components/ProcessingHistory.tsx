@@ -1,8 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
-import { History, Loader2, RefreshCw, FileText, Clock, Calendar } from "lucide-react";
+import { History, Loader2, RefreshCw, FileText, Clock, Calendar, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
+
+interface UnprocessedItem {
+  name: string;
+  reason: string;
+  closestCandidate?: string;
+  foundInFullText?: boolean;
+  foundAsFavorecido?: boolean;
+}
 
 interface HistoryEntry {
   id: string;
@@ -12,6 +22,7 @@ interface HistoryEntry {
   month: number | null;
   year: number | null;
   month_name: string | null;
+  unprocessed_data: UnprocessedItem[] | null;
 }
 
 const monthNames = [
