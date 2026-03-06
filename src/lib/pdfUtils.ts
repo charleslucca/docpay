@@ -261,7 +261,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
 
     // 6. Nome imediatamente antes de CPF
-    /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
+    /([A-Z][A-Z\s]{5,60}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
 
     // 7. Nomes completos em maiúscula (2-5 palavras, 8-50 chars)
     /\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b/,
