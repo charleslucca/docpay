@@ -612,7 +612,6 @@ export function useDocumentProcessor() {
         );
 
         if (cancelledRef.current) {
-          clearSlowOperationTimer();
           return [];
         }
 
