@@ -145,7 +145,7 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
     /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR)\s*:?\s*/i,
     /NOME\s+DO\s+FUNCIONARIO/i,
     /RECIBO\s+DE\s+PAGAMENTO/i,
-    /\b\d{3,5}\s+[A-Z][A-Z\s]{5,35}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
+    /\b\d{3,5}\s+[A-Z][A-Z\s]{5,55}?\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|\d{5,6})\b/,
   ];
 
   // ETAPA 1: Amostragem de texto nativo - verificar se os PADRÕES aparecem
@@ -238,36 +238,36 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
   const namePatterns = [
     // 1. Formato B SERVICE: código (pode ter letras OCR) + nome + cargo/CBO na mesma linha
     // Ex: "2445 JOCELI BRZEZINSKI 513205" ou "S0 CAMILLO ALVES PELZER S14320"
-    /\b[A-Z0-9]{2,5}\s+([A-Z][A-Z\s]{5,35}?)\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|SUPERVISOR|OPERADOR|TECNICO|LIDER|ENCARREGADO|FISCAL|PORTEIRO|ZELADOR|JARDINEIRO|MOTORISTA|VIGILANTE|RECEPCIONISTA|COPEIRA|LAVADOR|PEDREIRO|PINTOR|ELETRICISTA|BOMBEIRO|MECANICO|ALMOXARIFE|S?\d{4,6})\b/,
+    /\b[A-Z0-9]{2,5}\s+([A-Z][A-Z\s]{5,55}?)\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|SUPERVISOR|OPERADOR|TECNICO|LIDER|ENCARREGADO|FISCAL|PORTEIRO|ZELADOR|JARDINEIRO|MOTORISTA|VIGILANTE|RECEPCIONISTA|COPEIRA|LAVADOR|PEDREIRO|PINTOR|ELETRICISTA|BOMBEIRO|MECANICO|ALMOXARIFE|S?\d{4,6})\b/,
 
     // 1.5 Formato B SERVICE (OCR ruidoso): nome entre mês/ano e código CBO
     // Ex: "AGOSTO DE 2025 S0 CAMILLO ALVES PELZER S14320" -> "CAMILLO ALVES PELZER"
     // Ex: "AGOSTO DE 2025 83 CLEUSA CORREA DA SILVA 514215" -> "CLEUSA CORREA DA SILVA"
-    /(?:JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+DE\s+\d{4}\s+(?:\S{1,6}\s+)?([A-Z][A-Z\s]{5,40}?)\s+(?:S?\d{4,6})\s/,
+    /(?:JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+DE\s+\d{4}\s+(?:\S{1,6}\s+)?([A-Z][A-Z\s]{5,55}?)\s+(?:S?\d{4,6})\s/,
 
     // 2. Nome seguido de cargo brasileiro
-    /([A-Z][A-Z\s]{8,45}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO|COZINHEIRA|SERVENTE)/,
+    /([A-Z][A-Z\s]{8,60}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO|COZINHEIRA|SERVENTE)/,
 
     // 3a. Label composto "NOME DO FUNCIONARIO" e variantes
-    /NOME\s+D[OA]\s+(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
+    /NOME\s+D[OA]\s+(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR)\s*:?\s*([A-Z][A-Z\s]{4,65}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
 
     // 3b. Labels explícitos brasileiros (palavra única)
-    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,50}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
+    /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,65}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
 
     // 4. Recibo de pagamento padrão
-    /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CARGO))/,
+    /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CARGO))/,
 
     // 5. Padrão para "FAVORECIDO" em comprovantes bancários
-    /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,40}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
+    /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
 
     // 6. Nome imediatamente antes de CPF
-    /([A-Z][A-Z\s]{5,40}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
+    /([A-Z][A-Z\s]{5,60}?)\s*\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}/,
 
     // 7. Nomes completos em maiúscula (2-5 palavras, 8-50 chars)
     /\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b/,
 
     // 8. Linha com nome completo isolado
-    /^([A-Z][A-Z\s]{8,40})$/m,
+    /^([A-Z][A-Z\s]{8,60})$/m,
   ];
 
   // Lista expandida de palavras inválidas (inclui headers de tabelas)
@@ -697,7 +697,7 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
   // Regex: label + optional colon + name + lookahead for common anchors
   // Uses light normalization so digits/colons/slashes are preserved for accurate anchoring
   const regex = new RegExp(
-    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,60}?)(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
+    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,80})(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
     "g",
   );
 
