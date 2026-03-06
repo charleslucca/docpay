@@ -406,13 +406,17 @@ export function useDocumentProcessor() {
         const pdf = await getCachedPdf(uploadedFile.file);
         const pageCount = pdf.numPages;
 
-        // Contagem precisa baseada no tipo de documento (analisa texto nativo)
-        const employeeCount = await countEmployeesInDocument(uploadedFile.file, type, pdf);
-
-        // Update with page count and precise employee count
+        // Atualizar pageCount IMEDIATAMENTE (instantâneo)
         const setter = type === "holerite" ? setHolerites : setComprovantes;
         setter((prev) =>
-          prev.map((f) => (f.id === uploadedFile.id ? { ...f, pageCount, estimatedEmployees: employeeCount } : f)),
+          prev.map((f) => (f.id === uploadedFile.id ? { ...f, pageCount } : f)),
+        );
+
+        // Contagem precisa em background (pode demorar para PDFs grandes)
+        const employeeCount = await countEmployeesInDocument(uploadedFile.file, type, pdf);
+
+        setter((prev) =>
+          prev.map((f) => (f.id === uploadedFile.id ? { ...f, estimatedEmployees: employeeCount } : f)),
         );
       } catch (error) {
         console.warn(`[PageCount] Error counting for ${uploadedFile.name}:`, error);

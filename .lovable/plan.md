@@ -1,53 +1,56 @@
 
 
-# Corrigir contagem de funcionários travada no upload
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Causa raiz
+## Diagnostico
 
-Em `src/hooks/useDocumentProcessor.ts` (linhas 406-416), o `pageCount` e `estimatedEmployees` são definidos **juntos** em uma única atualização de estado, **após** `countEmployeesInDocument` terminar. Para um PDF de 690 páginas, essa função lê todas as páginas sequencialmente, demorando muito. A UI fica presa em "Contando páginas..." porque `pageCount` permanece `undefined` até toda a contagem acabar.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-## Correção
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-### Arquivo: `src/hooks/useDocumentProcessor.ts` (linhas 404-416)
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-Separar em duas atualizações de estado:
-1. Definir `pageCount` **imediatamente** após `getCachedPdf` (instantâneo)
-2. Definir `estimatedEmployees` **depois** da contagem completa
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
 
 ```typescript
-const countPagePromises = newFiles.map(async (uploadedFile) => {
-  try {
-    const pdf = await getCachedPdf(uploadedFile.file);
-    const pageCount = pdf.numPages;
-
-    // Atualizar pageCount IMEDIATAMENTE (instantâneo)
-    const setter = type === "holerite" ? setHolerites : setComprovantes;
-    setter((prev) =>
-      prev.map((f) => (f.id === uploadedFile.id ? { ...f, pageCount } : f)),
-    );
-
-    // Contagem precisa em background (pode demorar para PDFs grandes)
-    const employeeCount = await countEmployeesInDocument(uploadedFile.file, type, pdf);
-
-    setter((prev) =>
-      prev.map((f) => (f.id === uploadedFile.id ? { ...f, estimatedEmployees: employeeCount } : f)),
-    );
-  } catch (error) {
-    console.warn(`[PageCount] Error counting for ${uploadedFile.name}:`, error);
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
   }
-});
+}
 ```
 
 ## Impacto
 
-- O `pageCount` aparece instantaneamente na UI (ex: "690 páginas")
-- O `estimatedEmployees` aparece depois, quando a contagem terminar
-- A UI do `FileDropzone` já lida com `estimatedEmployees` undefined — mostra apenas o número de páginas até a contagem completar
-- Nenhuma outra funcionalidade é afetada
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-## Arquivo alterado
+## Arquivos alterados
 
-| Arquivo | Alteração |
-|---|---|
-| `src/hooks/useDocumentProcessor.ts` | Separar atualização de `pageCount` (imediata) e `estimatedEmployees` (assíncrona) |
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
