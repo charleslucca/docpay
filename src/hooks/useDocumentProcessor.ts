@@ -1576,11 +1576,6 @@ export function useDocumentProcessor() {
           empresaCount.set(empresa, (empresaCount.get(empresa) || 0) + 1);
         }
 
-        // Upload to Supabase storage and save metadata to DB
-        const { storagePath, publicUrl } = await uploadGeneratedPdf(
-          fileName, pdfBlob, year, month, monthName, pair.employeeName, empresa || undefined, cidade || undefined
-        );
-
         // Add to zip
         zip.file(fileName, pdfBlob);
 
