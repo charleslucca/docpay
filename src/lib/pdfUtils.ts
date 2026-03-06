@@ -697,7 +697,7 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
   // Regex: label + optional colon + name + lookahead for common anchors
   // Uses light normalization so digits/colons/slashes are preserved for accurate anchoring
   const regex = new RegExp(
-    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,60}?)(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
+    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,80})(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
     "g",
   );
 
