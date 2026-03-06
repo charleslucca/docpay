@@ -243,7 +243,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     // 1.5 Formato B SERVICE (OCR ruidoso): nome entre mês/ano e código CBO
     // Ex: "AGOSTO DE 2025 S0 CAMILLO ALVES PELZER S14320" -> "CAMILLO ALVES PELZER"
     // Ex: "AGOSTO DE 2025 83 CLEUSA CORREA DA SILVA 514215" -> "CLEUSA CORREA DA SILVA"
-    /(?:JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+DE\s+\d{4}\s+(?:\S{1,6}\s+)?([A-Z][A-Z\s]{5,40}?)\s+(?:S?\d{4,6})\s/,
+    /(?:JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+DE\s+\d{4}\s+(?:\S{1,6}\s+)?([A-Z][A-Z\s]{5,55}?)\s+(?:S?\d{4,6})\s/,
 
     // 2. Nome seguido de cargo brasileiro
     /([A-Z][A-Z\s]{8,45}?)\s+(?:SUPERVISOR|ANALISTA|AUXILIAR|GERENTE|COORDENADOR|ASSISTENTE|OPERADOR|TECNICO|ADMINISTRATIVO|COZINHEIRA|SERVENTE)/,
