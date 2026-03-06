@@ -16,6 +16,7 @@ import {
   normalizeForMatch,
   extractFavorecidoNames,
   matchNameDirect,
+  calculateNameMatchScore,
 } from "@/lib/pdfUtils";
 import {
   getCachedPdf,
