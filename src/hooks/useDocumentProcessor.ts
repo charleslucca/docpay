@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import JSZip from "jszip";
-import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from "@/types/document";
+import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument, UnprocessedEmployee } from "@/types/document";
 import { type SpreadsheetData, findEmployeeInSpreadsheet } from "@/lib/excelUtils";
 import {
   extractEmployeeName,
