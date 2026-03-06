@@ -14,6 +14,8 @@ import {
   type PreparedPage,
   type PreparedTarget,
   normalizeForMatch,
+  extractFavorecidoNames,
+  matchNameDirect,
 } from "@/lib/pdfUtils";
 import {
   getCachedPdf,
