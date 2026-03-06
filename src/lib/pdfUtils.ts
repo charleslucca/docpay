@@ -375,6 +375,16 @@ export function extractCPF(text: string): string | null {
 // Debug flag - disable logs for performance
 const DEBUG_MATCH = true;
 
+// Common Brazilian surnames that should NOT be sufficient alone for matching
+const COMMON_SURNAMES = new Set([
+  "SILVA", "SANTOS", "OLIVEIRA", "SOUZA", "SOUSA", "RODRIGUES", "FERREIRA",
+  "ALVES", "PEREIRA", "LIMA", "GOMES", "COSTA", "RIBEIRO", "MARTINS",
+  "CARVALHO", "ARAUJO", "MELO", "BARBOSA", "CARDOSO", "NASCIMENTO",
+  "MOREIRA", "NUNES", "MARQUES", "MACHADO", "MENDES", "FREITAS",
+  "DIAS", "TEIXEIRA", "ANDRADE", "VIEIRA", "MONTEIRO", "MOURA",
+  "CAVALCANTE", "CORREIA", "CORREA", "LOPES", "ROSA", "JESUS",
+]);
+
 // Levenshtein distance for fuzzy matching (tolerates OCR errors)
 function levenshteinDistance(a: string, b: string): number {
   if (a.length === 0) return b.length;
@@ -395,6 +405,222 @@ function levenshteinDistance(a: string, b: string): number {
   }
 
   return matrix[b.length][a.length];
+}
+
+/**
+ * Jaro-Winkler similarity score (0-1, 1 = identical)
+ * Gives higher weight to prefix matches, ideal for name comparison
+ */
+export function jaroWinklerSimilarity(s1: string, s2: string): number {
+  if (s1 === s2) return 1;
+  if (s1.length === 0 || s2.length === 0) return 0;
+
+  const maxDist = Math.floor(Math.max(s1.length, s2.length) / 2) - 1;
+  if (maxDist < 0) return s1 === s2 ? 1 : 0;
+
+  const s1Matches = new Array(s1.length).fill(false);
+  const s2Matches = new Array(s2.length).fill(false);
+
+  let matches = 0;
+  let transpositions = 0;
+
+  for (let i = 0; i < s1.length; i++) {
+    const start = Math.max(0, i - maxDist);
+    const end = Math.min(i + maxDist + 1, s2.length);
+
+    for (let j = start; j < end; j++) {
+      if (s2Matches[j] || s1[i] !== s2[j]) continue;
+      s1Matches[i] = true;
+      s2Matches[j] = true;
+      matches++;
+      break;
+    }
+  }
+
+  if (matches === 0) return 0;
+
+  let k = 0;
+  for (let i = 0; i < s1.length; i++) {
+    if (!s1Matches[i]) continue;
+    while (!s2Matches[k]) k++;
+    if (s1[i] !== s2[k]) transpositions++;
+    k++;
+  }
+
+  const jaro = (matches / s1.length + matches / s2.length + (matches - transpositions / 2) / matches) / 3;
+
+  // Winkler modification: boost for common prefix (up to 4 chars)
+  let prefix = 0;
+  for (let i = 0; i < Math.min(4, Math.min(s1.length, s2.length)); i++) {
+    if (s1[i] === s2[i]) prefix++;
+    else break;
+  }
+
+  return jaro + prefix * 0.1 * (1 - jaro);
+}
+
+/**
+ * Remove common particles from a normalized name for matching purposes.
+ * Particles: DE, DA, DO, DOS, DAS
+ */
+export function removeParticles(name: string): string {
+  return name
+    .split(" ")
+    .filter(w => !["DE", "DA", "DO", "DOS", "DAS", "DEL"].includes(w))
+    .join(" ");
+}
+
+/**
+ * Tokenize a normalized name into first name and surnames (excluding particles).
+ */
+export function tokenizeName(normalizedName: string): { firstName: string; surnames: string[] } {
+  const withoutParticles = removeParticles(normalizedName);
+  const parts = withoutParticles.split(" ").filter(w => w.length >= 2);
+  if (parts.length === 0) return { firstName: "", surnames: [] };
+  return {
+    firstName: parts[0],
+    surnames: parts.slice(1),
+  };
+}
+
+/**
+ * Check if first names are similar enough to pass blocking.
+ * Requires same first character + (Levenshtein ≤ 2 or Jaro-Winkler ≥ 0.85).
+ * This blocks clearly different names (DIOVANA≠GIOVANA, SIMONE≠JULIANA)
+ * while allowing OCR errors (JOICE≈JOICI, GISELE≈GISELA, KELLI≈KELLY).
+ */
+export function firstNameBlocking(firstName1: string, firstName2: string): boolean {
+  if (firstName1 === firstName2) return true;
+  if (!firstName1 || !firstName2) return false;
+
+  // CRITICAL: Different first character = different name (blocks DIOVANA/GIOVANA, ENTIMA/FATIMA)
+  if (firstName1[0] !== firstName2[0]) return false;
+
+  // For very short names (≤ 3 chars), require exact match
+  if (Math.min(firstName1.length, firstName2.length) <= 3) return false;
+
+  // Levenshtein tolerance for OCR errors (JOICE/JOICI, GISELE/GISELA, KELLI/KELLY)
+  const lev = levenshteinDistance(firstName1, firstName2);
+  if (lev <= 2 && Math.min(firstName1.length, firstName2.length) >= 4) return true;
+
+  // Jaro-Winkler for similar sounding names
+  const jw = jaroWinklerSimilarity(firstName1, firstName2);
+  if (jw >= 0.85) return true;
+
+  return false;
+}
+
+/**
+ * Check if two names have sufficient surname intersection.
+ * Common surnames alone are not sufficient - need at least one non-common surname match
+ * OR at least 2 common surname matches.
+ */
+function surnameIntersection(surnames1: string[], surnames2: string[]): { count: number; hasDistinctive: boolean } {
+  let count = 0;
+  let hasDistinctive = false;
+
+  for (const s1 of surnames1) {
+    for (const s2 of surnames2) {
+      // Exact match or fuzzy (Levenshtein ≤ 1 for OCR)
+      if (s1 === s2 || levenshteinDistance(s1, s2) <= 1) {
+        count++;
+        if (!COMMON_SURNAMES.has(s1)) {
+          hasDistinctive = true;
+        }
+        break;
+      }
+      // Prefix match for truncated names (comprovante cuts off last chars)
+      // e.g., "FERNANDES" vs "FERNA", "CONCEICAO" vs "CONCEI"
+      if (s1.length >= 5 && s2.length >= 4) {
+        const shorter = s1.length <= s2.length ? s1 : s2;
+        const longer = s1.length > s2.length ? s1 : s2;
+        if (longer.startsWith(shorter) && shorter.length >= Math.min(5, longer.length * 0.6)) {
+          count++;
+          if (!COMMON_SURNAMES.has(longer)) {
+            hasDistinctive = true;
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  return { count, hasDistinctive };
+}
+
+/**
+ * Calculate a comprehensive match score between two names.
+ * Returns a score from 0 to 1 and a reason string.
+ */
+export function calculateNameMatchScore(
+  name1Normalized: string,
+  name2Normalized: string,
+): { score: number; reason: string } {
+  if (name1Normalized === name2Normalized) return { score: 1.0, reason: "EXATO" };
+
+  const tokens1 = tokenizeName(name1Normalized);
+  const tokens2 = tokenizeName(name2Normalized);
+
+  if (!tokens1.firstName || !tokens2.firstName) return { score: 0, reason: "NOME VAZIO" };
+
+  // BLOCKING: first name must pass
+  if (!firstNameBlocking(tokens1.firstName, tokens2.firstName)) {
+    return { score: 0, reason: `PRIMEIRO NOME DIFERENTE: ${tokens1.firstName} ≠ ${tokens2.firstName}` };
+  }
+
+  // Surname intersection
+  const surnameCheck = surnameIntersection(tokens1.surnames, tokens2.surnames);
+  if (surnameCheck.count === 0 && tokens1.surnames.length > 0 && tokens2.surnames.length > 0) {
+    return { score: 0.1, reason: "SEM SOBRENOME EM COMUM" };
+  }
+
+  // Check last surname match (fuzzy) for boosting
+  const lastSurname1 = tokens1.surnames[tokens1.surnames.length - 1] || "";
+  const lastSurname2 = tokens2.surnames[tokens2.surnames.length - 1] || "";
+  const lastSurnameMatches = lastSurname1 && lastSurname2 && (
+    lastSurname1 === lastSurname2 ||
+    levenshteinDistance(lastSurname1, lastSurname2) <= 1 ||
+    (lastSurname1.length >= 4 && lastSurname2.length >= 4 && (
+      lastSurname1.startsWith(lastSurname2) || lastSurname2.startsWith(lastSurname1)
+    ))
+  );
+
+  // Jaro-Winkler on full normalized names (without particles)
+  const clean1 = removeParticles(name1Normalized);
+  const clean2 = removeParticles(name2Normalized);
+  const jwScore = jaroWinklerSimilarity(clean1, clean2);
+
+  // First-name similarity factor
+  const firstNameJW = jaroWinklerSimilarity(tokens1.firstName, tokens2.firstName);
+
+  // Composite score: weighted combination
+  let score = jwScore;
+
+  // Bonus for distinctive surname match
+  if (surnameCheck.hasDistinctive) score = Math.min(1.0, score + 0.05);
+
+  // Penalty if only common surnames match and first names aren't exact
+  // BUT skip penalty if first+last surname explicitly match (different middle name case)
+  if (surnameCheck.count > 0 && !surnameCheck.hasDistinctive && tokens1.surnames.length > 1 && !lastSurnameMatches) {
+    score = Math.min(score, 0.75);
+  }
+
+  // BOOST: If first name + last surname both match, guarantee high score
+  if (firstNameJW >= 0.85 && lastSurnameMatches) {
+    score = Math.max(score, 0.87);
+  }
+
+  // Penalty if first names are fuzzy (not exact) - multiply by firstNameJW
+  if (tokens1.firstName !== tokens2.firstName) {
+    score = score * firstNameJW;
+  }
+
+  let reason: string;
+  if (score >= 0.85) reason = `SCORE ALTO (${score.toFixed(2)})`;
+  else if (score >= 0.70) reason = `CANDIDATO PARCIAL (${score.toFixed(2)})`;
+  else reason = `SCORE BAIXO (${score.toFixed(2)})`;
+
+  return { score, reason };
 }
 
 // Helper: Find ALL occurrences of a substring in text
@@ -530,40 +756,16 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
 }
 
 /**
- * Direct name-to-name comparison using word coverage and Levenshtein.
- * More precise than substring search in full page text.
+ * Direct name-to-name comparison using multi-stage matching:
+ * 1. Exact match
+ * 2. First-name blocking (Jaro-Winkler ≥ 0.82 or Levenshtein ≤ 2)
+ * 3. Last-name fuzzy match (Levenshtein ≤ 2 or prefix for truncated names)
+ * 4. Surname intersection check
+ * 5. Overall Jaro-Winkler score ≥ 0.85
  */
 export function matchNameDirect(targetNormalized: string, candidateNormalized: string): boolean {
-  if (targetNormalized === candidateNormalized) return true;
-
-  const targetWords = targetNormalized.split(" ").filter(w => w.length >= 3);
-  const candidateWords = candidateNormalized.split(" ").filter(w => w.length >= 3);
-  if (targetWords.length === 0 || candidateWords.length === 0) return false;
-
-  // STRICT: First name and last name must match EXACTLY (no fuzzy)
-  // This prevents false positives like DIOVANA ≠ GIOVANA, MARIA ≠ MARTA
-  const tFirst = targetWords[0], tLast = targetWords[targetWords.length - 1];
-  const cFirst = candidateWords[0], cLast = candidateWords[candidateWords.length - 1];
-
-  if (tFirst !== cFirst) return false;
-  if (tLast !== cLast) return false;
-
-  // For intermediate words: allow max 1 edit (OCR tolerance only)
-  let matched = 2; // first and last already matched
-  const tMiddle = targetWords.slice(1, -1);
-  const cMiddle = candidateWords.slice(1, -1);
-
-  for (const tw of tMiddle) {
-    for (const cw of cMiddle) {
-      if (tw === cw || levenshteinDistance(tw, cw) <= 1) {
-        matched++;
-        break;
-      }
-    }
-  }
-
-  const required = Math.max(2, Math.ceil(targetWords.length * 0.6));
-  return matched >= required;
+  const { score } = calculateNameMatchScore(targetNormalized, candidateNormalized);
+  return score >= 0.85;
 }
 
 /**
