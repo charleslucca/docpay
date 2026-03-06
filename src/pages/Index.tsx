@@ -345,9 +345,12 @@ const Index = () => {
                 <h2 className="text-2xl font-bold text-foreground">Documentos Gerados</h2>
             <p className="text-muted-foreground text-sm">
                   {generatedDocs.length} documento(s) gerado(s) com sucesso.
-                </p>
+               </p>
               </div>
 
+              {unprocessedList.length > 0 && (
+                <UnprocessedList items={unprocessedList} totalProcessed={generatedDocs.length} />
+              )}
 
               <div className="flex justify-center gap-4 flex-wrap">
                 <Button
