@@ -1719,9 +1719,13 @@ export function useDocumentProcessor() {
       estimatedTimeRemaining: 0,
     });
 
+    const totalExtracted = matchedPairs.length + (window as any).__unprocessedCount || 0;
+    const unprocessedCount = (window as any).__unprocessedCount || 0;
     toast({
       title: "Processamento concluído",
-      description: `Tempo total: ${durationLabel}. ${generatedDocuments.length} PDF(s) gerado(s).`,
+      description: unprocessedCount > 0
+        ? `${generatedDocuments.length} PDF(s) gerado(s) em ${durationLabel}. ${unprocessedCount} funcionário(s) sem correspondência — veja o console (F12) para o relatório completo.`
+        : `${generatedDocuments.length} PDF(s) gerado(s) em ${durationLabel}.`,
     });
   }, [matchedPairs]);
 
