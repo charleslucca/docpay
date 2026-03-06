@@ -924,7 +924,6 @@ export function useDocumentProcessor() {
 
         return entries;
       } catch (error) {
-        clearSlowOperationTimer();
         console.error(`[OCR] Error processing ${holerite.name}:`, error);
         setHolerites((prev) =>
           prev.map((h) =>
