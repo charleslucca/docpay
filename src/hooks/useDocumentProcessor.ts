@@ -114,66 +114,6 @@ const sanitizeForStorage = (text: string): string => {
     .replace(/^_|_$/g, "");
 };
 
-const uploadGeneratedPdf = async (
-  fileName: string,
-  pdfBlob: Blob,
-  year: number,
-  month: number,
-  monthName: string,
-  employeeName: string,
-  empresa?: string,
-  municipio?: string,
-): Promise<{ storagePath?: string; publicUrl?: string }> => {
-  try {
-    // Get current user ID for scoped storage path
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      console.error("[Supabase] No authenticated user for upload");
-      return {};
-    }
-
-    const monthStr = String(month).padStart(2, "0");
-    const safeMonthName = sanitizeForStorage(monthName);
-    const safeFileName = sanitizeForStorage(fileName);
-    const storagePath = `${user.id}/${year}/${monthStr}_${safeMonthName}/${safeFileName}`;
-
-    const { error: uploadError } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
-      cacheControl: "3600",
-      upsert: true,
-      contentType: "application/pdf",
-    });
-
-    if (uploadError) {
-      console.error("[Supabase] Upload error:", uploadError);
-      return {};
-    }
-
-    const { data: urlData } = await supabase.storage.from(GENERATED_BUCKET).createSignedUrl(storagePath, 3600);
-    const publicUrl = urlData?.signedUrl || "";
-
-    // Save metadata to database
-    const { error: dbError } = await supabase.from("generated_documents").insert({
-      employee_name: employeeName,
-      year,
-      month,
-      month_name: monthName,
-      file_name: fileName,
-      storage_path: storagePath,
-      empresa: empresa || null,
-      municipio: municipio || null,
-    });
-
-    if (dbError) {
-      console.error("[Supabase] DB insert error:", dbError);
-    }
-
-    return { storagePath, publicUrl };
-  } catch (error) {
-    console.error("[Supabase] Upload failed:", error);
-    return {};
-  }
-};
-
 // Process items in parallel with concurrency limit and cancellation support
 async function processInBatches<T, R>(
   items: T[],
