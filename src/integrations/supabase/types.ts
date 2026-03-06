@@ -190,6 +190,7 @@ export type Database = {
           month: number | null
           month_name: string | null
           pdf_count: number
+          unprocessed_data: Json | null
           user_id: string
           year: number | null
         }
@@ -200,6 +201,7 @@ export type Database = {
           month?: number | null
           month_name?: string | null
           pdf_count: number
+          unprocessed_data?: Json | null
           user_id?: string
           year?: number | null
         }
@@ -210,6 +212,7 @@ export type Database = {
           month?: number | null
           month_name?: string | null
           pdf_count?: number
+          unprocessed_data?: Json | null
           user_id?: string
           year?: number | null
         }
