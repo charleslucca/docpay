@@ -343,7 +343,6 @@ export function useDocumentProcessor() {
   const cancelProcessing = useCallback(async () => {
     cancelledRef.current = true;
     setIsCancelling(true);
-    clearSlowOperationTimer();
     setStatus((prev) => ({ ...prev, message: "Cancelando..." }));
 
     // Force-terminate all OCR workers immediately to stop pending jobs
