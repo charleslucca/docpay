@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText, Sparkles, RotateCcw, Play, Zap, StopCircle,
-  UserCircle, LogOut, User, Shield, ArrowLeft, ArrowRight, FolderOpen,
+  UserCircle, LogOut, User, Shield, ArrowLeft, ArrowRight, FolderOpen, History,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
