@@ -1666,7 +1666,7 @@ export function useDocumentProcessor() {
           storagePath,
           publicUrl,
           empresa,
-          municipio,
+          municipio: cidade || undefined,
         });
       } catch (error) {
         console.error(`[PDF] Error generating PDF for ${pair.employeeName}:`, error);
