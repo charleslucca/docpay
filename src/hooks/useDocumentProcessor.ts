@@ -1708,13 +1708,17 @@ export function useDocumentProcessor() {
 
     // Save processing history
     try {
+      const unprocessedForDb = unprocessedList.length > 0
+        ? unprocessedList.map(u => ({ name: u.name, reason: u.reason, closestCandidate: u.closestCandidate, foundInFullText: u.foundInFullText, foundAsFavorecido: u.foundAsFavorecido }))
+        : null;
       await supabase.from("processing_history").insert({
         pdf_count: generatedDocuments.length,
         duration_seconds: Math.round(totalDurationMs / 1000),
         month,
         year,
         month_name: monthName,
-      });
+        unprocessed_data: unprocessedForDb,
+      } as any);
     } catch (err) {
       console.error("[History] Failed to save processing history:", err);
     }
