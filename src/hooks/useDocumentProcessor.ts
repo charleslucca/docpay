@@ -125,10 +125,17 @@ const uploadGeneratedPdf = async (
   municipio?: string,
 ): Promise<{ storagePath?: string; publicUrl?: string }> => {
   try {
+    // Get current user ID for scoped storage path
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.error("[Supabase] No authenticated user for upload");
+      return {};
+    }
+
     const monthStr = String(month).padStart(2, "0");
     const safeMonthName = sanitizeForStorage(monthName);
     const safeFileName = sanitizeForStorage(fileName);
-    const storagePath = `${year}/${monthStr}_${safeMonthName}/${safeFileName}`;
+    const storagePath = `${user.id}/${year}/${monthStr}_${safeMonthName}/${safeFileName}`;
 
     const { error: uploadError } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
       cacheControl: "3600",
