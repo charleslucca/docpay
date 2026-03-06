@@ -549,6 +549,16 @@ export function prepareTargetNameForMatch(name: string): PreparedTarget {
  * Returns true if target name is found in page
  */
 export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): boolean {
+  // 0. FAVORECIDO MATCH - highest priority for comprovantes (most precise)
+  if (page.favorecidoNames.length > 0) {
+    for (const favName of page.favorecidoNames) {
+      if (matchNameDirect(target.normalized, favName)) {
+        if (DEBUG_MATCH) console.log("[Match] Favorecido:", target.original, "↔", favName);
+        return true;
+      }
+    }
+  }
+
   // 1. EXACT MATCH - fastest path (using pre-normalized strings)
   if (page.normalized.includes(target.normalized)) {
     if (DEBUG_MATCH) console.log("[Match] Exato:", target.original);
