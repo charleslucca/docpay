@@ -59,7 +59,7 @@ const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
-const GENERATED_BUCKET = "generated-documents"; // Dedicated public bucket for generated PDFs
+
 
 const namesEquivalent = (a: string, b: string): boolean => {
   const na = normalizeForMatch(a);
