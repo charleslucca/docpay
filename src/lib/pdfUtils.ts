@@ -555,6 +555,8 @@ export interface PreparedTarget {
 
 /**
  * Prepare a page text for fast matching - call ONCE per page
+ * Uses RAW text for favorecido extraction (better regex accuracy)
+ * and normalized text for fuzzy/substring matching.
  */
 export function preparePageForMatch(pageText: string): PreparedPage {
   const normalized = normalizeForMatch(pageText);
@@ -571,7 +573,9 @@ export function preparePageForMatch(pageText: string): PreparedPage {
     wordsByLength.get(len)!.push(word);
   }
 
-  const favorecidoNames = extractFavorecidoNames(normalized);
+  // CRITICAL FIX: Pass RAW text to extractFavorecidoNames, not the fully-stripped normalized text.
+  // normalizeForMatch strips digits/colons/slashes which are needed by the regex lookaheads.
+  const favorecidoNames = extractFavorecidoNames(pageText);
 
   return { normalized, wordSet, wordsByLength, favorecidoNames };
 }
