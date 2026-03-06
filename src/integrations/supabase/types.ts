@@ -134,48 +134,6 @@ export type Database = {
           },
         ]
       }
-      generated_documents: {
-        Row: {
-          created_at: string
-          employee_name: string
-          empresa: string | null
-          file_name: string
-          id: string
-          month: number
-          month_name: string
-          municipio: string | null
-          storage_path: string
-          user_id: string
-          year: number
-        }
-        Insert: {
-          created_at?: string
-          employee_name: string
-          empresa?: string | null
-          file_name: string
-          id?: string
-          month: number
-          month_name: string
-          municipio?: string | null
-          storage_path: string
-          user_id?: string
-          year: number
-        }
-        Update: {
-          created_at?: string
-          employee_name?: string
-          empresa?: string | null
-          file_name?: string
-          id?: string
-          month?: number
-          month_name?: string
-          municipio?: string | null
-          storage_path?: string
-          user_id?: string
-          year?: number
-        }
-        Relationships: []
-      }
       ip_whitelist: {
         Row: {
           active: boolean
@@ -221,6 +179,39 @@ export type Database = {
           id?: string
           nome?: string
           nome_normalizado?: string
+        }
+        Relationships: []
+      }
+      processing_history: {
+        Row: {
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          month: number | null
+          month_name: string | null
+          pdf_count: number
+          user_id: string
+          year: number | null
+        }
+        Insert: {
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          month?: number | null
+          month_name?: string | null
+          pdf_count: number
+          user_id?: string
+          year?: number | null
+        }
+        Update: {
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          month?: number | null
+          month_name?: string | null
+          pdf_count?: number
+          user_id?: string
+          year?: number | null
         }
         Relationships: []
       }
