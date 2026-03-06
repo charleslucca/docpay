@@ -1352,15 +1352,6 @@ export function useDocumentProcessor() {
       pageTextSamples: pageSamples,
     });
 
-    // Toast with diagnostic info if match rate is low
-    if (pairs.length < totalEntries * 0.5 && totalEntries > 0) {
-      const matchPct = Math.round((pairs.length / totalEntries) * 100);
-      toast({
-        title: `Correspondência baixa: ${pairs.length}/${totalEntries} (${matchPct}%)`,
-        description: `${pagesWithText} páginas com texto legível, ${totalFavorecidoNames} nomes "FAVORECIDO" encontrados. ${unmatchedNames.length} funcionários sem correspondência. Verifique se o comprovante correto foi carregado.`,
-        variant: "destructive",
-      });
-    }
 
     // Final status with OCR metrics for 0-matches diagnostic
     setStatus({
