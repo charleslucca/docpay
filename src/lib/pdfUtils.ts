@@ -373,7 +373,7 @@ export function extractCPF(text: string): string | null {
 }
 
 // Debug flag - disable logs for performance
-const DEBUG_MATCH = true;
+const DEBUG_MATCH = false;
 
 // Levenshtein distance for fuzzy matching (tolerates OCR errors)
 function levenshteinDistance(a: string, b: string): number {
