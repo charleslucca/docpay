@@ -1,56 +1,72 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Correção da Correspondência entre Holerite e Comprovante
 
-## Diagnostico
+## Causa Raiz Identificada
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+Após análise detalhada, identifiquei **3 problemas** que juntos explicam por que apenas 1 de 690 funcionários é correspondido:
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+### Problema 1: Normalização inconsistente entre holerite e comprovante
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+A função `normalizeForMatch` (usada para comparar nomes) remove dígitos com `.replace(/[^A-Z\s]/g, "")`, mas NÃO aplica as mesmas correções de OCR que `extractEmployeeName` aplica (0→O, 1→I, 5→S). Resultado: se o comprovante tem um nome com ruído OCR como "D0S" (zero), vira "DS" em vez de "DOS".
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+### Problema 2: Sem estratégia de extração direta do nome no comprovante
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+O sistema busca o nome do holerite como substring no texto INTEIRO da página do comprovante. Se a página tiver ruído, espaçamento irregular, ou texto fragmentado pelo extrator de PDF, a busca falha. Uma estratégia mais eficaz seria **extrair o nome do FAVORECIDO** do comprovante e comparar nome-a-nome.
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+### Problema 3: Sem diagnóstico do matching
 
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+Quando falha, não há logs mostrando o que foi encontrado nos comprovantes nem quais nomes falharam. Impossível diagnosticar.
 
-## Correcao
+## Correções
 
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
+### 1. `src/lib/pdfUtils.ts`
 
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+**a) Melhorar `normalizeForMatch`**: Aplicar correções OCR (0→O, 1→I, 5→S entre letras) ANTES de remover caracteres não-alfabéticos.
 
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+**b) Nova função `extractFavorecidoNames`**: Extrai TODOS os nomes após "FAVORECIDO" de uma página de comprovante. Retorna array de nomes normalizados (um comprovante SICREDI pode ter um favorecido por página).
 
-### Logica resultante simplificada:
+**c) Nova função `matchNameDirect`**: Compara dois nomes normalizados usando Levenshtein proporcional e cobertura de palavras. Mais robusto que buscar substring no texto inteiro.
 
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
+**d) Atualizar `findNameInPreparedPage`**: Adicionar como **primeiro check** (antes do exact match): se a página contém "FAVORECIDO", extrair o nome e fazer match direto com o target. Isso é mais preciso que buscar substring.
+
+### 2. `src/hooks/useDocumentProcessor.ts`
+
+**a) Log de diagnóstico pós-matching**: Após o loop de matching, logar:
+- Total de funcionários do holerite
+- Total de páginas de comprovante processadas
+- Quantas páginas tinham texto não-vazio (>50 chars)
+- Primeiros 5 nomes não correspondidos
+- Amostra do texto normalizado de 3 páginas de comprovante (primeiros 200 chars)
+- Total de nomes "FAVORECIDO" encontrados nos comprovantes
+
+**b) Toast com detalhes**: Se matches < 50% do total, exibir toast com informação adicional sobre quantas páginas do comprovante tinham texto legível.
+
+### 3. Interface `PreparedPage` (em pdfUtils.ts)
+
+Adicionar campo `favorecidoNames: string[]` para armazenar nomes extraídos do label "FAVORECIDO" durante a preparação da página (feito 1 vez, reutilizado para todos os 690 comparisons).
+
+## Fluxo corrigido
+
+```text
+Comprovante página → normalizeForMatch → PreparedPage
+                                          ├── normalized (texto completo)
+                                          ├── wordSet / wordsByLength
+                                          └── favorecidoNames[] ← NOVO
+
+Para cada funcionário do holerite:
+  1. FAVORECIDO MATCH (NOVO): comparar nome do holerite diretamente
+     com cada favorecidoNames[] usando fuzzy name matching
+  2. EXACT MATCH: page.normalized.includes(target.normalized)
+  3. FIRST+LAST proximity
+  4. FUZZY word matching
+  5. SUBSTRING coverage
 ```
-
-## Impacto
-
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
 ## Arquivos alterados
 
-| Arquivo | Alteracao |
+| Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+| `src/lib/pdfUtils.ts` | OCR corrections em normalizeForMatch, extractFavorecidoNames, matchNameDirect, favorecidoNames em PreparedPage |
+| `src/hooks/useDocumentProcessor.ts` | Logs de diagnóstico após matching, toast informativo |
 
