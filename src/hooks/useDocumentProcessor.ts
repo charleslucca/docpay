@@ -55,7 +55,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 
 const CONCURRENCY_LIMIT = 5;
-const SLOW_OPERATION_THRESHOLD_MS = 10000; // 10 seconds
+
 const OCR_RETRY_TEXT_LEN = 60; // Retry OCR if text is too short and no name found
 const OCR_RETRY_TIMEOUT_MS = 45000; // Longer timeout for retry pass
 const OCR_SCALE_RETRY = 2.4; // Higher scale for accuracy on difficult pages
