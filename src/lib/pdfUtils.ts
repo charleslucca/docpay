@@ -267,7 +267,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     /\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b/,
 
     // 8. Linha com nome completo isolado
-    /^([A-Z][A-Z\s]{8,40})$/m,
+    /^([A-Z][A-Z\s]{8,60})$/m,
   ];
 
   // Lista expandida de palavras inválidas (inclui headers de tabelas)
