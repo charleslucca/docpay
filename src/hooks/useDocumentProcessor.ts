@@ -1131,6 +1131,10 @@ export function useDocumentProcessor() {
         const preparedPages = pageTexts.map(preparePageForMatch);
         comprovanteTextsMap.set(comprovante.id, { file: comprovante.file, pageTexts, preparedPages });
 
+        // Diagnostic log: show extracted FAVORECIDO names per page
+        console.log(`[UNIFICAÇÃO] Comprovante "${comprovante.name}": favorecidos extraídos:`,
+          preparedPages.map((p, i) => `pág${i+1}: ${p.favorecidoNames.length} [${p.favorecidoNames.join(', ')}]`));
+
         setComprovantes((prev) => prev.map((c) => (c.id === comprovante.id ? { ...c, progress: 60 } : c)));
       } catch (error) {
         clearSlowOperationTimer();
