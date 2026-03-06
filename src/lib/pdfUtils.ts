@@ -608,9 +608,11 @@ export function calculateNameMatchScore(
     score = Math.max(score, 0.87);
   }
 
-  // Penalty if first names are fuzzy (not exact) - reduce confidence
+  // Penalty if first names are fuzzy (not exact) - multiply by firstNameJW
+  // This ensures MARIA/MARTA (JW~0.89) gets penalized enough to fail,
+  // while JOICE/JOICI with longer matching rest of name still passes
   if (tokens1.firstName !== tokens2.firstName) {
-    score = score * (0.5 + 0.5 * firstNameJW);
+    score = score * firstNameJW;
   }
 
   let reason: string;
