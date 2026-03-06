@@ -1514,7 +1514,7 @@ export function useDocumentProcessor() {
         );
 
         const blobUrl = URL.createObjectURL(pdfBlob);
-        const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, "_")}.pdf`;
+        const fileName = `${year}_${sanitizeForStorage(monthName)}_${sanitizeForStorage(pair.employeeName.replace(/\s+/g, "_"))}.pdf`;
 
         // Look up employee in spreadsheet for enrichment
         let empresa: string | undefined;

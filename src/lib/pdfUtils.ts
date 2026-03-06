@@ -434,7 +434,7 @@ export function normalizeForMatch(text: string): string {
 export function extractFavorecidoNames(normalizedText: string): string[] {
   const names: string[] = [];
   // Match FAVORECIDO followed by a name (with optional colon/spaces)
-  const regex = /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{4,60}?)(?=\s*(?:CPF|CNPJ|AG[E\s]|AGENCIA|CONTA|BANCO|VALOR|\d{3}[.\s]?\d{3}|\d{2}\/\d{2}|$))/g;
+  const regex = /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{4,60}?)(?=\s*(?:CPF|CNPJ|AG[E\s]|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|\d{3}[.\s]?\d{3}|\d{2}\/\d{2}|$))/g;
   let match;
   while ((match = regex.exec(normalizedText)) !== null) {
     const name = match[1].trim().replace(/\s+/g, " ");
