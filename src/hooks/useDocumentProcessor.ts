@@ -889,8 +889,6 @@ export function useDocumentProcessor() {
           setHolerites((prev) => prev.map((h) => (h.id === holerite.id ? { ...h, progress: 90 } : h)));
         }
 
-        clearSlowOperationTimer();
-
         // Diagnostic log: extraction summary
         console.log(
           `[Extraction Summary] File "${holerite.name}": ${entries.length} names extracted from ${totalPages} pages (native: ${nativeProcessed}, cache: ${cacheHits}, OCR: ${ocrCompleted})`,
