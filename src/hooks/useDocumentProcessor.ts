@@ -1738,7 +1738,7 @@ export function useDocumentProcessor() {
         ? `${generatedDocuments.length} PDF(s) gerado(s) em ${durationLabel}. ${unprocessedCount} funcionário(s) sem correspondência — veja o console (F12) para o relatório completo.`
         : `${generatedDocuments.length} PDF(s) gerado(s) em ${durationLabel}.`,
     });
-  }, [matchedPairs]);
+  }, [matchedPairs, unprocessedList]);
 
   const reset = useCallback(async () => {
     // Revoke blob URLs to free memory
