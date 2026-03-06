@@ -1,56 +1,82 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Remover upload ao Storage e criar histórico de processamento
 
-## Diagnostico
+## Resumo
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+1. **Remover** o upload de PDFs ao bucket `generated-documents` do Supabase Storage (e todo código relacionado)
+2. **Remover** a tabela `generated_documents` e o componente `DocumentRepository` (repositório que depende do Storage)
+3. **Criar** uma tabela `processing_history` para registrar data, hora e quantidade de PDFs gerados
+4. **Inserir** um registro no histórico ao final de cada processamento
+5. **Exibir** o histórico na interface
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+## Alterações
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+### 1. Migration SQL — criar `processing_history` e dropar `generated_documents`
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+```sql
+CREATE TABLE public.processing_history (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL DEFAULT auth.uid(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  pdf_count integer NOT NULL,
+  duration_seconds integer,
+  month integer,
+  year integer,
+  month_name text
+);
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+ALTER TABLE public.processing_history ENABLE ROW LEVEL SECURITY;
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+CREATE POLICY "Users can view own history" ON public.processing_history
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
 
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+CREATE POLICY "Users can insert own history" ON public.processing_history
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
 
-## Correcao
-
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
-
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
-
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
-
-### Logica resultante simplificada:
-
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
+DROP TABLE IF EXISTS public.generated_documents;
 ```
 
-## Impacto
+### 2. `src/hooks/useDocumentProcessor.ts`
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+- **Remover** a função `uploadGeneratedPdf` (linhas 117-172) e a constante `GENERATED_BUCKET`
+- **Remover** a chamada `await uploadGeneratedPdf(...)` no loop de geração (linha 1640-1641)
+- **Remover** `storagePath`/`publicUrl` dos objetos `generatedDocuments`
+- **Adicionar** no final da geração (após ZIP download): inserir registro em `processing_history`
+
+```typescript
+await supabase.from("processing_history").insert({
+  pdf_count: generatedDocuments.length,
+  duration_seconds: Math.round(totalDurationMs / 1000),
+  month,
+  year,
+  month_name: monthName,
+});
+```
+
+- Atualizar mensagens de toast/status para não mencionar "Supabase"
+
+### 3. `src/components/DocumentRepository.tsx` → Substituir por histórico
+
+Transformar o componente em um **histórico de processamento** que lista os registros da tabela `processing_history` (data/hora, quantidade de PDFs, duração). Sem links para download (já não há arquivos no Storage).
+
+### 4. `src/pages/Index.tsx`
+
+- Atualizar referências ao `DocumentRepository` para mostrar o histórico
+- Atualizar textos ("repositório" → "histórico")
+- Remover propriedade `documents` do componente (já não existe)
+
+### 5. `src/types/document.ts`
+
+- Remover campos `storagePath` e `publicUrl` de `GeneratedDocument`
 
 ## Arquivos alterados
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+| Arquivo | Alteração |
+|---|---|
+| Migration SQL | Criar `processing_history`, dropar `generated_documents` |
+| `src/hooks/useDocumentProcessor.ts` | Remover upload Storage, adicionar insert histórico |
+| `src/components/DocumentRepository.tsx` | Reescrever como lista de histórico |
+| `src/pages/Index.tsx` | Atualizar referências e textos |
+| `src/types/document.ts` | Remover campos de storage |
 
