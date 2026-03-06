@@ -496,8 +496,8 @@ export function firstNameBlocking(firstName1: string, firstName2: string): boole
   // CRITICAL: Different first character = different name (blocks DIOVANA/GIOVANA, ENTIMA/FATIMA)
   if (firstName1[0] !== firstName2[0]) return false;
 
-  // For short names (≤ 4 chars), require exact match to prevent MARIA/MARTA false positives
-  if (Math.min(firstName1.length, firstName2.length) <= 4) return false;
+  // For short names (≤ 5 chars), require exact match to prevent MARIA/MARTA false positives
+  if (Math.min(firstName1.length, firstName2.length) <= 5) return false;
 
   // Levenshtein tolerance for OCR errors (JOICE/JOICI, GISELE/GISELA, KELLI/KELLY)
   const lev = levenshteinDistance(firstName1, firstName2);
