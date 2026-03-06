@@ -549,11 +549,11 @@ export function matchNameDirect(targetNormalized: string, candidateNormalized: s
   const lastOk = tLast === cLast || levenshteinDistance(tLast, cLast) <= 1;
   if (!firstOk || !lastOk) return false;
 
-  // Count matched words
+  // Count matched words (stricter: max 1 edit for words ≤ 6 chars, 2 for longer)
   let matched = 0;
   for (const tw of targetWords) {
     for (const cw of candidateWords) {
-      const maxErr = tw.length <= 5 ? 1 : tw.length <= 8 ? 2 : 3;
+      const maxErr = tw.length <= 6 ? 1 : 2;
       if (tw === cw || levenshteinDistance(tw, cw) <= maxErr) {
         matched++;
         break;
