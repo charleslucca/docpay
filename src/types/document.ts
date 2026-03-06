@@ -41,6 +41,21 @@ export interface MatchedPair {
   error?: string;
 }
 
+export interface UnprocessedEmployee {
+  index: number;
+  name: string;
+  normalized: string;
+  firstName: string;
+  lastName: string;
+  sourceFile: string;
+  sourcePage: number;
+  foundInFullText: boolean;
+  foundAsFavorecido: boolean;
+  closestCandidate: string;
+  sharedWordsWithClosest: number;
+  reason: string;
+}
+
 export interface ProcessingStatus {
   step: "idle" | "uploading" | "extracting" | "matching" | "generating" | "completed";
   progress: number;
