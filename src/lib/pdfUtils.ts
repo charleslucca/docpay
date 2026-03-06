@@ -596,6 +596,9 @@ export function calculateNameMatchScore(
   // Composite score: weighted combination
   let score = jwScore;
 
+  // Bonus for distinctive surname match
+  if (surnameCheck.hasDistinctive) score = Math.min(1.0, score + 0.05);
+
   // Penalty if only common surnames match and first names aren't exact
   // BUT skip penalty if first+last surname explicitly match (different middle name case)
   if (surnameCheck.count > 0 && !surnameCheck.hasDistinctive && tokens1.surnames.length > 1 && !lastSurnameMatches) {
@@ -603,14 +606,11 @@ export function calculateNameMatchScore(
   }
 
   // BOOST: If first name + last surname both match, guarantee high score
-  // This handles "same person, different middle name" cases (JOAO CARLOS SILVA ≈ JOAO PEREIRA SILVA)
   if (firstNameJW >= 0.85 && lastSurnameMatches) {
     score = Math.max(score, 0.87);
   }
 
   // Penalty if first names are fuzzy (not exact) - multiply by firstNameJW
-  // This ensures MARIA/MARTA (JW~0.89) gets penalized enough to fail,
-  // while JOICE/JOICI with longer matching rest of name still passes
   if (tokens1.firstName !== tokens2.firstName) {
     score = score * firstNameJW;
   }
