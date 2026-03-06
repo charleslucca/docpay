@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
-import { MatchedPairCard } from '@/components/MatchedPairCard';
+
 import { DocumentRepository } from '@/components/DocumentRepository';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
@@ -304,23 +304,6 @@ const Index = () => {
                 </div>
               )}
 
-              {/* Matched pairs */}
-              {matchedPairs.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-primary" />
-                    Correspondências Encontradas
-                    <span className="text-sm font-normal text-muted-foreground">
-                      ({matchedPairs.length})
-                    </span>
-                  </h3>
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {matchedPairs.map((pair, index) => (
-                      <MatchedPairCard key={pair.id} pair={pair} index={index} />
-                    ))}
-                  </div>
-                </div>
-              )}
 
               <div className="flex justify-between">
                 <Button
@@ -364,16 +347,6 @@ const Index = () => {
                 </p>
               </div>
 
-              {/* Summary of generated docs */}
-              {matchedPairs.length > 0 && (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {matchedPairs
-                    .filter((p) => p.status === 'completed')
-                    .map((pair, index) => (
-                      <MatchedPairCard key={pair.id} pair={pair} index={index} />
-                    ))}
-                </div>
-              )}
 
               <div className="flex justify-center gap-4 flex-wrap">
                 <Button
