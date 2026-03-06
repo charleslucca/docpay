@@ -1017,9 +1017,6 @@ export function useDocumentProcessor() {
         aggregatedMetrics.timeoutCount += metrics.timeoutCount;
         aggregatedMetrics.retryCount += metrics.retryCount;
 
-        // Clear timer when done
-        clearSlowOperationTimer();
-
         // Don't store if cancelled
         if (cancelledRef.current) return;
 
