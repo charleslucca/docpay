@@ -52,7 +52,7 @@ export interface ProcessingStatus {
   currentItem?: string;
   totalItems?: number;
   processedItems?: number;
-  isSlowOperation?: boolean;
+  
   // OCR progress tracking
   ocrProgress?: number; // 0-100 during OCR recognition
   isOcrActive?: boolean;

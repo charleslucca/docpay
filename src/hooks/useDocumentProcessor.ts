@@ -1030,7 +1030,6 @@ export function useDocumentProcessor() {
 
         setComprovantes((prev) => prev.map((c) => (c.id === comprovante.id ? { ...c, progress: 60 } : c)));
       } catch (error) {
-        clearSlowOperationTimer();
         console.error(`[Comprovante] Error processing ${comprovante.name}:`, error);
         setComprovantes((prev) =>
           prev.map((c) =>
