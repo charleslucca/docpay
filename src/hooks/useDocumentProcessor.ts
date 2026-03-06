@@ -1586,7 +1586,7 @@ export function useDocumentProcessor() {
         setStatus((prev) => ({
           ...prev,
           progress: ((index + 1) / matchedPairs.length) * 100,
-          message: `Gerando e salvando PDF ${index + 1} de ${matchedPairs.length}...`,
+          message: `Gerando PDF ${index + 1} de ${matchedPairs.length}...`,
         }));
 
         generatedDocuments.push({
