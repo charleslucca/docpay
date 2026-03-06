@@ -723,40 +723,16 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
 }
 
 /**
- * Direct name-to-name comparison using word coverage and Levenshtein.
- * More precise than substring search in full page text.
+ * Direct name-to-name comparison using multi-stage matching:
+ * 1. Exact match
+ * 2. First-name blocking (Jaro-Winkler ≥ 0.82 or Levenshtein ≤ 2)
+ * 3. Last-name fuzzy match (Levenshtein ≤ 2 or prefix for truncated names)
+ * 4. Surname intersection check
+ * 5. Overall Jaro-Winkler score ≥ 0.85
  */
 export function matchNameDirect(targetNormalized: string, candidateNormalized: string): boolean {
-  if (targetNormalized === candidateNormalized) return true;
-
-  const targetWords = targetNormalized.split(" ").filter(w => w.length >= 3);
-  const candidateWords = candidateNormalized.split(" ").filter(w => w.length >= 3);
-  if (targetWords.length === 0 || candidateWords.length === 0) return false;
-
-  // STRICT: First name and last name must match EXACTLY (no fuzzy)
-  // This prevents false positives like DIOVANA ≠ GIOVANA, MARIA ≠ MARTA
-  const tFirst = targetWords[0], tLast = targetWords[targetWords.length - 1];
-  const cFirst = candidateWords[0], cLast = candidateWords[candidateWords.length - 1];
-
-  if (tFirst !== cFirst) return false;
-  if (tLast !== cLast) return false;
-
-  // For intermediate words: allow max 1 edit (OCR tolerance only)
-  let matched = 2; // first and last already matched
-  const tMiddle = targetWords.slice(1, -1);
-  const cMiddle = candidateWords.slice(1, -1);
-
-  for (const tw of tMiddle) {
-    for (const cw of cMiddle) {
-      if (tw === cw || levenshteinDistance(tw, cw) <= 1) {
-        matched++;
-        break;
-      }
-    }
-  }
-
-  const required = Math.max(2, Math.ceil(targetWords.length * 0.6));
-  return matched >= required;
+  const { score } = calculateNameMatchScore(targetNormalized, candidateNormalized);
+  return score >= 0.85;
 }
 
 /**
