@@ -247,7 +247,6 @@ export function useDocumentProcessor() {
       processedItems,
       totalItems,
       estimatedTimeRemaining: estimatedRemaining,
-      isSlowOperation: false, // Reset slow flag when item completes
     }));
   };
 
