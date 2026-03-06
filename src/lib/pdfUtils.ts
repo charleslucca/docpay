@@ -373,7 +373,7 @@ export function extractCPF(text: string): string | null {
 }
 
 // Debug flag - disable logs for performance
-const DEBUG_MATCH = true;
+const DEBUG_MATCH = false;
 
 // Levenshtein distance for fuzzy matching (tolerates OCR errors)
 function levenshteinDistance(a: string, b: string): number {
@@ -613,93 +613,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
     }
   }
 
-  // 1. EXACT MATCH - fastest path (using pre-normalized strings)
-  if (page.normalized.includes(target.normalized)) {
-    if (DEBUG_MATCH) console.log("[Match] Exato:", target.original);
-    return true;
-  }
-
-  // 2. FIRST + LAST NAME proximity check
-  if (target.firstName && target.lastName) {
-    const allFirstPositions = findAllOccurrences(page.normalized, target.firstName);
-    const allLastPositions = findAllOccurrences(page.normalized, target.lastName);
-
-    // Check if any pair is within 150 characters
-    for (const firstPos of allFirstPositions) {
-      for (const lastPos of allLastPositions) {
-        if (Math.abs(firstPos - lastPos) < 150) {
-          if (DEBUG_MATCH) console.log("[Match] Primeiro+Último nome:", target.original);
-          return true;
-        }
-      }
-    }
-  }
-
-  // 3. FUZZY MATCH with optimized word lookup
-  let matchedWords = 0;
-  const targetWordCount = target.words.length;
-
-  for (let i = 0; i < targetWordCount; i++) {
-    const targetWord = target.words[i];
-
-    // Early exit: if remaining words can't reach required matches
-    const remainingWords = targetWordCount - i;
-    if (matchedWords + remainingWords < target.requiredMatches) {
-      break;
-    }
-
-    // Exact match using Set (O(1) lookup)
-    if (page.wordSet.has(targetWord)) {
-      matchedWords++;
-      if (matchedWords >= target.requiredMatches) {
-        if (DEBUG_MATCH) console.log(`[Match] Fuzzy exato ${matchedWords}/${targetWordCount}:`, target.original);
-        return true;
-      }
-      continue;
-    }
-
-    // Fuzzy: proportional tolerance
-    const maxErrors = targetWord.length <= 5 ? 1 : targetWord.length <= 8 ? 2 : 3;
-
-    // Search only in buckets of similar length (HUGE optimization)
-    let foundFuzzy = false;
-    for (let lenDiff = 0; lenDiff <= maxErrors && !foundFuzzy; lenDiff++) {
-      for (const len of [targetWord.length - lenDiff, targetWord.length + lenDiff]) {
-        if (len < 3) continue;
-        const candidates = page.wordsByLength.get(len);
-        if (!candidates) continue;
-
-        for (const pageWord of candidates) {
-          if (levenshteinDistance(pageWord, targetWord) <= maxErrors) {
-            matchedWords++;
-            foundFuzzy = true;
-            break;
-          }
-        }
-        if (foundFuzzy) break;
-      }
-    }
-
-    if (matchedWords >= target.requiredMatches) {
-      if (DEBUG_MATCH) console.log(`[Match] Fuzzy ${matchedWords}/${targetWordCount}:`, target.original);
-      return true;
-    }
-  }
-
-  // 4. SUBSTRING MATCH - if >60% of name characters are present
-  if (target.charCount > 0) {
-    let matchedChars = 0;
-    for (const word of target.words) {
-      if (page.normalized.includes(word)) {
-        matchedChars += word.length;
-      }
-    }
-    if (matchedChars / target.charCount >= 0.6) {
-      if (DEBUG_MATCH) console.log(`[Match] Substring ${matchedChars}/${target.charCount}:`, target.original);
-      return true;
-    }
-  }
-
+  // No favorecido names extracted = no match possible
   return false;
 }
 
