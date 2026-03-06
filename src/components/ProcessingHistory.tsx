@@ -109,38 +109,17 @@ export function ProcessingHistory() {
         <div className="space-y-3">
           {entries.map((entry) => {
             const date = new Date(entry.created_at);
+            const unprocessed = entry.unprocessed_data;
+            const unprocessedCount = unprocessed?.length || 0;
             return (
-              <div
+              <HistoryEntryRow
                 key={entry.id}
-                className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
-              >
-                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <FileText className="h-5 w-5 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">
-                    {entry.pdf_count} PDF(s) gerado(s)
-                  </p>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3 w-3" />
-                      {date.toLocaleDateString("pt-BR")} às{" "}
-                      {date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                    {entry.duration_seconds != null && (
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {formatDuration(entry.duration_seconds)}
-                      </span>
-                    )}
-                    {entry.month_name && entry.year && (
-                      <span>
-                        {entry.month_name}/{entry.year}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
+                entry={entry}
+                date={date}
+                unprocessedCount={unprocessedCount}
+                unprocessed={unprocessed}
+                formatDuration={formatDuration}
+              />
             );
           })}
         </div>
