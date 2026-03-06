@@ -12,6 +12,7 @@ import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
 
 import { ProcessingHistory } from '@/components/ProcessingHistory';
+import { UnprocessedList } from '@/components/UnprocessedList';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
 import { Button } from '@/components/ui/button';
@@ -41,7 +42,7 @@ const Index = () => {
   const { profile, role, signOut } = useAuth();
   const navigate = useNavigate();
   const {
-    holerites, comprovantes, matchedPairs, generatedDocs, spreadsheetData,
+    holerites, comprovantes, matchedPairs, generatedDocs, unprocessedList, spreadsheetData,
     setSpreadsheetData, status, isCancelling, hasSavedState, isCheckingState,
     addFiles, removeFile, processDocuments, generatePdfs, cancelProcessing,
     reset, resumeProcessing, discardSavedState, reprocessWithEnhancedOcr,
@@ -344,9 +345,12 @@ const Index = () => {
                 <h2 className="text-2xl font-bold text-foreground">Documentos Gerados</h2>
             <p className="text-muted-foreground text-sm">
                   {generatedDocs.length} documento(s) gerado(s) com sucesso.
-                </p>
+               </p>
               </div>
 
+              {unprocessedList.length > 0 && (
+                <UnprocessedList items={unprocessedList} totalProcessed={generatedDocs.length} />
+              )}
 
               <div className="flex justify-center gap-4 flex-wrap">
                 <Button

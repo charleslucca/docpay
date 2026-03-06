@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import JSZip from "jszip";
-import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument } from "@/types/document";
+import { UploadedFile, MatchedPair, ProcessingStatus, GeneratedDocument, UnprocessedEmployee } from "@/types/document";
 import { type SpreadsheetData, findEmployeeInSpreadsheet } from "@/lib/excelUtils";
 import {
   extractEmployeeName,
@@ -148,6 +148,7 @@ export function useDocumentProcessor() {
   const [comprovantes, setComprovantes] = useState<UploadedFile[]>([]);
   const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
   const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocument[]>([]);
+  const [unprocessedList, setUnprocessedList] = useState<UnprocessedEmployee[]>([]);
   const [spreadsheetData, setSpreadsheetData] = useState<SpreadsheetData | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>({
     step: "idle",
@@ -1408,6 +1409,9 @@ export function useDocumentProcessor() {
 
     // Store unprocessed count for toast reference
     (window as any).__unprocessedCount = unprocessedReport.length;
+    
+    // Save to React state for UI display
+    setUnprocessedList(unprocessedReport as UnprocessedEmployee[]);
 
 
     // Final status with OCR metrics for 0-matches diagnostic
@@ -1704,13 +1708,17 @@ export function useDocumentProcessor() {
 
     // Save processing history
     try {
+      const unprocessedForDb = unprocessedList.length > 0
+        ? unprocessedList.map(u => ({ name: u.name, reason: u.reason, closestCandidate: u.closestCandidate, foundInFullText: u.foundInFullText, foundAsFavorecido: u.foundAsFavorecido }))
+        : null;
       await supabase.from("processing_history").insert({
         pdf_count: generatedDocuments.length,
         duration_seconds: Math.round(totalDurationMs / 1000),
         month,
         year,
         month_name: monthName,
-      });
+        unprocessed_data: unprocessedForDb,
+      } as any);
     } catch (err) {
       console.error("[History] Failed to save processing history:", err);
     }
@@ -1730,7 +1738,7 @@ export function useDocumentProcessor() {
         ? `${generatedDocuments.length} PDF(s) gerado(s) em ${durationLabel}. ${unprocessedCount} funcionário(s) sem correspondência — veja o console (F12) para o relatório completo.`
         : `${generatedDocuments.length} PDF(s) gerado(s) em ${durationLabel}.`,
     });
-  }, [matchedPairs]);
+  }, [matchedPairs, unprocessedList]);
 
   const reset = useCallback(async () => {
     // Revoke blob URLs to free memory
@@ -1752,6 +1760,7 @@ export function useDocumentProcessor() {
     setComprovantes([]);
     setMatchedPairs([]);
     setGeneratedDocs([]);
+    setUnprocessedList([]);
     setStatus({ step: "idle", progress: 0, message: "" });
     setHasSavedState(false);
   }, [generatedDocs, matchedPairs]);
@@ -1795,6 +1804,7 @@ export function useDocumentProcessor() {
     comprovantes,
     matchedPairs,
     generatedDocs,
+    unprocessedList,
     spreadsheetData,
     setSpreadsheetData,
     status,

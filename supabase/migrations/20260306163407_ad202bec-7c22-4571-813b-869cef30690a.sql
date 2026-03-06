@@ -1,0 +1,1 @@
+ALTER TABLE public.processing_history ADD COLUMN unprocessed_data jsonb DEFAULT NULL;

@@ -1,47 +1,56 @@
 
 
-# Exibir lista de funcionários não processados na UI
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Problema
-O relatório de funcionários não processados existe apenas no `console.log`. O usuário precisa ver essa informação diretamente na interface, integrada ao histórico de processamento.
+## Diagnostico
 
-## Solução
-Armazenar o relatório de não-processados em estado React e exibi-lo como uma seção expansível (collapsible) na tela de resultados (step 4) e no histórico.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-## Alterações
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-### 1. `src/types/document.ts`
-- Adicionar interface `UnprocessedEmployee` com campos: `name`, `reason`, `closestCandidate`, `foundInFullText`, `foundAsFavorecido`
-- Adicionar ao `ProcessingStatus`: campo opcional `unprocessedReport`
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-### 2. `src/hooks/useDocumentProcessor.ts`
-- Após gerar o `unprocessedReport` (linha ~1410), salvar no estado em vez de só logar no console
-- Adicionar estado `unprocessedList` ao hook e expô-lo no return
-- Persistir resumo (contagem + lista de nomes/motivos) no `processing_history` do Supabase via coluna JSONB nova, OU armazenar localmente no estado do hook para exibição imediata
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### 3. Novo componente: `src/components/UnprocessedList.tsx`
-- Componente com `Collapsible` que mostra:
-  - Header: "X funcionário(s) não processado(s)" com ícone de alerta
-  - Conteúdo expandido: tabela com colunas Nome, Motivo, Candidato Próximo
-  - Botão para exportar CSV da lista
-- Usa cores de alerta (amber/yellow) para destaque sem ser destrutivo
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-### 4. `src/pages/Index.tsx`
-- No step 4 (Resultados), importar e renderizar `<UnprocessedList>` abaixo do resumo de documentos gerados
-- Passar `unprocessedList` do hook como prop
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-### 5. Supabase (opcional, recomendado)
-- Adicionar coluna `unprocessed_data` (jsonb, nullable) à tabela `processing_history` para persistir o relatório
-- Atualizar o insert no `generatePdfs` para incluir os dados
-- Atualizar `ProcessingHistory.tsx` para exibir contagem de não-processados em cada entrada do histórico, com expansão para ver detalhes
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-## Fluxo
-```text
-Processamento termina
-  → unprocessedReport gerado (já existe)
-  → salvo em estado React (novo)
-  → exibido em UnprocessedList no step 4 (novo)
-  → salvo no processing_history via Supabase (novo)
-  → visível no histórico com expand (novo)
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
 ```
+
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
