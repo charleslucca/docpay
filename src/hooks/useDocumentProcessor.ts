@@ -1760,6 +1760,7 @@ export function useDocumentProcessor() {
     setComprovantes([]);
     setMatchedPairs([]);
     setGeneratedDocs([]);
+    setUnprocessedList([]);
     setStatus({ step: "idle", progress: 0, message: "" });
     setHasSavedState(false);
   }, [generatedDocs, matchedPairs]);
