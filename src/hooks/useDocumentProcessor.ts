@@ -14,6 +14,8 @@ import {
   type PreparedPage,
   type PreparedTarget,
   normalizeForMatch,
+  extractFavorecidoNames,
+  matchNameDirect,
 } from "@/lib/pdfUtils";
 import {
   getCachedPdf,
@@ -1300,6 +1302,54 @@ export function useDocumentProcessor() {
     }
 
     console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
+
+    // === DIAGNOSTIC LOGS ===
+    const unmatchedNames = preparedEntries
+      .filter(e => !matchedEntryKeys.has(`${e.originalHolerite.id}_${e.pageNumber}`))
+      .map(e => e.name);
+
+    // Count pages with text and favorecido names
+    let pagesWithText = 0;
+    let totalFavorecidoNames = 0;
+    const favorecidoSamples: string[] = [];
+    const pageSamples: string[] = [];
+
+    for (const [, extracted] of comprovanteTextsMap) {
+      for (let i = 0; i < extracted.preparedPages.length; i++) {
+        const pp = extracted.preparedPages[i];
+        if (pp.normalized.length > 50) pagesWithText++;
+        if (pp.favorecidoNames.length > 0) {
+          totalFavorecidoNames += pp.favorecidoNames.length;
+          if (favorecidoSamples.length < 5) {
+            favorecidoSamples.push(...pp.favorecidoNames.slice(0, 2));
+          }
+        }
+        if (pageSamples.length < 3) {
+          pageSamples.push(pp.normalized.substring(0, 200));
+        }
+      }
+    }
+
+    console.log(`[Match Diagnostics]`, {
+      totalHoleriteEntries: totalEntries,
+      matchesFound: pairs.length,
+      unmatched: unmatchedNames.length,
+      unmatchedSample: unmatchedNames.slice(0, 10),
+      comprovantePagesWithText: pagesWithText,
+      totalFavorecidoNamesExtracted: totalFavorecidoNames,
+      favorecidoSamples: favorecidoSamples.slice(0, 5),
+      pageTextSamples: pageSamples,
+    });
+
+    // Toast with diagnostic info if match rate is low
+    if (pairs.length < totalEntries * 0.5 && totalEntries > 0) {
+      const matchPct = Math.round((pairs.length / totalEntries) * 100);
+      toast({
+        title: `Correspondência baixa: ${pairs.length}/${totalEntries} (${matchPct}%)`,
+        description: `${pagesWithText} páginas com texto legível, ${totalFavorecidoNames} nomes "FAVORECIDO" encontrados. ${unmatchedNames.length} funcionários sem correspondência. Verifique se o comprovante correto foi carregado.`,
+        variant: "destructive",
+      });
+    }
 
     // Final status with OCR metrics for 0-matches diagnostic
     setStatus({

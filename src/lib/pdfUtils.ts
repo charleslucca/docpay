@@ -418,9 +418,66 @@ export function normalizeForMatch(text: string): string {
     .toUpperCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[-‐‑–—']/g, " ") // Normalize hyphens/apostrophes
+    .replace(/([A-Z])0([A-Z])/g, "$1O$2") // OCR: 0 -> O between letters
+    .replace(/([A-Z])1([A-Z])/g, "$1I$2") // OCR: 1 -> I between letters
+    .replace(/([A-Z])5([A-Z])/g, "$1S$2") // OCR: 5 -> S between letters
     .replace(/[^A-Z\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Extract all "FAVORECIDO" names from a comprovante page text.
+ * Returns normalized names found after FAVORECIDO labels.
+ */
+export function extractFavorecidoNames(normalizedText: string): string[] {
+  const names: string[] = [];
+  // Match FAVORECIDO followed by a name (with optional colon/spaces)
+  const regex = /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{4,60}?)(?=\s*(?:CPF|CNPJ|AG[E\s]|AGENCIA|CONTA|BANCO|VALOR|\d{3}[.\s]?\d{3}|\d{2}\/\d{2}|$))/g;
+  let match;
+  while ((match = regex.exec(normalizedText)) !== null) {
+    const name = match[1].trim().replace(/\s+/g, " ");
+    if (name.split(" ").filter(w => w.length > 1).length >= 2) {
+      names.push(normalizeForMatch(name));
+    }
+  }
+  return names;
+}
+
+/**
+ * Direct name-to-name comparison using word coverage and Levenshtein.
+ * More precise than substring search in full page text.
+ */
+export function matchNameDirect(targetNormalized: string, candidateNormalized: string): boolean {
+  if (targetNormalized === candidateNormalized) return true;
+
+  const targetWords = targetNormalized.split(" ").filter(w => w.length >= 3);
+  const candidateWords = candidateNormalized.split(" ").filter(w => w.length >= 3);
+  if (targetWords.length === 0 || candidateWords.length === 0) return false;
+
+  // First + last name must match (exact or fuzzy)
+  const tFirst = targetWords[0], tLast = targetWords[targetWords.length - 1];
+  const cFirst = candidateWords[0], cLast = candidateWords[candidateWords.length - 1];
+
+  const firstOk = tFirst === cFirst || levenshteinDistance(tFirst, cFirst) <= (tFirst.length <= 5 ? 1 : 2);
+  const lastOk = tLast === cLast || levenshteinDistance(tLast, cLast) <= (tLast.length <= 5 ? 1 : 2);
+  if (!firstOk || !lastOk) return false;
+
+  // Count matched words
+  let matched = 0;
+  for (const tw of targetWords) {
+    for (const cw of candidateWords) {
+      const maxErr = tw.length <= 5 ? 1 : tw.length <= 8 ? 2 : 3;
+      if (tw === cw || levenshteinDistance(tw, cw) <= maxErr) {
+        matched++;
+        break;
+      }
+    }
+  }
+
+  const required = Math.max(2, Math.ceil(targetWords.length * 0.6));
+  return matched >= required;
 }
 
 /**
@@ -430,6 +487,7 @@ export interface PreparedPage {
   normalized: string;
   wordSet: Set<string>;
   wordsByLength: Map<number, string[]>;
+  favorecidoNames: string[]; // Pre-extracted FAVORECIDO names for fast matching
 }
 
 /**
@@ -463,7 +521,9 @@ export function preparePageForMatch(pageText: string): PreparedPage {
     wordsByLength.get(len)!.push(word);
   }
 
-  return { normalized, wordSet, wordsByLength };
+  const favorecidoNames = extractFavorecidoNames(normalized);
+
+  return { normalized, wordSet, wordsByLength, favorecidoNames };
 }
 
 /**
@@ -489,6 +549,16 @@ export function prepareTargetNameForMatch(name: string): PreparedTarget {
  * Returns true if target name is found in page
  */
 export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): boolean {
+  // 0. FAVORECIDO MATCH - highest priority for comprovantes (most precise)
+  if (page.favorecidoNames.length > 0) {
+    for (const favName of page.favorecidoNames) {
+      if (matchNameDirect(target.normalized, favName)) {
+        if (DEBUG_MATCH) console.log("[Match] Favorecido:", target.original, "↔", favName);
+        return true;
+      }
+    }
+  }
+
   // 1. EXACT MATCH - fastest path (using pre-normalized strings)
   if (page.normalized.includes(target.normalized)) {
     if (DEBUG_MATCH) console.log("[Match] Exato:", target.original);
