@@ -406,42 +406,30 @@ export function findEmployeeInSpreadsheet(name: string, records: EmployeeRecord[
 
   if (nameWords.length === 0) return null;
 
+  // 1. Exact match (highest confidence)
   const exact = records.find((r) => normalizeForComparison(r.colaborador) === normalizedName);
   if (exact) return exact;
 
+  // 2. First + last name exact match, but ONLY if unique (no ambiguity)
   const firstName = nameWords[0];
   const lastName = nameWords[nameWords.length - 1];
 
-  const firstLastMatch = records.find((r) => {
+  const firstLastMatches = records.filter((r) => {
     const rNorm = normalizeForComparison(r.colaborador);
     const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
     if (rWords.length < 2) return false;
     return rWords[0] === firstName && rWords[rWords.length - 1] === lastName;
   });
-  if (firstLastMatch) return firstLastMatch;
 
-  const overlapMatch = records.find((r) => {
-    const rNorm = normalizeForComparison(r.colaborador);
-    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
-    const sharedWords = nameWords.filter((w) => rWords.includes(w));
-    const minWords = Math.min(nameWords.length, rWords.length);
-    return sharedWords.length >= 2 && sharedWords.length >= Math.ceil(minWords * 0.6);
-  });
-  if (overlapMatch) return overlapMatch;
+  // Only return if there's exactly ONE match (no ambiguity)
+  if (firstLastMatches.length === 1) return firstLastMatches[0];
 
-  const partialMatch = records.find((r) => {
-    const rNorm = normalizeForComparison(r.colaborador);
-    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
-    if (rWords.length === 0) return false;
-    if (rWords[0] !== firstName) return false;
-    const rLast = rWords[rWords.length - 1];
-    if (lastName.length >= 3 && rLast.length >= 3) {
-      return rLast.substring(0, 3) === lastName.substring(0, 3);
-    }
-    return false;
-  });
+  // NO further fallbacks (overlap/partial removed to prevent wrong company assignment)
+  if (firstLastMatches.length > 1) {
+    console.warn(`[Excel] Ambiguous match for "${name}": ${firstLastMatches.length} candidates with same first+last name. Skipping.`);
+  }
 
-  return partialMatch || null;
+  return null;
 }
 
 /**

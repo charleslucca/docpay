@@ -1495,14 +1495,17 @@ export function useDocumentProcessor() {
           }
         }
 
-        // Fallback: database lookup
+        // Fallback: database lookup (only if unambiguous - exactly 1 candidate)
         if (!empresa || !cidade || !contrato) {
           const normalized = normalizeForMatch(pair.employeeName);
-          const dbInfo = dbLookup.get(normalized);
-          if (dbInfo) {
+          const dbCandidates = dbLookup.get(normalized);
+          if (dbCandidates && dbCandidates.length === 1) {
+            const dbInfo = dbCandidates[0];
             empresa = empresa || dbInfo.empresa;
             cidade = cidade || dbInfo.cidade;
             contrato = contrato || dbInfo.contrato;
+          } else if (dbCandidates && dbCandidates.length > 1) {
+            console.warn(`[PDF] Ambiguous DB lookup for "${pair.employeeName}": ${dbCandidates.length} candidates. Using placeholders.`);
           }
         }
 
