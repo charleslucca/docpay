@@ -1556,6 +1556,24 @@ export function useDocumentProcessor() {
 
     const zip = new JSZip();
 
+    // Batch lookup: fetch all active employees with empresa/municipio from DB
+    const { data: dbEmployees } = await supabase
+      .from("funcionarios")
+      .select("nome_normalizado, contrato, empresas:empresa_id(nome), municipios:municipio_id(nome)")
+      .eq("ativo", true);
+
+    const dbLookup = new Map<string, { empresa: string; cidade: string; contrato: string }>();
+    dbEmployees?.forEach((emp: any) => {
+      dbLookup.set(emp.nome_normalizado, {
+        empresa: (emp.empresas as any)?.nome || "",
+        cidade: (emp.municipios as any)?.nome || "",
+        contrato: emp.contrato || "",
+      });
+    });
+
+    // Track most frequent empresa for ZIP name
+    const empresaCount = new Map<string, number>();
+
     // Process PDFs sequentially for controlled generation timing
     for (let index = 0; index < matchedPairs.length; index++) {
       if (cancelledRef.current) break;
