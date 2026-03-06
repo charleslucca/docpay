@@ -102,9 +102,9 @@ const Index = () => {
               <ArrowLeft className="h-4 w-4 mr-2" />
               Voltar
             </Button>
-            <h2 className="text-xl font-semibold text-foreground">Repositório de Documentos</h2>
+            <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
           </div>
-          <DocumentRepository documents={generatedDocs} spreadsheetData={spreadsheetData} />
+          <ProcessingHistory />
         </main>
       </div>
     );
