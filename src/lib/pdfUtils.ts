@@ -521,7 +521,9 @@ export function preparePageForMatch(pageText: string): PreparedPage {
     wordsByLength.get(len)!.push(word);
   }
 
-  return { normalized, wordSet, wordsByLength };
+  const favorecidoNames = extractFavorecidoNames(normalized);
+
+  return { normalized, wordSet, wordsByLength, favorecidoNames };
 }
 
 /**
