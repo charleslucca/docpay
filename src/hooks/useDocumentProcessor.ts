@@ -105,6 +105,15 @@ const formatDuration = (ms: number) => {
   return `${seconds}s`;
 };
 
+const sanitizeForStorage = (text: string): string => {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_\-./]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+};
+
 const uploadGeneratedPdf = async (
   fileName: string,
   pdfBlob: Blob,
@@ -117,7 +126,9 @@ const uploadGeneratedPdf = async (
 ): Promise<{ storagePath?: string; publicUrl?: string }> => {
   try {
     const monthStr = String(month).padStart(2, "0");
-    const storagePath = `${year}/${monthStr}_${monthName}/${fileName}`;
+    const safeMonthName = sanitizeForStorage(monthName);
+    const safeFileName = sanitizeForStorage(fileName);
+    const storagePath = `${year}/${monthStr}_${safeMonthName}/${safeFileName}`;
 
     const { error: uploadError } = await supabase.storage.from(GENERATED_BUCKET).upload(storagePath, pdfBlob, {
       cacheControl: "3600",
@@ -1503,7 +1514,7 @@ export function useDocumentProcessor() {
         );
 
         const blobUrl = URL.createObjectURL(pdfBlob);
-        const fileName = `${year}_${monthName}_${pair.employeeName.replace(/\s+/g, "_")}.pdf`;
+        const fileName = `${year}_${sanitizeForStorage(monthName)}_${sanitizeForStorage(pair.employeeName.replace(/\s+/g, "_"))}.pdf`;
 
         // Look up employee in spreadsheet for enrichment
         let empresa: string | undefined;
