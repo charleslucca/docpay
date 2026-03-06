@@ -85,6 +85,39 @@ export function validateExcelStructure(workbook: XLSX.WorkBook): ValidationResul
 /**
  * Parse the "Todos" sheet with the validated tabular structure
  */
+/**
+ * Flexible column detection: exact → startsWith → contains, with aliases
+ */
+function findColumnIndex(headers: string[], possibleNames: string[]): number {
+  const normalizedHeaders = headers.map(h => h ? normalizeForComparison(String(h)) : "");
+  const normalizedNames = possibleNames.map(normalizeForComparison);
+
+  // Priority 1: Exact match
+  for (const name of normalizedNames) {
+    const idx = normalizedHeaders.indexOf(name);
+    if (idx !== -1) return idx;
+  }
+  // Priority 2: Starts with
+  for (const name of normalizedNames) {
+    const idx = normalizedHeaders.findIndex(h => h.startsWith(name));
+    if (idx !== -1) return idx;
+  }
+  // Priority 3: Contains
+  for (const name of normalizedNames) {
+    const idx = normalizedHeaders.findIndex(h => h.includes(name));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+const EMPRESA_ALIASES = ["EMPRESA", "EMPRESA CONVENIADA", "RAZAO SOCIAL", "COMPANY"];
+const CIDADE_ALIASES = ["CIDADE", "MUNICIPIO", "LOCALIDADE", "CITY"];
+const CONTRATO_ALIASES = ["CONTRATO", "NUMERO CONTRATO", "CONTRACT"];
+const COLABORADOR_ALIASES = ["COLABORADOR", "FUNCIONARIO", "NOME", "EMPREGADO", "NOME FUNCIONARIO"];
+const TOTAL_FUNC_ALIASES = ["TOTAL FUNCIONARIOS", "TOTAL FUNC", "QTD FUNCIONARIOS"];
+const BANCO_ALIASES = ["BANCO", "INSTITUICAO", "BANK"];
+const TIPO_ALIASES = ["TIPO", "MODALIDADE", "TYPE"];
+
 function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: string): SpreadsheetData {
   const sheet = workbook.Sheets[sheetName];
   const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
@@ -102,16 +135,15 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
     const row = jsonData[i] as unknown[];
     if (!row) continue;
 
-    for (let j = 0; j < row.length; j++) {
-      const cell = normalizeForComparison(String(row[j] || ""));
-      if (cell === "EMPRESA") empresaCol = j;
-      if (cell === "CIDADE") cidadeCol = j;
-      if (cell === "CONTRATO") contratoCol = j;
-      if (cell === "COLABORADOR") colaboradorCol = j;
-      if (cell === "TOTAL FUNCIONARIOS") totalFuncCol = j;
-      if (cell === "BANCO") bancoCol = j;
-      if (cell === "TIPO") tipoCol = j;
-    }
+    const headerStrings = row.map(cell => String(cell || ""));
+
+    empresaCol = findColumnIndex(headerStrings, EMPRESA_ALIASES);
+    cidadeCol = findColumnIndex(headerStrings, CIDADE_ALIASES);
+    contratoCol = findColumnIndex(headerStrings, CONTRATO_ALIASES);
+    colaboradorCol = findColumnIndex(headerStrings, COLABORADOR_ALIASES);
+    totalFuncCol = findColumnIndex(headerStrings, TOTAL_FUNC_ALIASES);
+    bancoCol = findColumnIndex(headerStrings, BANCO_ALIASES);
+    tipoCol = findColumnIndex(headerStrings, TIPO_ALIASES);
 
     if (empresaCol >= 0 && cidadeCol >= 0 && colaboradorCol >= 0) {
       headerRowIndex = i;
@@ -406,42 +438,30 @@ export function findEmployeeInSpreadsheet(name: string, records: EmployeeRecord[
 
   if (nameWords.length === 0) return null;
 
+  // 1. Exact match (highest confidence)
   const exact = records.find((r) => normalizeForComparison(r.colaborador) === normalizedName);
   if (exact) return exact;
 
+  // 2. First + last name exact match, but ONLY if unique (no ambiguity)
   const firstName = nameWords[0];
   const lastName = nameWords[nameWords.length - 1];
 
-  const firstLastMatch = records.find((r) => {
+  const firstLastMatches = records.filter((r) => {
     const rNorm = normalizeForComparison(r.colaborador);
     const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
     if (rWords.length < 2) return false;
     return rWords[0] === firstName && rWords[rWords.length - 1] === lastName;
   });
-  if (firstLastMatch) return firstLastMatch;
 
-  const overlapMatch = records.find((r) => {
-    const rNorm = normalizeForComparison(r.colaborador);
-    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
-    const sharedWords = nameWords.filter((w) => rWords.includes(w));
-    const minWords = Math.min(nameWords.length, rWords.length);
-    return sharedWords.length >= 2 && sharedWords.length >= Math.ceil(minWords * 0.6);
-  });
-  if (overlapMatch) return overlapMatch;
+  // Only return if there's exactly ONE match (no ambiguity)
+  if (firstLastMatches.length === 1) return firstLastMatches[0];
 
-  const partialMatch = records.find((r) => {
-    const rNorm = normalizeForComparison(r.colaborador);
-    const rWords = rNorm.split(" ").filter((w) => w.length >= 2);
-    if (rWords.length === 0) return false;
-    if (rWords[0] !== firstName) return false;
-    const rLast = rWords[rWords.length - 1];
-    if (lastName.length >= 3 && rLast.length >= 3) {
-      return rLast.substring(0, 3) === lastName.substring(0, 3);
-    }
-    return false;
-  });
+  // NO further fallbacks (overlap/partial removed to prevent wrong company assignment)
+  if (firstLastMatches.length > 1) {
+    console.warn(`[Excel] Ambiguous match for "${name}": ${firstLastMatches.length} candidates with same first+last name. Skipping.`);
+  }
 
-  return partialMatch || null;
+  return null;
 }
 
 /**

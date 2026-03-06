@@ -1438,18 +1438,22 @@ export function useDocumentProcessor() {
     const zip = new JSZip();
 
     // Batch lookup: fetch all active employees with empresa/municipio from DB
+    // Use array to preserve multiple candidates per name (avoid ambiguity)
     const { data: dbEmployees } = await supabase
       .from("funcionarios")
       .select("nome_normalizado, contrato, empresas:empresa_id(nome), municipios:municipio_id(nome)")
       .eq("ativo", true);
 
-    const dbLookup = new Map<string, { empresa: string; cidade: string; contrato: string }>();
+    const dbLookup = new Map<string, Array<{ empresa: string; cidade: string; contrato: string }>>();
     dbEmployees?.forEach((emp: any) => {
-      dbLookup.set(emp.nome_normalizado, {
+      const entry = {
         empresa: (emp.empresas as any)?.nome || "",
         cidade: (emp.municipios as any)?.nome || "",
         contrato: emp.contrato || "",
-      });
+      };
+      const existing = dbLookup.get(emp.nome_normalizado) || [];
+      existing.push(entry);
+      dbLookup.set(emp.nome_normalizado, existing);
     });
 
     // Track most frequent empresa for ZIP name
@@ -1491,14 +1495,17 @@ export function useDocumentProcessor() {
           }
         }
 
-        // Fallback: database lookup
+        // Fallback: database lookup (only if unambiguous - exactly 1 candidate)
         if (!empresa || !cidade || !contrato) {
           const normalized = normalizeForMatch(pair.employeeName);
-          const dbInfo = dbLookup.get(normalized);
-          if (dbInfo) {
+          const dbCandidates = dbLookup.get(normalized);
+          if (dbCandidates && dbCandidates.length === 1) {
+            const dbInfo = dbCandidates[0];
             empresa = empresa || dbInfo.empresa;
             cidade = cidade || dbInfo.cidade;
             contrato = contrato || dbInfo.contrato;
+          } else if (dbCandidates && dbCandidates.length > 1) {
+            console.warn(`[PDF] Ambiguous DB lookup for "${pair.employeeName}": ${dbCandidates.length} candidates. Using placeholders.`);
           }
         }
 
