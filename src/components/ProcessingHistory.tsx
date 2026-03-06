@@ -46,7 +46,7 @@ export function ProcessingHistory() {
         console.error("[History] Error loading:", error);
         return;
       }
-      setEntries((data as HistoryEntry[]) || []);
+      setEntries((data as unknown as HistoryEntry[]) || []);
     } catch (err) {
       console.error("[History] Failed:", err);
     } finally {
