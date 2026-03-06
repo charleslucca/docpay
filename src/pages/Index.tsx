@@ -416,7 +416,7 @@ function Header({
               className="gap-2"
             >
               <FolderOpen className="h-4 w-4" />
-              <span className="hidden sm:inline">Repositório</span>
+              <span className="hidden sm:inline">Histórico</span>
               {docCount > 0 && (
                 <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
                   {docCount}
