@@ -90,28 +90,34 @@ const AdminUsers = () => {
 
   const fetchUsers = async () => {
     setLoading(true);
-    const token = await getToken();
-    if (!token) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
 
-    const res = await fetch(FUNCTION_URL, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const json = await res.json();
-    if (res.ok && json.users) {
-      setUsers(json.users);
-    } else {
-      toast({
-        title: "Erro",
-        description: json.error || "Não foi possível carregar os usuários.",
-        variant: "destructive",
+      const res = await fetch(FUNCTION_URL, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
       });
+
+      const json = await res.json();
+      if (res.ok && json.users) {
+        setUsers(json.users);
+      } else {
+        toast({
+          title: "Erro",
+          description: json.error || "Não foi possível carregar os usuários.",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("fetchUsers error:", error);
+      toast({ title: "Erro", description: "Falha ao carregar usuários.", variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
