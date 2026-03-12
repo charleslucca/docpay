@@ -21,7 +21,6 @@ interface IpEntry {
 const AdminIpWhitelist = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [entries, setEntries] = useState<IpEntry[]>([]);
   const [newIp, setNewIp] = useState("");
