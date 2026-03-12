@@ -47,7 +47,6 @@ const normalizeText = (text: string) =>
   text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
 
 const AdminFuncionarios = () => {
-  const navigate = useNavigate();
   const { toast } = useToast();
 
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
