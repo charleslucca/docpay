@@ -361,7 +361,6 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
 
     // Termos de comunicados/avisos
     "COMUNICADO", "DESCONTO", "EMPRESTIMO", "AVISO", "INFORMATIVO",
-    "SUPERVISOR", "ADMINISTRADOR", "ADMINISTRATIVO",
   ];
 
   // Preposições que nunca iniciam nomes de pessoas
