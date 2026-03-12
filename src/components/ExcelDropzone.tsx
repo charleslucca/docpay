@@ -423,7 +423,7 @@ export function ExcelDropzone({
               <div
                 {...getRootProps()}
                 className={`
-                  border-2 border-dashed rounded-lg p-6 text-center cursor-pointer
+                  border-2 border-dashed rounded-lg p-10 text-center cursor-pointer
                   transition-colors duration-200
                   ${isDragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50'}
                   ${disabled ? 'opacity-50 cursor-not-allowed' : ''}

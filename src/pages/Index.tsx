@@ -147,7 +147,7 @@ const Index = () => {
               animate="center"
               exit="exit"
               transition={{ duration: 0.25 }}
-              className="max-w-lg mx-auto space-y-6"
+              className="max-w-4xl mx-auto space-y-6"
             >
               <div className="text-center space-y-2">
                 <h2 className="text-2xl font-bold text-foreground">Enviar Planilha</h2>
