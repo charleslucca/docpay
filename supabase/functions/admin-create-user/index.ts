@@ -13,7 +13,6 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 
   // Authenticate the caller
   const authHeader = req.headers.get("Authorization");
@@ -25,22 +24,20 @@ Deno.serve(async (req) => {
   }
 
   const token = authHeader.replace("Bearer ", "");
-  const anonClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
 
-  const { data: claimsData, error: claimsError } = await anonClient.auth.getClaims(token);
-  if (claimsError || !claimsData?.claims) {
+  // Use service role client for admin operations
+  const adminClient = createClient(supabaseUrl, serviceRoleKey);
+
+  // Validate the caller's JWT and get their user ID
+  const { data: userData, error: userError } = await adminClient.auth.getUser(token);
+  if (userError || !userData?.user) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  const callerId = claimsData.claims.sub;
-
-  // Use service role client for admin operations
-  const adminClient = createClient(supabaseUrl, serviceRoleKey);
+  const callerId = userData.user.id;
 
   // Verify caller is admin
   const { data: roleData } = await adminClient

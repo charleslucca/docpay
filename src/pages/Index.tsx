@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  FileText, Sparkles, RotateCcw, Play, Zap, StopCircle,
-  UserCircle, LogOut, User, Shield, ArrowLeft, ArrowRight, FolderOpen, History,
+  Sparkles, RotateCcw, Play, StopCircle,
+  ArrowLeft, ArrowRight, FolderOpen, History,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
-import { useAuth } from '@/hooks/useAuth';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
@@ -16,15 +14,6 @@ import { UnprocessedList } from '@/components/UnprocessedList';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 
 const slideVariants = {
   enter: (direction: number) => ({
@@ -39,8 +28,6 @@ const slideVariants = {
 };
 
 const Index = () => {
-  const { profile, role, signOut } = useAuth();
-  const navigate = useNavigate();
   const {
     holerites, comprovantes, matchedPairs, generatedDocs, unprocessedList, spreadsheetData,
     setSpreadsheetData, status, isCancelling, hasSavedState, isCheckingState,
@@ -85,52 +72,50 @@ const Index = () => {
 
   if (showRepository) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header
-          profile={profile}
-          role={role}
-          signOut={signOut}
-          navigate={navigate}
-          onReset={handleReset}
-          showReset={false}
-          isProcessing={isProcessing}
-          onRepository={() => setShowRepository(false)}
-          repositoryActive
-        />
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Button variant="outline" size="sm" onClick={() => setShowRepository(false)}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Voltar
-            </Button>
-            <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
-          </div>
-          <ProcessingHistory />
-        </main>
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <Button variant="outline" size="sm" onClick={() => setShowRepository(false)}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Voltar
+          </Button>
+          <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
+        </div>
+        <ProcessingHistory />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="flex flex-col flex-1">
       <ResumeProcessingDialog
         open={hasSavedState && !isCheckingState}
         onResume={resumeProcessing}
         onDiscard={discardSavedState}
       />
 
-      <Header
-        profile={profile}
-        role={role}
-        signOut={signOut}
-        navigate={navigate}
-        onReset={handleReset}
-        showReset={currentStep > 1 || holerites.length > 0 || comprovantes.length > 0}
-        isProcessing={isProcessing}
-        onRepository={() => setShowRepository(true)}
-        repositoryActive={false}
-        docCount={generatedDocs.length}
-      />
+      {/* Top action bar */}
+      <div className="container mx-auto px-4 pt-4 flex items-center gap-2 justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowRepository(true)}
+          className="gap-2"
+        >
+          <FolderOpen className="h-4 w-4" />
+          <span className="hidden sm:inline">Histórico</span>
+          {generatedDocs.length > 0 && (
+            <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
+              {generatedDocs.length}
+            </span>
+          )}
+        </Button>
+        {(currentStep > 1 || holerites.length > 0 || comprovantes.length > 0) && (
+          <Button variant="outline" size="sm" onClick={handleReset} disabled={isProcessing}>
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Recomeçar
+          </Button>
+        )}
+      </div>
 
       <main className="container mx-auto px-4 py-8 flex-1">
         <div className="mb-8">
@@ -387,118 +372,5 @@ const Index = () => {
     </div>
   );
 };
-
-// Extracted Header component
-function Header({
-  profile, role, signOut, navigate, onReset, showReset, isProcessing,
-  onRepository, repositoryActive, docCount = 0,
-}: {
-  profile: any;
-  role: string | null;
-  signOut: () => Promise<void>;
-  navigate: (path: string) => void;
-  onReset: () => void;
-  showReset: boolean;
-  isProcessing: boolean;
-  onRepository: () => void;
-  repositoryActive: boolean;
-  docCount?: number;
-}) {
-  return (
-    <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-      <div className="container mx-auto px-4 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center shadow-lg">
-              <FileText className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold gradient-text">DocuMerge</h1>
-              <p className="text-xs text-muted-foreground">Processador de Documentos Financeiros</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={repositoryActive ? 'default' : 'outline'}
-              size="sm"
-              onClick={onRepository}
-              className="gap-2"
-            >
-              <FolderOpen className="h-4 w-4" />
-              <span className="hidden sm:inline">Histórico</span>
-              {docCount > 0 && (
-                <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
-                  {docCount}
-                </span>
-              )}
-            </Button>
-
-            {showReset && (
-              <Button variant="outline" size="sm" onClick={onReset} disabled={isProcessing}>
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Recomeçar
-              </Button>
-            )}
-
-            {role === 'admin' && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <Shield className="h-4 w-4" />
-                    <span className="hidden sm:inline">Admin</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => navigate('/admin/ip-whitelist')} className="cursor-pointer">
-                    <Shield className="h-4 w-4 mr-2" />
-                    IP Whitelist
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate('/admin/users')} className="cursor-pointer">
-                    <User className="h-4 w-4 mr-2" />
-                    Usuários
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate('/admin/funcionarios')} className="cursor-pointer">
-                    <User className="h-4 w-4 mr-2" />
-                    Funcionários
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <UserCircle className="h-4 w-4" />
-                  <span className="hidden sm:inline">Perfil</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel className="flex items-center gap-2">
-                  <span className="truncate">{profile?.full_name || 'Usuário'}</span>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {role === 'admin' ? 'Admin' : 'Funcionário'}
-                  </Badge>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate('/account')} className="cursor-pointer">
-                  <User className="h-4 w-4 mr-2" />
-                  Minha Conta
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={async () => { await signOut(); navigate('/login'); }}
-                  className="cursor-pointer text-destructive focus:text-destructive"
-                >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Sair
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-}
 
 export default Index;

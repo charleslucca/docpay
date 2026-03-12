@@ -8,13 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
-import { User, Mail, Lock, LogOut, ArrowLeft } from "lucide-react";
+import { User, Mail, Lock, LogOut } from "lucide-react";
 
 const Account = () => {
   const { user, profile, role, signOut } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [fullName, setFullName] = useState(profile?.full_name || "");
   const [newEmail, setNewEmail] = useState("");
@@ -84,18 +82,12 @@ const Account = () => {
 
   const handleLogout = async () => {
     await signOut();
-    navigate("/login");
   };
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
+    <div className="p-4 md:p-8">
       <div className="max-w-2xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <h1 className="text-2xl font-bold text-foreground">Minha Conta</h1>
-        </div>
+        <h1 className="text-2xl font-bold text-foreground">Minha Conta</h1>
 
         {/* Profile Info */}
         <Card>

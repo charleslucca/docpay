@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -20,7 +19,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Pencil, Trash2, Search, Users, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Users, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Funcionario {
   id: string;
@@ -48,7 +47,6 @@ const normalizeText = (text: string) =>
   text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
 
 const AdminFuncionarios = () => {
-  const navigate = useNavigate();
   const { toast } = useToast();
 
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
@@ -231,22 +229,17 @@ const AdminFuncionarios = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <Button variant="outline" size="sm" onClick={() => navigate("/")}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Voltar
-          </Button>
-          <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-primary" />
-            <h1 className="text-2xl font-bold text-foreground">Funcionários</h1>
-          </div>
-          <Badge variant="secondary" className="ml-auto">
-            {filtered.length} de {funcionarios.length}
-          </Badge>
+    <>
+    <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          <Users className="h-5 w-5 text-primary" />
+          <h1 className="text-2xl font-bold text-foreground">Funcionários</h1>
         </div>
+        <Badge variant="secondary" className="ml-auto">
+          {filtered.length} de {funcionarios.length}
+        </Badge>
+      </div>
 
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -514,7 +507,7 @@ const AdminFuncionarios = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 };
 

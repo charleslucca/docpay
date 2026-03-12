@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -53,7 +52,6 @@ const FUNCTION_URL = `https://zouizzfomwrxfptgxkwj.supabase.co/functions/v1/admi
 
 const AdminUsers = () => {
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserEntry[]>([]);
@@ -90,28 +88,34 @@ const AdminUsers = () => {
 
   const fetchUsers = async () => {
     setLoading(true);
-    const token = await getToken();
-    if (!token) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
 
-    const res = await fetch(FUNCTION_URL, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const json = await res.json();
-    if (res.ok && json.users) {
-      setUsers(json.users);
-    } else {
-      toast({
-        title: "Erro",
-        description: json.error || "Não foi possível carregar os usuários.",
-        variant: "destructive",
+      const res = await fetch(FUNCTION_URL, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
       });
+
+      const json = await res.json();
+      if (res.ok && json.users) {
+        setUsers(json.users);
+      } else {
+        toast({
+          title: "Erro",
+          description: json.error || "Não foi possível carregar os usuários.",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("fetchUsers error:", error);
+      toast({ title: "Erro", description: "Falha ao carregar usuários.", variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -133,22 +137,28 @@ const AdminUsers = () => {
     }
 
     setAdding(true);
-    const token = await getToken();
-    const res = await fetch(FUNCTION_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), password, full_name: fullName.trim(), role }),
-    });
+    try {
+      const token = await getToken();
+      const res = await fetch(FUNCTION_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, full_name: fullName.trim(), role }),
+      });
 
-    const json = await res.json();
-    if (res.ok && json.success) {
-      toast({ title: "Usuário criado com sucesso" });
-      setFullName(""); setEmail(""); setPassword(""); setRole("employee");
-      fetchUsers();
-    } else {
-      toast({ title: "Erro ao criar usuário", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        toast({ title: "Usuário criado com sucesso" });
+        setFullName(""); setEmail(""); setPassword(""); setRole("employee");
+        fetchUsers();
+      } else {
+        toast({ title: "Erro ao criar usuário", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("handleAdd error:", error);
+      toast({ title: "Erro ao criar usuário", description: "Falha na requisição.", variant: "destructive" });
+    } finally {
+      setAdding(false);
     }
-    setAdding(false);
   };
 
   // Edit
@@ -171,62 +181,69 @@ const AdminUsers = () => {
     }
 
     setSaving(true);
-    const token = await getToken();
-    const payload: Record<string, string> = { user_id: editUser.id, full_name: editName.trim(), role: editRole };
-    if (editPassword) payload.password = editPassword;
+    try {
+      const token = await getToken();
+      const payload: Record<string, string> = { user_id: editUser.id, full_name: editName.trim(), role: editRole };
+      if (editPassword) payload.password = editPassword;
 
-    const res = await fetch(FUNCTION_URL, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+      const res = await fetch(FUNCTION_URL, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    const json = await res.json();
-    if (res.ok && json.success) {
-      toast({ title: "Usuário atualizado" });
-      setEditUser(null);
-      fetchUsers();
-    } else {
-      toast({ title: "Erro ao atualizar", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        toast({ title: "Usuário atualizado" });
+        setEditUser(null);
+        fetchUsers();
+      } else {
+        toast({ title: "Erro ao atualizar", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("handleEdit error:", error);
+      toast({ title: "Erro ao atualizar", description: "Falha na requisição.", variant: "destructive" });
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   // Delete
   const handleDelete = async () => {
     if (!deleteUser) return;
     setDeleting(true);
-    const token = await getToken();
+    try {
+      const token = await getToken();
 
-    const res = await fetch(FUNCTION_URL, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: deleteUser.id }),
-    });
+      const res = await fetch(FUNCTION_URL, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: deleteUser.id }),
+      });
 
-    const json = await res.json();
-    if (res.ok && json.success) {
-      toast({ title: "Usuário excluído" });
-      setDeleteUser(null);
-      fetchUsers();
-    } else {
-      toast({ title: "Erro ao excluir", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        toast({ title: "Usuário excluído" });
+        setDeleteUser(null);
+        fetchUsers();
+      } else {
+        toast({ title: "Erro ao excluir", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("handleDelete error:", error);
+      toast({ title: "Erro ao excluir", description: "Falha na requisição.", variant: "destructive" });
+    } finally {
+      setDeleting(false);
     }
-    setDeleting(false);
   };
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
+    <div className="p-4 md:p-8">
       <div className="max-w-5xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Users className="h-6 w-6" />
-            Gerenciar Usuários
-          </h1>
-        </div>
+        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+          <Users className="h-6 w-6" />
+          Gerenciar Usuários
+        </h1>
 
         {/* Add new user */}
         <Card>

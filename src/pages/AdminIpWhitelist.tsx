@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Plus, Trash2, Shield } from "lucide-react";
+import { Plus, Trash2, Shield } from "lucide-react";
 
 interface IpEntry {
   id: string;
@@ -22,7 +21,6 @@ interface IpEntry {
 const AdminIpWhitelist = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [entries, setEntries] = useState<IpEntry[]>([]);
   const [newIp, setNewIp] = useState("");
@@ -157,17 +155,12 @@ const AdminIpWhitelist = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
+    <div className="p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Shield className="h-6 w-6" />
-            IP Whitelist
-          </h1>
-        </div>
+        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+          <Shield className="h-6 w-6" />
+          IP Whitelist
+        </h1>
 
         {/* Add new IP */}
         <Card>

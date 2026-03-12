@@ -1,75 +1,56 @@
 
 
-## Diagnóstico
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-### 1. Senha travando indefinidamente (bug principal)
+## Diagnostico
 
-O problema está em **duas camadas**:
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-**Frontend (`AdminUsers.tsx`, linhas 162-193)**: A função `handleEdit` não tem `try/catch`. Se o `fetch` ou `res.json()` lançar exceção (ex: resposta não-JSON da edge function), `setSaving(false)` na linha 192 nunca executa, deixando o botão em loading infinito.
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-**Edge Function (`admin-create-user/index.ts`, linha 32)**: Usa `anonClient.auth.getClaims(token)` — este método **não existe** na API padrão do Supabase JS v2. O método correto é `getUser(token)`. Se `getClaims` falhar, a edge function retorna erro/crash, e o frontend sem try/catch trava.
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-Obs: os logs da edge function mostram apenas boot/shutdown sem saída, confirmando crash silencioso.
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### 2. Layout inconsistente (todas as páginas)
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-Cada página tem seu próprio layout independente:
-- `Index.tsx` — Header customizado com dropdown de navegação admin
-- `AdminUsers.tsx` — Botão "Voltar" simples
-- `AdminFuncionarios.tsx` — Botão "Voltar" simples  
-- `AdminIpWhitelist.tsx` — Botão "Voltar" simples
-- `Account.tsx` — Botão "Voltar" simples
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-Não existe sidebar nem componente de layout compartilhado.
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
----
+## Correcao
 
-## Plano de Correção
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-### Parte 1: Corrigir atualização de senha
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
 
-**Arquivo: `supabase/functions/admin-create-user/index.ts`**
-- Substituir `anonClient.auth.getClaims(token)` por `adminClient.auth.getUser(token)` — método válido e confiável
-- Isso corrige a autenticação do chamador para todas as operações (GET, POST, PUT, DELETE)
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
 
-**Arquivo: `src/pages/AdminUsers.tsx`**
-- Envolver `handleEdit` em try/catch para garantir que `setSaving(false)` sempre execute
-- Exibir toast de erro se a requisição falhar por qualquer motivo
-- Aplicar o mesmo padrão de try/catch em `handleAdd`, `handleDelete` e `fetchUsers`
+### Logica resultante simplificada:
 
-### Parte 2: Layout unificado com sidebar
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
+```
 
-**Novo arquivo: `src/components/AppLayout.tsx`**
-- Componente de layout com `SidebarProvider` + `Sidebar`
-- Menu lateral com links para: Início, Funcionários, Usuários, IP Whitelist, Minha Conta
-- Itens admin visíveis apenas quando `role === 'admin'`
-- Header com `SidebarTrigger` + nome do usuário + botão sair
-- Sidebar colapsável com ícones visíveis no modo mini
+## Impacto
 
-**Arquivo: `src/App.tsx`**
-- Envolver todas as rotas protegidas com `AppLayout`
-- Remover headers/botões "Voltar" individuais de cada página
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-**Arquivos afetados pela remoção de header/navegação individual:**
-- `src/pages/Index.tsx` — remover componente `Header` interno, manter apenas conteúdo
-- `src/pages/AdminUsers.tsx` — remover botão "Voltar" e header
-- `src/pages/AdminFuncionarios.tsx` — remover botão "Voltar" e header  
-- `src/pages/AdminIpWhitelist.tsx` — remover botão "Voltar" e header
-- `src/pages/Account.tsx` — remover botão "Voltar" e header
+## Arquivos alterados
 
----
-
-## Arquivos alterados (resumo)
-
-| Arquivo | Alteração |
+| Arquivo | Alteracao |
 |---------|-----------|
-| `supabase/functions/admin-create-user/index.ts` | Trocar `getClaims` por `getUser` |
-| `src/pages/AdminUsers.tsx` | Adicionar try/catch em todas as operações assíncronas; remover header individual |
-| `src/components/AppLayout.tsx` | **Novo** — layout compartilhado com sidebar |
-| `src/App.tsx` | Envolver rotas protegidas com `AppLayout` |
-| `src/pages/Index.tsx` | Remover Header interno |
-| `src/pages/AdminFuncionarios.tsx` | Remover header/botão voltar |
-| `src/pages/AdminIpWhitelist.tsx` | Remover header/botão voltar |
-| `src/pages/Account.tsx` | Remover header/botão voltar |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
