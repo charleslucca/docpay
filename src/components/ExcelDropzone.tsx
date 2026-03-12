@@ -209,13 +209,13 @@ export function ExcelDropzone({
             <TableBody>
               {displayRecords.map((record, idx) => (
                 <TableRow key={idx}>
-                  <TableCell className="text-xs py-1.5">{record.empresa}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.cidade}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.contrato}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.colaborador}</TableCell>
-                  <TableCell className="text-xs py-1.5 text-center">{record.totalFuncionarios ?? idx + 1}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.banco || '-'}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.tipo || '-'}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.empresa}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.cidade}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.contrato}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.colaborador}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3 text-center">{record.totalFuncionarios ?? idx + 1}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.banco || '-'}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.tipo || '-'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
