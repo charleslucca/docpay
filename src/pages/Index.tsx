@@ -28,8 +28,6 @@ const slideVariants = {
 };
 
 const Index = () => {
-  const { profile, role, signOut } = useAuth();
-  const navigate = useNavigate();
   const {
     holerites, comprovantes, matchedPairs, generatedDocs, unprocessedList, spreadsheetData,
     setSpreadsheetData, status, isCancelling, hasSavedState, isCheckingState,
