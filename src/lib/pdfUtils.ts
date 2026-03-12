@@ -346,7 +346,17 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     "FAR",
     "NOMEDOFUNCIONARIO",
     "NOMEFUNCIONARIO",
+
+    // Meses do ano
+    "JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO",
+    "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO",
+
+    // Termos de calendário/período
+    "SEMESTRE", "TRIMESTRE", "BIMESTRE", "QUINZENA", "MENSALISTA", "HORISTA",
   ];
+
+  // Preposições que nunca iniciam nomes de pessoas
+  const prepositions = ["DE", "DA", "DO", "DAS", "DOS", "EM", "NO", "NA", "AO", "AS", "OS", "POR", "ATE", "COM", "SEM", "SOB"];
 
   for (const pattern of namePatterns) {
     // Usar matchAll para iterar por TODAS as ocorrências do padrão,
@@ -379,6 +389,14 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
       if (hasInvalidWord) {
         if (debug) {
           console.log("[DEBUG] Ignorando - contém palavra inválida:", name);
+        }
+        continue;
+      }
+
+      // Validação 4: nome não pode começar com preposição
+      if (prepositions.includes(words[0])) {
+        if (debug) {
+          console.log("[DEBUG] Ignorando - começa com preposição:", name);
         }
         continue;
       }
