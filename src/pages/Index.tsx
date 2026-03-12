@@ -294,7 +294,12 @@ const Index = () => {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={cancelProcessing}
+                        onClick={async () => {
+                          await cancelProcessing();
+                          setSyncComplete(false);
+                          setShowRepository(false);
+                          goToStep(1);
+                        }}
                         disabled={isCancelling}
                       >
                         <StopCircle className="h-4 w-4 mr-2" />

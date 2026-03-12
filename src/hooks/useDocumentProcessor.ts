@@ -355,19 +355,37 @@ export function useDocumentProcessor() {
       console.warn("[Cancel] Error terminating OCR workers:", error);
     }
 
-    // Clear persisted state
+    // Revoke blob URLs to free memory
+    generatedDocs.forEach((doc) => URL.revokeObjectURL(doc.blobUrl));
+    matchedPairs.forEach((pair) => {
+      if (pair.outputUrl) URL.revokeObjectURL(pair.outputUrl);
+    });
+
+    // Clear PDF cache
+    clearCache();
+
+    // Clear OCR cache
+    clearOcrCache();
+
+    // Clear persisted state (IndexedDB)
     try {
       await clearProcessingState();
     } catch (error) {
       console.warn("[Cancel] Error clearing persisted state:", error);
     }
 
-    // Reset state immediately
+    // Full reset of all state
     setIsCancelling(false);
-    setStatus({ step: "idle", progress: 0, message: "" });
+    setHolerites([]);
+    setComprovantes([]);
     setMatchedPairs([]);
     setGeneratedDocs([]);
-  }, []);
+    setUnprocessedList([]);
+    setStatus({ step: "idle", progress: 0, message: "" });
+    setHasSavedState(false);
+    setSpreadsheetData(null);
+    console.log("[Cancel] Full reset complete");
+  }, [generatedDocs, matchedPairs]);
 
   // Save files to IndexedDB when processing starts
   const persistFiles = async (holeriteFiles: UploadedFile[], comprovanteFiles: UploadedFile[]) => {
