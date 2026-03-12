@@ -264,7 +264,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
   const namePatterns = [
     // 0. Formato B SERVICE explícito: cabeçalho completo + código + nome + CBO
     // Captura nome diretamente após "NOME DO FUNCIONARIO CBO [DEPARTAMENTO] [FILIAL] {código}"
-    /NOME\s+DO\s+FUNCIONARIO\s+CBO\s+(?:DEPARTAMENTO\s+)?(?:FILIAL\s+)?\d{1,5}\s+([A-Z][A-Z\s]{5,55}?)\s+S?\d{4,6}/,
+    /NOME\s+DO\s+FUNCIONARIO\s+CBO\s+(?:DEPARTAMENTO\s+)?(?:FILIAL\s+)?\d{1,5}\s+((?:[A-Z]{2,15}\s+){1,6}[A-Z]{2,15})\s+S?\d{4,6}/,
 
     // 1. Formato B SERVICE: código (deve conter dígito) + nome + cargo/CBO na mesma linha
     // Ex: "2445 JOCELI BRZEZINSKI 513205" ou "S0 CAMILLO ALVES PELZER S14320"
@@ -361,7 +361,6 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
 
     // Termos de comunicados/avisos
     "COMUNICADO", "DESCONTO", "EMPRESTIMO", "AVISO", "INFORMATIVO",
-    "SUPERVISOR", "ADMINISTRADOR", "ADMINISTRATIVO",
   ];
 
   // Preposições que nunca iniciam nomes de pessoas
