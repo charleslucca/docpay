@@ -231,7 +231,7 @@ export function ExcelDropzone({
         <div className="flex gap-2 justify-end">
           <Button
             variant="outline"
-            size="sm"
+            size="default"
             onClick={handleRemove}
             disabled={syncStatus === 'syncing'}
           >
