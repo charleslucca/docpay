@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AdminRoute from "@/components/AdminRoute";
+import AppLayout from "@/components/AppLayout";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -33,24 +34,24 @@ const App = () => (
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/blocked" element={<Blocked />} />
 
-            {/* Protected routes */}
-            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
-            <Route path="/account" element={<ProtectedRoute checkIp={false}><Account /></ProtectedRoute>} />
+            {/* Protected routes with shared layout */}
+            <Route path="/" element={<ProtectedRoute><AppLayout><Index /></AppLayout></ProtectedRoute>} />
+            <Route path="/account" element={<ProtectedRoute checkIp={false}><AppLayout><Account /></AppLayout></ProtectedRoute>} />
 
             {/* Admin routes */}
             <Route path="/admin/ip-whitelist" element={
               <ProtectedRoute>
-                <AdminRoute><AdminIpWhitelist /></AdminRoute>
+                <AdminRoute><AppLayout><AdminIpWhitelist /></AppLayout></AdminRoute>
               </ProtectedRoute>
             } />
             <Route path="/admin/users" element={
               <ProtectedRoute>
-                <AdminRoute><AdminUsers /></AdminRoute>
+                <AdminRoute><AppLayout><AdminUsers /></AppLayout></AdminRoute>
               </ProtectedRoute>
             } />
             <Route path="/admin/funcionarios" element={
               <ProtectedRoute>
-                <AdminRoute><AdminFuncionarios /></AdminRoute>
+                <AdminRoute><AppLayout><AdminFuncionarios /></AppLayout></AdminRoute>
               </ProtectedRoute>
             } />
 
