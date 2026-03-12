@@ -1,37 +1,56 @@
 
 
-# Problema: Sync mostra "atualizados" e "removidos" sem alterações reais
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Diagnóstico
+## Diagnostico
 
-Analisando `supabaseExcelSync.ts`, identifiquei **duas causas raiz**:
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-### Causa 1: "Removidos" falso positivo (linha 192-195 + 300-302)
-A query busca **TODOS** os funcionários das empresas presentes no Excel:
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
+
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
 ```typescript
-.in("empresa_id", empresaIds)
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
 ```
-Mas **não filtra por município**. Se existem funcionários de outros municípios (não presentes no Excel) vinculados à mesma empresa, eles são marcados como "removidos" indevidamente.
 
-### Causa 2: "Atualizados" falso positivo (linha 240-243)
-A comparação é frágil:
-```typescript
-existing.banco !== banco || existing.contrato !== record.contrato
-```
-- `null !== undefined` = `true` (falso positivo)
-- Diferenças de espaço/capitalização entre o banco extraído via `extractBancoFromContrato` e o valor armazenado
-- O campo `contrato` pode ter variações de formatação entre uploads
+## Impacto
 
-## Alterações Propostas
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-### 1. `src/lib/supabaseExcelSync.ts` — Corrigir escopo da desativação
-Filtrar `toDeactivate` para incluir apenas funcionários cujo `municipio_id` está presente nos municípios do Excel atual. Funcionários de outros municípios não devem ser afetados.
+## Arquivos alterados
 
-### 2. `src/lib/supabaseExcelSync.ts` — Corrigir comparação de atualização
-Normalizar valores antes de comparar: tratar `null`, `undefined` e `""` como equivalentes. Normalizar banco/contrato (trim, uppercase) para evitar falsos positivos por formatação.
-
-### 3. `src/lib/supabaseExcelSync.ts` — Adicionar log detalhado
-Logar exatamente **o que** mudou para cada atualização e remoção, facilitando auditoria:
-- Para atualizados: campo anterior vs novo valor
-- Para removidos: nome do funcionário sendo desativado
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 

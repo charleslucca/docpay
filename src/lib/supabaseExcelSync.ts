@@ -169,6 +169,14 @@ function extractBancoFromContrato(contrato: string): string | null {
 }
 
 /**
+ * Normalize a value for safe comparison: treat null, undefined, "" as null; trim and uppercase otherwise
+ */
+function normalizeFieldValue(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === "") return null;
+  return value.trim().toUpperCase();
+}
+
+/**
  * BATCH: Sync funcionarios with the database
  * Reduced from ~2N requests to ~5-10 requests
  */
@@ -236,13 +244,22 @@ async function syncFuncionariosBatch(
     if (existing) {
       processedIds.add(existing.id);
 
-      // Check if update needed
-      const needsUpdate =
-        existing.banco !== banco ||
-        existing.contrato !== record.contrato ||
-        !existing.ativo;
+      // Normalize values for comparison to avoid false positives
+      const newBancoNorm = normalizeFieldValue(banco);
+      const existingBancoNorm = normalizeFieldValue(existing.banco);
+      const newContratoNorm = normalizeFieldValue(record.contrato);
+      const existingContratoNorm = normalizeFieldValue(existing.contrato);
 
-      if (needsUpdate) {
+      // Check if update needed (with normalized comparison)
+      const bancoChanged = newBancoNorm !== existingBancoNorm;
+      const contratoChanged = newContratoNorm !== existingContratoNorm;
+      const needsReactivation = !existing.ativo;
+
+      if (bancoChanged || contratoChanged || needsReactivation) {
+        if (bancoChanged) console.log(`[Sync] Atualização banco: "${existing.banco}" → "${banco}" (${record.colaborador})`);
+        if (contratoChanged) console.log(`[Sync] Atualização contrato: "${existing.contrato}" → "${record.contrato}" (${record.colaborador})`);
+        if (needsReactivation) console.log(`[Sync] Reativação: ${record.colaborador}`);
+        
         toUpdate.push({
           id: existing.id,
           data: { banco, contrato: record.contrato, ativo: true }
@@ -297,16 +314,20 @@ async function syncFuncionariosBatch(
   }
 
   // 6. BATCH DEACTIVATE: Mark funcionarios not in current Excel as inactive
+  // Only consider funcionarios from municipios present in the Excel file
+  const municipioIdSet = new Set(municipioIds);
   const toDeactivate = (allExisting || [])
-    .filter(f => f.ativo && !processedIds.has(f.id))
-    .map(f => f.id);
+    .filter(f => f.ativo && !processedIds.has(f.id) && municipioIdSet.has(f.municipio_id));
 
   if (toDeactivate.length > 0) {
+    toDeactivate.forEach(f => console.log(`[Sync] Desativando: ${f.nome_normalizado} (empresa: ${f.empresa_id}, município: ${f.municipio_id})`));
+    
+    const deactivateIds = toDeactivate.map(f => f.id);
     // Use IN clause for batch update in ONE request
     const { error } = await supabase
       .from("funcionarios")
       .update({ ativo: false })
-      .in("id", toDeactivate);
+      .in("id", deactivateIds);
 
     if (error) {
       console.error("[Sync] Batch deactivate error:", error);
