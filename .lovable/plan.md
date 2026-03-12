@@ -1,58 +1,56 @@
 
 
-# Diagnóstico: Match falha no Chrome/Edge Windows, funciona no Safari/macOS
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Causa Raiz Identificada
+## Diagnostico
 
-O problema está na **ordem dos itens de texto** retornada pelo PDF.js (`page.getTextContent()`). Existem **duas funções de extração com comportamento diferente**:
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-1. **`extractTextFromPage`** (pdfUtils.ts, linha 18): Junta os itens na ordem em que o PDF.js retorna — **SEM ordenação posicional**
-2. **`extractSinglePageText`** (pdfCache.ts, linha 91): Ordena por posição Y/X antes de juntar
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-O PDF.js não garante ordem consistente dos `textContent.items` entre browsers. Safari/macOS pode retornar numa ordem que, por acaso, preserva a leitura natural. Chrome/Edge no Windows retorna numa ordem diferente (baseada na estrutura interna do PDF), quebrando os regex de extração de nomes.
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-### Impacto no fluxo:
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-- **Holerites**: Usa `extractSinglePageText` (com ordenação) → menos afetado, mas o threshold de `yDiff > 5` pode agrupar linhas diferente entre browsers
-- **Comprovantes**: Usa `getCachedPageTextsWithOCREnhanced` → que internamente usa `extractSinglePageText` → os favorecidos são extraídos via `extractFavorecidoNames` que depende de padrões como `FAVORECIDO\s*:?\s*NOME_AQUI`
-- **`extractTextFromPage`** (usada em `countPagesWithFavorecido` e `countPagesWithEmployeeName`): **NÃO ordena** → resultado totalmente dependente da ordem do browser
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-### Cenário de falha concreto:
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-No Chrome/Windows, os items do PDF podem vir numa ordem onde "FAVORECIDO" e o nome do funcionário não ficam adjacentes no texto concatenado. O regex falha, 0 nomes são extraídos, 0 matches são encontrados.
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-## Solução
+## Correcao
 
-### 1. Unificar extração de texto em uma única função com ordenação posicional
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-Substituir **todos** os usos de `extractTextFromPage` (pdfUtils.ts) pela versão com ordenação posicional (`extractSinglePageText` de pdfCache.ts). Isso garante que o texto reconstruído tenha a mesma ordem de leitura em todos os browsers.
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
 
-Arquivos afetados:
-- **`src/lib/pdfUtils.ts`**: Alterar `extractTextFromPage` (linhas 27-36) para usar a mesma lógica de ordenação por posição Y/X do `extractSinglePageText`
-- **`src/lib/pdfUtils.ts`**: Alterar `extractTextFromPdf` (linhas 6-24) — mesma correção
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
 
-### 2. Tornar o threshold de agrupamento de linhas mais robusto
-
-Na função `extractSinglePageText` (pdfCache.ts, linha 96), o threshold `Math.abs(yDiff) > 5` para determinar "mesma linha" pode ser frágil. Normalizar usando a **altura da fonte** (`item.height` ou `item.transform[3]`) em vez de um valor fixo em pixels:
+### Logica resultante simplificada:
 
 ```typescript
-const lineThreshold = Math.max(5, Math.min(a.height, b.height) * 0.5);
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
 ```
 
-### 3. Adicionar log de diagnóstico cross-browser
+## Impacto
 
-Na etapa de matching (useDocumentProcessor.ts), já existe `console.log` do `navigator.userAgent`. Adicionar log da primeira página de cada comprovante mostrando:
-- Quantidade de text items retornados pelo PDF.js
-- Texto dos primeiros 200 chars (para comparação entre browsers)
-- Se a ordenação posicional alterou a ordem original
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-### Resumo das alterações:
+## Arquivos alterados
 
-| Arquivo | Alteração |
+| Arquivo | Alteracao |
 |---------|-----------|
-| `src/lib/pdfUtils.ts` | `extractTextFromPdf` e `extractTextFromPage`: adicionar ordenação Y/X igual ao `extractSinglePageText` |
-| `src/lib/pdfCache.ts` | `extractSinglePageText`: usar altura da fonte como threshold em vez de valor fixo (5px) |
-| `src/hooks/useDocumentProcessor.ts` | Adicionar log de diagnóstico com contagem de items e amostra de texto na extração de comprovantes |
-
-Nenhuma alteração de arquitetura — apenas unificação da lógica de ordenação de texto para garantir consistência cross-browser.
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
