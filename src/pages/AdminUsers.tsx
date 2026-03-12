@@ -139,22 +139,28 @@ const AdminUsers = () => {
     }
 
     setAdding(true);
-    const token = await getToken();
-    const res = await fetch(FUNCTION_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), password, full_name: fullName.trim(), role }),
-    });
+    try {
+      const token = await getToken();
+      const res = await fetch(FUNCTION_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, full_name: fullName.trim(), role }),
+      });
 
-    const json = await res.json();
-    if (res.ok && json.success) {
-      toast({ title: "Usuário criado com sucesso" });
-      setFullName(""); setEmail(""); setPassword(""); setRole("employee");
-      fetchUsers();
-    } else {
-      toast({ title: "Erro ao criar usuário", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        toast({ title: "Usuário criado com sucesso" });
+        setFullName(""); setEmail(""); setPassword(""); setRole("employee");
+        fetchUsers();
+      } else {
+        toast({ title: "Erro ao criar usuário", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("handleAdd error:", error);
+      toast({ title: "Erro ao criar usuário", description: "Falha na requisição.", variant: "destructive" });
+    } finally {
+      setAdding(false);
     }
-    setAdding(false);
   };
 
   // Edit
