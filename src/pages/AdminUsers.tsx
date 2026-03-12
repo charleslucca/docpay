@@ -183,25 +183,31 @@ const AdminUsers = () => {
     }
 
     setSaving(true);
-    const token = await getToken();
-    const payload: Record<string, string> = { user_id: editUser.id, full_name: editName.trim(), role: editRole };
-    if (editPassword) payload.password = editPassword;
+    try {
+      const token = await getToken();
+      const payload: Record<string, string> = { user_id: editUser.id, full_name: editName.trim(), role: editRole };
+      if (editPassword) payload.password = editPassword;
 
-    const res = await fetch(FUNCTION_URL, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+      const res = await fetch(FUNCTION_URL, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    const json = await res.json();
-    if (res.ok && json.success) {
-      toast({ title: "Usuário atualizado" });
-      setEditUser(null);
-      fetchUsers();
-    } else {
-      toast({ title: "Erro ao atualizar", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        toast({ title: "Usuário atualizado" });
+        setEditUser(null);
+        fetchUsers();
+      } else {
+        toast({ title: "Erro ao atualizar", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("handleEdit error:", error);
+      toast({ title: "Erro ao atualizar", description: "Falha na requisição.", variant: "destructive" });
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   // Delete
