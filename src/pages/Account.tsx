@@ -82,7 +82,6 @@ const Account = () => {
 
   const handleLogout = async () => {
     await signOut();
-    navigate("/login");
   };
 
   return (
