@@ -885,7 +885,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
 export function findNameInPage(pageText: string, targetName: string): boolean {
   const preparedPage = preparePageForMatch(pageText);
   const preparedTarget = prepareTargetNameForMatch(targetName);
-  return findNameInPreparedPage(preparedPage, preparedTarget);
+  return findNameInPreparedPage(preparedPage, preparedTarget).found;
 }
 
 export async function createCombinedPdf(

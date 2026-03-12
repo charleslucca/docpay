@@ -1171,9 +1171,12 @@ export function useDocumentProcessor() {
 
         // Search using pre-processed data (FAST!) + validate comprovante name
         let foundPage = -1;
+        let matchMethod = "";
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-          if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+          const result = findNameInPreparedPage(preparedPages[pageIdx], entry.prepared);
+          if (result.found) {
             foundPage = pageIdx + 1; // 1-indexed
+            matchMethod = result.method;
             break;
           }
         }
