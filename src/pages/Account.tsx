@@ -13,7 +13,6 @@ import { User, Mail, Lock, LogOut } from "lucide-react";
 const Account = () => {
   const { user, profile, role, signOut } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [fullName, setFullName] = useState(profile?.full_name || "");
   const [newEmail, setNewEmail] = useState("");
