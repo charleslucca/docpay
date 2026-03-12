@@ -244,13 +244,22 @@ async function syncFuncionariosBatch(
     if (existing) {
       processedIds.add(existing.id);
 
-      // Check if update needed
-      const needsUpdate =
-        existing.banco !== banco ||
-        existing.contrato !== record.contrato ||
-        !existing.ativo;
+      // Normalize values for comparison to avoid false positives
+      const newBancoNorm = normalizeFieldValue(banco);
+      const existingBancoNorm = normalizeFieldValue(existing.banco);
+      const newContratoNorm = normalizeFieldValue(record.contrato);
+      const existingContratoNorm = normalizeFieldValue(existing.contrato);
 
-      if (needsUpdate) {
+      // Check if update needed (with normalized comparison)
+      const bancoChanged = newBancoNorm !== existingBancoNorm;
+      const contratoChanged = newContratoNorm !== existingContratoNorm;
+      const needsReactivation = !existing.ativo;
+
+      if (bancoChanged || contratoChanged || needsReactivation) {
+        if (bancoChanged) console.log(`[Sync] Atualização banco: "${existing.banco}" → "${banco}" (${record.colaborador})`);
+        if (contratoChanged) console.log(`[Sync] Atualização contrato: "${existing.contrato}" → "${record.contrato}" (${record.colaborador})`);
+        if (needsReactivation) console.log(`[Sync] Reativação: ${record.colaborador}`);
+        
         toUpdate.push({
           id: existing.id,
           data: { banco, contrato: record.contrato, ativo: true }
