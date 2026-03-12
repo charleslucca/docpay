@@ -884,9 +884,8 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
         return { found: true, method: "favorecido" };
       }
     }
-    // If FAVORECIDO names were extracted but none matched, don't fallback
-    // (page has structured data, trust it)
-    return { found: false, method: "" };
+    // FAVORECIDO names extracted but none matched — continue to fallback methods
+    // (extraction can be noisy due to OCR errors or truncation)
   }
 
   // 2. FALLBACK: No FAVORECIDO extracted — try substring match on normalized text
