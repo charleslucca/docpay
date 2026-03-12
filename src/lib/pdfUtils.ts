@@ -359,7 +359,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
   }
 
   if (debug) {
-    console.log("[DEBUG] Nenhum nome encontrado");
+    console.log("[DEBUG] Nenhum nome encontrado. Texto (primeiros 500 chars):", normalizedText.substring(0, 500));
   }
   return null;
 }

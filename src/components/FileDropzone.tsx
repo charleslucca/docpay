@@ -150,7 +150,7 @@ export function FileDropzone({
                     </p>
                   ) : file.pageCount !== undefined ? (
                     <p className="text-xs text-muted-foreground">
-                      {file.pageCount} {file.pageCount === 1 ? 'página' : 'páginas'} • {file.estimatedEmployees} funcionário(s)
+                      {file.pageCount} {file.pageCount === 1 ? 'página' : 'páginas'} • {file.estimatedEmployees != null ? `${file.estimatedEmployees} funcionário(s)` : 'calculando...'}
                     </p>
                   ) : null}
                   {file.extractedName && (
