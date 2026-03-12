@@ -72,28 +72,15 @@ const Index = () => {
 
   if (showRepository) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header
-          profile={profile}
-          role={role}
-          signOut={signOut}
-          navigate={navigate}
-          onReset={handleReset}
-          showReset={false}
-          isProcessing={isProcessing}
-          onRepository={() => setShowRepository(false)}
-          repositoryActive
-        />
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Button variant="outline" size="sm" onClick={() => setShowRepository(false)}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Voltar
-            </Button>
-            <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
-          </div>
-          <ProcessingHistory />
-        </main>
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <Button variant="outline" size="sm" onClick={() => setShowRepository(false)}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Voltar
+          </Button>
+          <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
+        </div>
+        <ProcessingHistory />
       </div>
     );
   }
