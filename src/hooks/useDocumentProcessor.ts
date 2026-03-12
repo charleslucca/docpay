@@ -964,7 +964,18 @@ export function useDocumentProcessor() {
       allHoleriteEntries.push(...entries);
     }
 
-    console.log(`[OCR] Total employees found: ${allHoleriteEntries.length}`);
+    // Deduplicar entries por nome normalizado (evita duplicatas de holerites multi-página)
+    const uniqueEntriesMap = new Map<string, typeof allHoleriteEntries[0]>();
+    for (const entry of allHoleriteEntries) {
+      const key = normalizeForMatch(entry.name);
+      if (!uniqueEntriesMap.has(key)) {
+        uniqueEntriesMap.set(key, entry);
+      }
+    }
+    const beforeDedup = allHoleriteEntries.length;
+    allHoleriteEntries.length = 0;
+    allHoleriteEntries.push(...uniqueEntriesMap.values());
+    console.log(`[OCR] Total employees found: ${allHoleriteEntries.length} (deduplicados de ${beforeDedup})`);
 
     if (allHoleriteEntries.length > 0) {
       toast({
