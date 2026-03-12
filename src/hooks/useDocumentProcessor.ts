@@ -1104,6 +1104,7 @@ export function useDocumentProcessor() {
     const STATUS_UPDATE_INTERVAL_MS = 250; // Max 4 updates per second
     let comparisons = 0;
     let lastStatusUpdate = Date.now();
+    const matchMethodCounts: Record<string, number> = { favorecido: 0, substring: 0, "word-overlap": 0 };
 
     const totalComprovantes = comprovanteList.length;
     const totalEntries = preparedEntries.length;
@@ -1171,15 +1172,19 @@ export function useDocumentProcessor() {
 
         // Search using pre-processed data (FAST!) + validate comprovante name
         let foundPage = -1;
+        let matchMethod = "";
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-          if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+          const result = findNameInPreparedPage(preparedPages[pageIdx], entry.prepared);
+          if (result.found) {
             foundPage = pageIdx + 1; // 1-indexed
+            matchMethod = result.method;
             break;
           }
         }
 
         if (foundPage > 0) {
           matchedEntryKeys.add(entryKey);
+          if (matchMethod) matchMethodCounts[matchMethod] = (matchMethodCounts[matchMethod] || 0) + 1;
 
           const updatedComprovante: UploadedFile = {
             ...comprovante,
@@ -1211,6 +1216,8 @@ export function useDocumentProcessor() {
     }
 
     console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
+    console.log(`[Match] Methods: favorecido=${matchMethodCounts.favorecido}, substring=${matchMethodCounts.substring}, word-overlap=${matchMethodCounts["word-overlap"]}`);
+    console.log(`[Match] UserAgent: ${navigator.userAgent}`);
 
     // === RELATÓRIO COMPLETO DE PROCESSAMENTO ===
     const unmatchedEntries = preparedEntries

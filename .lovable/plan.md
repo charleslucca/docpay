@@ -1,53 +1,56 @@
 
 
-# Diagnóstico: Matching falha em computadores diferentes
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-## Problema Identificado
+## Diagnostico
 
-O algoritmo de matching em `findNameInPreparedPage` (pdfUtils.ts, linha 843-856) depende **exclusivamente** da extração de FAVORECIDO via regex. Se nenhum nome FAVORECIDO for extraído de uma página do comprovante, o sistema retorna `false` imediatamente — sem fallback.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
+
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
+
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
 
 ```typescript
-// Código atual — linha 854-855
-// No favorecido names extracted = no match possible
-return false;
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
 ```
 
-Isso significa que se o OCR produzir texto ligeiramente diferente em outro computador (qualidade de renderização, versão do navegador, memória disponível), a regex de FAVORECIDO pode falhar, e **zero matches** serão encontrados.
+## Impacto
 
-### Evidência nos dados
-- Processamentos recentes: `pdf_count=1`, `unprocessed_data=null` — indica que apenas 1 funcionário foi extraído/matched
-- Duração de 11-12 segundos — processamento muito rápido, sugere poucos dados ou OCR mínimo
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-## Causa Raiz
+## Arquivos alterados
 
-1. **`findNameInPreparedPage` sem fallback**: Quando `page.favorecidoNames` está vazio, retorna `false` sem tentar substring match ou word overlap
-2. **OCR inconsistente entre máquinas**: Tesseract.js (WASM) pode produzir texto com qualidade diferente dependendo do navegador, GPU, memória e sistema operacional
-3. **Regex de FAVORECIDO frágil**: O lookahead exige anchors específicos (CPF, CNPJ, DATA, etc.) — se o OCR não produzir esses anchors, a regex falha
-
-## Alterações Propostas
-
-### 1. `src/lib/pdfUtils.ts` — `findNameInPreparedPage`
-Restaurar fallback de matching quando FAVORECIDO não é extraído:
-- Se `favorecidoNames` está vazio, tentar **substring match** do nome normalizado no texto da página
-- Se substring match falhar, tentar **word overlap** (≥70% das palavras do nome presentes na página)
-- Manter log detalhado do método de match utilizado
-
-### 2. `src/lib/pdfUtils.ts` — `extractFavorecidoNames`
-Tornar a regex mais resiliente a variações de OCR:
-- Adicionar mais anchors ao lookahead: "COMP", "RECIBO", "TRANSF", "R$", "BRL"
-- Adicionar fallback para OCR ruidoso: buscar padrão `FAVORECIDO` seguido de texto em maiúsculas sem exigir anchor de término específico (limitar a 80 chars e parar em números/lowercase)
-
-### 3. `src/hooks/useDocumentProcessor.ts` — Diagnóstico
-Adicionar log resumido no final do matching mostrando:
-- Quantas páginas de comprovante tiveram FAVORECIDO extraído vs. não
-- Método de match utilizado para cada correspondência (FAVORECIDO vs. substring vs. word-overlap)
-- Informação do User-Agent para identificar diferenças entre máquinas
-
-### 4. `src/lib/pdfUtils.ts` — `extractFavorecidoNames` fallback adicional
-Quando o fallback word-by-word falha, tentar extrair qualquer sequência de 2+ palavras em maiúsculas (3+ chars cada) que apareça após qualquer das labels FAVORECIDO/BENEFICIARIO, ignorando anchors de término — apenas limitando por tamanho máximo.
-
-## Resumo do Impacto
-- Restaura fallback de matching que existia antes e foi removido (linha 854-856)
-- Matching não depende mais 100% da extração de FAVORECIDO
-- Funciona de forma consistente independente da qualidade do OCR
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
