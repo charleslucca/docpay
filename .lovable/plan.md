@@ -1,88 +1,56 @@
 
 
-## Diagnóstico
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-### Análise do Log
+## Diagnostico
 
-O log mostra claramente que a **extração de nomes** está falhando:
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-```
-[DEBUG] Ignorando - contém palavra inválida: FOLHA MENSAL MENSALISTA FEVEREIRO DE
-[DEBUG] Ignorando - contém palavra inválida: SPACE ATIVIDADES DE LIMPEZA EIRELI
-[DEBUG] Nenhum nome encontrado.
-```
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-O nome `ALINE BIANCA KICHLER` está presente no texto (posição `520 ALINE BIANCA KICHLER 514320`), mas a extração retorna null. Resultado: **0 funcionários extraídos → 0 matches**.
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-### Causa Raiz 1: matchAll (já corrigido, mas não testado pelo usuário)
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-A correção de `.match()` → `.matchAll()` em `extractEmployeeName` já foi aplicada na sessão anterior. O log fornecido foi capturado **antes** dessa correção ser testada. Com o matchAll ativo, o padrão 7 (`\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b`) encontraria `ALINE BIANCA KICHLER` após rejeitar os matches com palavras inválidas.
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-### Causa Raiz 2: Bloqueio de fallback no matching (NÃO corrigido)
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-Em `findNameInPreparedPage` (pdfUtils.ts, linha 887-889):
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-```typescript
-// If FAVORECIDO names were extracted but none matched, don't fallback
-// (page has structured data, trust it)
-return { found: false, method: "" };
-```
+## Correcao
 
-Quando `extractFavorecidoNames` extrai nomes de uma página do comprovante mas **nenhum bate** com o funcionário (por ruído de OCR, truncamento, ou extração imperfeita), o sistema **recusa fazer fallback** para substring ou word-overlap. Isso descarta matches legítimos onde o nome DO funcionário está no texto da página mas a extração de FAVORECIDO foi ruidosa.
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-**Impacto estimado**: Em um arquivo com ~65 funcionários, se ~25% das páginas de comprovante têm FAVORECIDO extraído mas com erro (nome truncado, OCR ruim, nome errado capturado), esses ~17 funcionários são perdidos. Isso explica 48 vs 65+.
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
 
-### Cenário real de perda
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
 
-```
-Página do comprovante: "FAVORECIDO: MARI DA SILVA" (OCR errou MARIA → MARI)
-extractFavorecidoNames → ["MARI DA SILVA"]
-matchNameDirect("MARIA DA SILVA", "MARI DA SILVA") → score 0.82 < 0.85 → falha
-→ RETURN FALSE (sem tentar substring "MARIA DA SILVA" no texto da página)
-```
-
-## Correção
-
-### Arquivo: `src/lib/pdfUtils.ts`, função `findNameInPreparedPage` (linhas 886-889)
-
-Remover o `return { found: false }` que bloqueia o fallback. Se FAVORECIDO não matchou, continuar para substring e word-overlap:
+### Logica resultante simplificada:
 
 ```typescript
-// Antes:
-if (page.favorecidoNames.length > 0) {
-  for (const favName of page.favorecidoNames) {
-    if (matchNameDirect(target.normalized, favName)) {
-      return { found: true, method: "favorecido" };
-    }
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
   }
-  return { found: false, method: "" }; // ← BLOQUEIA FALLBACK
-}
-
-// Depois:
-if (page.favorecidoNames.length > 0) {
-  for (const favName of page.favorecidoNames) {
-    if (matchNameDirect(target.normalized, favName)) {
-      return { found: true, method: "favorecido" };
-    }
-  }
-  // NÃO retornar aqui — continuar para substring e word-overlap
 }
 ```
 
-### Por que é seguro remover o bloqueio
+## Impacto
 
-O fallback de substring exige match exato do nome completo normalizado (≥8 chars). O fallback de word-overlap exige primeiro nome + último nome + 70% das palavras + proximidade no texto (regex). Ambos são suficientemente restritivos para evitar falsos positivos.
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-## Resumo
+## Arquivos alterados
 
-| Etapa | Problema | Status |
-|-------|----------|--------|
-| Extração (matchAll) | `.match()` retorna só 1ª ocorrência | ✅ Já corrigido |
-| Matching (fallback) | `return false` bloqueia substring/word-overlap | ❌ Corrigir agora |
-
-## Arquivo alterado
-
-| Arquivo | Alteração |
+| Arquivo | Alteracao |
 |---------|-----------|
-| `src/lib/pdfUtils.ts` | Remover `return { found: false }` na linha 889 de `findNameInPreparedPage` |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
