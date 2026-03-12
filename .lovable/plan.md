@@ -1,56 +1,40 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+## Diagnóstico
 
-## Diagnostico
+O log LOGS3.txt mostra que **Pattern 0 NÃO está funcionando** — o sistema ainda extrai "SILVA MARIANO" em vez de "CARLOS HENRIQUE DA SILVA MARIANO" (linha 46). Isso significa que Pattern 0 falha silenciosamente e o sistema cai no Pattern 7 genérico.
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+O problema principal é que **"SUPERVISOR" e "ADMINISTRATIVO" foram adicionados à `invalidWords`**. No texto do holerite B SERVICE, CADA página contém algo como:
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
-
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
-
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
-
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
-
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
-
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
-
-## Correcao
-
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
-
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
-
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
-
-### Logica resultante simplificada:
-
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
+```
+...CARLOS HENRIQUE DA SILVA MARIANO 410105 1 1 SUPERVISOR ADMINISTRATIVO ADMISSAO...
 ```
 
-## Impacto
+Quando Pattern 7 (`\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b`) com `matchAll` encontra matches nesse texto, ele captura fragmentos como "SILVA MARIANO SUPERVISOR ADMINISTRATIVO" — que é REJEITADO por conter SUPERVISOR e ADMINISTRATIVO nas invalidWords. Como `matchAll` itera por todas as ocorrências, muitos matches válidos anteriores (como "SILVA MARIANO") que antes passavam agora são "pulados" porque o `matchAll` encontra primeiro combinações maiores que incluem essas palavras.
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+Além disso, Pattern 0 provavelmente falha porque o `\s+` entre a captura e `S?\d{4,6}` compete com o `[A-Z\s]` da captura (ambos aceitam espaços), causando backtracking problemático em textos com formatação variável.
+
+## Correção
+
+### Arquivo: `src/lib/pdfUtils.ts`
+
+**1. Remover "SUPERVISOR", "ADMINISTRADOR", "ADMINISTRATIVO" da `invalidWords`** (linha 364)
+
+Esses são cargos/departamentos que aparecem no corpo de CADA holerite. Adicioná-los bloqueia a extração de nomes legítimos que aparecem perto dessas palavras. O Pattern 1 já usa esses termos como terminadores (fora do capture group), então não precisam estar em invalidWords.
+
+**2. Corrigir Pattern 0** — usar `[A-Z]` em vez de `[A-Z\s]` para o corpo do nome, com espaços explícitos:
+
+```typescript
+/NOME\s+DO\s+FUNCIONARIO\s+CBO\s+(?:DEPARTAMENTO\s+)?(?:FILIAL\s+)?\d{1,5}\s+((?:[A-Z]{2,15}\s+){1,6}[A-Z]{2,15})\s+S?\d{4,6}/
+```
+
+Isso evita a ambiguidade lazy entre `[A-Z\s]` e `\s+` que pode causar falhas.
+
+**3. Manter COMUNICADO, DESCONTO, EMPRESTIMO, AVISO, INFORMATIVO** — esses são legitimamente inválidos como nomes.
 
 ## Arquivos alterados
 
-| Arquivo | Alteracao |
+| Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+| `src/lib/pdfUtils.ts` | Remover SUPERVISOR/ADMINISTRADOR/ADMINISTRATIVO de invalidWords; corrigir Pattern 0 para usar grupos de palavras explícitos |
 
