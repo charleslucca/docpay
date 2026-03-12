@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  FileText, Sparkles, RotateCcw, Play, Zap, StopCircle,
-  UserCircle, LogOut, User, Shield, ArrowLeft, ArrowRight, FolderOpen, History,
+  Sparkles, RotateCcw, Play, StopCircle,
+  ArrowLeft, ArrowRight, FolderOpen, History,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
-import { useAuth } from '@/hooks/useAuth';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
@@ -16,15 +14,6 @@ import { UnprocessedList } from '@/components/UnprocessedList';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 
 const slideVariants = {
   enter: (direction: number) => ({
