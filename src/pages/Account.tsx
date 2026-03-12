@@ -8,8 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
-import { User, Mail, Lock, LogOut, ArrowLeft } from "lucide-react";
+import { User, Mail, Lock, LogOut } from "lucide-react";
 
 const Account = () => {
   const { user, profile, role, signOut } = useAuth();
