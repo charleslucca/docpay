@@ -3,6 +3,27 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { getCachedPdf, getCachedBuffer, renderPageForOCR, OCR_SCALE_FAST } from "./pdfCache";
 import { extractTextWithOCR } from "./ocrUtils";
 
+/**
+ * Sort text items by position (Y descending, then X ascending) for consistent
+ * reading order across all browsers. PDF.js does NOT guarantee item order —
+ * Safari may return items in visual order while Chrome/Edge on Windows may not.
+ * Uses dynamic line-height threshold instead of a fixed pixel value.
+ */
+function sortTextItems(items: any[]): any[] {
+  return items
+    .filter((item: any) => item.str && item.str.trim())
+    .sort((a: any, b: any) => {
+      const yA = a.transform[5];
+      const yB = b.transform[5];
+      const heightA = Math.abs(a.transform[3]) || a.height || 10;
+      const heightB = Math.abs(b.transform[3]) || b.height || 10;
+      const lineThreshold = Math.max(5, Math.min(heightA, heightB) * 0.5);
+      const yDiff = yB - yA; // Invert: PDF Y goes bottom-to-top
+      if (Math.abs(yDiff) > lineThreshold) return yDiff;
+      return a.transform[4] - b.transform[4]; // Same line → sort by X
+    });
+}
+
 export async function extractTextFromPdf(
   file: File,
   cachedPdf?: PDFDocumentProxy,
@@ -15,15 +36,17 @@ export async function extractTextFromPdf(
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
-    const pageText = textContent.items.map((item: any) => item.str).join(" ");
+    const sorted = sortTextItems(textContent.items);
+    const pageText = sorted.map((item: any) => item.str).join(" ");
     pageTexts.push(pageText);
     fullText += pageText + "\n";
+    page.cleanup();
   }
 
   return { text: fullText, pageTexts };
 }
 
-// Optimized: Extract text from a single page only
+// Optimized: Extract text from a single page only (with positional sorting)
 export async function extractTextFromPage(
   file: File,
   pageNumber: number,
@@ -32,7 +55,10 @@ export async function extractTextFromPage(
   const pdf = cachedPdf || (await getCachedPdf(file));
   const page = await pdf.getPage(pageNumber);
   const textContent = await page.getTextContent();
-  return textContent.items.map((item: any) => item.str).join(" ");
+  const sorted = sortTextItems(textContent.items);
+  const text = sorted.map((item: any) => item.str).join(" ");
+  page.cleanup();
+  return text;
 }
 
 // Optimized: Search for name page by page with early termination

@@ -93,7 +93,11 @@ async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Pr
     .sort((a: any, b: any) => {
       // Inverter Y porque PDF usa coordenadas de baixo para cima
       const yDiff = b.transform[5] - a.transform[5];
-      if (Math.abs(yDiff) > 5) return yDiff; // Linhas diferentes
+      // Dynamic threshold based on font height instead of fixed 5px
+      const heightA = Math.abs(a.transform[3]) || a.height || 10;
+      const heightB = Math.abs(b.transform[3]) || b.height || 10;
+      const lineThreshold = Math.max(5, Math.min(heightA, heightB) * 0.5);
+      if (Math.abs(yDiff) > lineThreshold) return yDiff; // Linhas diferentes
       return a.transform[4] - b.transform[4]; // Mesma linha, ordenar por X
     });
   
