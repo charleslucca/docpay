@@ -358,6 +358,10 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
 
     // Termos de calendário/período
     "SEMESTRE", "TRIMESTRE", "BIMESTRE", "QUINZENA", "MENSALISTA", "HORISTA",
+
+    // Termos de comunicados/avisos
+    "COMUNICADO", "DESCONTO", "EMPRESTIMO", "AVISO", "INFORMATIVO",
+    "SUPERVISOR", "ADMINISTRADOR", "ADMINISTRATIVO",
   ];
 
   // Preposições que nunca iniciam nomes de pessoas
