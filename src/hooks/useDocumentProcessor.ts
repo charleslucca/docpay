@@ -1131,6 +1131,18 @@ export function useDocumentProcessor() {
     const matchStartTime = Date.now();
     const MATCH_TIMEOUT_MS = 300000;
 
+    // Cross-browser diagnostic: log first comprovante text sample
+    if (comprovanteList.length > 0) {
+      const firstComp = comprovanteList[0];
+      const firstExtracted = comprovanteTextsMap.get(firstComp.id);
+      if (firstExtracted?.pageTexts?.length) {
+        const sample = firstExtracted.pageTexts[0].substring(0, 300);
+        console.log(`[Match][Diag] Browser: ${navigator.userAgent}`);
+        console.log(`[Match][Diag] First comprovante "${firstComp.file.name}" page 1 text (300 chars): "${sample}"`);
+        console.log(`[Match][Diag] Total pages: ${firstExtracted.pageTexts.length}, Total entries: ${totalEntries}`);
+      }
+    }
+
     matchingLoop: for (let compIdx = 0; compIdx < totalComprovantes; compIdx++) {
       const comprovante = comprovanteList[compIdx];
 
