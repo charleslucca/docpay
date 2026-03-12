@@ -1184,6 +1184,7 @@ export function useDocumentProcessor() {
 
         if (foundPage > 0) {
           matchedEntryKeys.add(entryKey);
+          if (matchMethod) matchMethodCounts[matchMethod] = (matchMethodCounts[matchMethod] || 0) + 1;
 
           const updatedComprovante: UploadedFile = {
             ...comprovante,
