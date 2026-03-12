@@ -149,7 +149,7 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
   ];
 
   // ETAPA 1: Amostragem de texto nativo - verificar se os PADRÕES aparecem
-  const samplePages = [1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)];
+  const samplePages = [...new Set([1, Math.max(1, Math.floor(totalPages / 2)), Math.max(1, totalPages - 1)])].filter(p => p >= 1 && p <= totalPages);
   let pagesWithEmployeePattern = 0;
 
   console.log(`[countEmployees] Amostrando ${samplePages.length} páginas de ${file.name} (${totalPages} páginas)...`);
@@ -254,8 +254,11 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
     // 3b. Labels explícitos brasileiros (palavra única)
     /(?:NOME|FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|TITULAR|SEGURADO|BENEFICIARIO)\s*:?\s*([A-Z][A-Z\s]{4,65}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
 
-    // 4. Recibo de pagamento padrão
+    // 4a. Recibo de pagamento padrão
     /RECIBO\s+DE\s+PAGAMENTO[^A-Z]*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CARGO))/,
+
+    // 4b. "RECIBO" (sem "DE PAGAMENTO") seguido de nome
+    /RECIBO[^A-Z]{0,20}([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CARGO|FUNCAO|ADMISSAO|CNPJ|MATRICULA|\d{3}\.\d{3}|$))/,
 
     // 5. Padrão para "FAVORECIDO" em comprovantes bancários
     /FAVORECIDO\s*:?\s*([A-Z][A-Z\s]{5,60}?)(?=\s*(?:CPF|CNPJ|AG|AGENCIA|CONTA|\d{3}))/,
@@ -356,7 +359,7 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
   }
 
   if (debug) {
-    console.log("[DEBUG] Nenhum nome encontrado");
+    console.log("[DEBUG] Nenhum nome encontrado. Texto (primeiros 500 chars):", normalizedText.substring(0, 500));
   }
   return null;
 }
