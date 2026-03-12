@@ -1,56 +1,61 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Holerite não encontra funcionário no Chrome — Diagnóstico e Correção
 
-## Diagnostico
+## Problema Identificado
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+Analisando a imagem: o RECIBO.pdf (holerite) mostra **"1 página • funcionário(s)"** — sem número antes de "funcionário(s)", indicando que `estimatedEmployees` está `undefined`. O comprovante funciona (1 funcionário). Isso significa que a extração do nome do funcionário falha completamente no holerite.
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+### Causa Raiz 1: Bug em `countPagesWithEmployeeName` (crash silencioso)
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+Linha 152 de `pdfUtils.ts`:
+```text
+const samplePages = [1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)];
+```
+Para um PDF de **1 página**: `samplePages = [1, 0, 1]`. A página **0** não é filtrada pelo guard `if (pageNum > totalPages)` (porque `0 > 1` é `false`), e `pdf.getPage(0)` **lança exceção** no pdf.js (páginas são 1-indexed). Isso crasheia toda a função `countPagesWithEmployeeName`, e o catch no caller (`addFiles`, linha 328) engole o erro silenciosamente, deixando `estimatedEmployees` como `undefined`.
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+### Causa Raiz 2: `extractEmployeeName` não reconhece o formato do RECIBO.pdf
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+Se o holerite usa um layout que não corresponde a nenhum dos 8 padrões regex (ex: "RECIBO" sem "DE PAGAMENTO", ou formato de tabela diferente), o nome não é extraído. Sem nome extraído do holerite, o funcionário nunca entra na lista de matching, resultando em "0 funcionário(s)" e nenhuma correspondência.
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+### Causa Raiz 3: PDFs escaneados de 1 página sem OCR na contagem
 
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+Para 1 página escaneada, a estimativa retorna `Math.max(1, 0) = 1`, mas se a extração nativa falha E o OCR durante processamento também falha, o nome nunca é capturado.
 
-## Correcao
+## Alterações Propostas
 
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
+### 1. `src/lib/pdfUtils.ts` — Corrigir bug de página 0
 
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
-
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
-
-### Logica resultante simplificada:
-
+Linha 152: Filtrar valores ≤ 0 e duplicatas do `samplePages`:
 ```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
+const samplePages = [...new Set([1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)])].filter(p => p >= 1);
 ```
 
-## Impacto
+### 2. `src/lib/pdfUtils.ts` — Adicionar padrões de extração mais amplos em `extractEmployeeName`
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+Adicionar novos padrões para formatos comuns de recibos brasileiros que não estão cobertos:
+- Padrão para "RECIBO" seguido de nome (sem "DE PAGAMENTO")
+- Padrão para tabelas onde o nome aparece após "EMPREGADOR" ou "FUNCIONÁRIO" com formatação não-padrão
+- Fallback final mais agressivo: buscar no texto por qualquer sequência de 2+ palavras maiúsculas (≥3 chars cada) que não sejam labels conhecidos, próxima a um CPF
 
-## Arquivos alterados
+### 3. `src/lib/pdfUtils.ts` — Adicionar logging de diagnóstico na contagem
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+Quando `extractEmployeeName` falha, logar os primeiros 500 chars do texto para diagnóstico, facilitando identificar o formato do PDF.
+
+### 4. `src/hooks/useDocumentProcessor.ts` — Tratar estimatedEmployees undefined
+
+Na UI (FileDropzone.tsx, linha 153), quando `estimatedEmployees` é `undefined`, mostrar "calculando..." em vez de `undefined`.
+
+### 5. `src/components/FileDropzone.tsx` — Corrigir exibição de undefined
+
+Tratar o caso de `estimatedEmployees` ser `undefined` ou `0` para exibir mensagem adequada.
+
+## Resumo
+
+| Alteração | Arquivo | Impacto |
+|-----------|---------|---------|
+| Fix página 0 em samplePages | pdfUtils.ts | Elimina crash silencioso na contagem |
+| Novos padrões de extração | pdfUtils.ts | Reconhece mais formatos de holerite |
+| Log diagnóstico | pdfUtils.ts | Facilita debug de formatos não reconhecidos |
+| Tratar undefined na UI | FileDropzone.tsx | Exibe feedback correto ao usuário |
 
