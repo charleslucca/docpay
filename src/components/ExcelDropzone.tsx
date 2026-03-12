@@ -193,7 +193,7 @@ export function ExcelDropzone({
           </p>
         </div>
 
-        <ScrollArea className="h-[300px] rounded-md border">
+        <ScrollArea className="h-[400px] rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -209,13 +209,13 @@ export function ExcelDropzone({
             <TableBody>
               {displayRecords.map((record, idx) => (
                 <TableRow key={idx}>
-                  <TableCell className="text-xs py-1.5">{record.empresa}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.cidade}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.contrato}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.colaborador}</TableCell>
-                  <TableCell className="text-xs py-1.5 text-center">{record.totalFuncionarios ?? idx + 1}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.banco || '-'}</TableCell>
-                  <TableCell className="text-xs py-1.5">{record.tipo || '-'}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.empresa}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.cidade}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.contrato}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.colaborador}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3 text-center">{record.totalFuncionarios ?? idx + 1}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.banco || '-'}</TableCell>
+                  <TableCell className="text-sm py-2.5 px-3">{record.tipo || '-'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -231,14 +231,14 @@ export function ExcelDropzone({
         <div className="flex gap-2 justify-end">
           <Button
             variant="outline"
-            size="sm"
+            size="default"
             onClick={handleRemove}
             disabled={syncStatus === 'syncing'}
           >
             Cancelar
           </Button>
           <Button
-            size="sm"
+            size="default"
             onClick={handleConfirmImport}
             disabled={syncStatus === 'syncing'}
           >
@@ -323,7 +323,7 @@ export function ExcelDropzone({
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="space-y-3"
+              className="space-y-5"
             >
               <div className="flex items-center justify-between p-3 rounded-lg bg-primary/10 border border-primary/20">
                 <div className="flex items-center gap-3">
@@ -331,7 +331,7 @@ export function ExcelDropzone({
                     <Check className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium truncate max-w-[200px]">
+                    <p className="text-sm font-medium truncate max-w-[400px]">
                       {spreadsheetData.fileName}
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -354,24 +354,24 @@ export function ExcelDropzone({
               {renderPreviewTable()}
               {renderSyncStatus()}
 
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-lg bg-muted/50">
-                  <Users className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-                  <p className="text-lg font-semibold">{spreadsheetData.records.length}</p>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="p-4 rounded-lg bg-muted/50">
+                  <Users className="h-5 w-5 mx-auto mb-1.5 text-muted-foreground" />
+                  <p className="text-2xl font-semibold">{spreadsheetData.records.length}</p>
                   <p className="text-xs text-muted-foreground">Funcionários</p>
                 </div>
-                <div className="p-2 rounded-lg bg-muted/50">
-                  <Building2 className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-                  <p className="text-lg font-semibold">{spreadsheetData.empresas.length}</p>
+                <div className="p-4 rounded-lg bg-muted/50">
+                  <Building2 className="h-5 w-5 mx-auto mb-1.5 text-muted-foreground" />
+                  <p className="text-2xl font-semibold">{spreadsheetData.empresas.length}</p>
                   <p className="text-xs text-muted-foreground">Empresas</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowCidades(!showCidades)}
-                  className="p-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
+                  className="p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
                 >
-                  <MapPin className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-                  <p className="text-lg font-semibold flex items-center justify-center gap-1">
+                  <MapPin className="h-5 w-5 mx-auto mb-1.5 text-muted-foreground" />
+                  <p className="text-2xl font-semibold flex items-center justify-center gap-1">
                     {spreadsheetData.cidades.length}
                     {showCidades ? (
                       <ChevronUp className="h-3 w-3 text-muted-foreground" />
@@ -423,7 +423,7 @@ export function ExcelDropzone({
               <div
                 {...getRootProps()}
                 className={`
-                  border-2 border-dashed rounded-lg p-6 text-center cursor-pointer
+                  border-2 border-dashed rounded-lg p-10 text-center cursor-pointer
                   transition-colors duration-200
                   ${isDragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50'}
                   ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
