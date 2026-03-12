@@ -331,7 +331,7 @@ export function ExcelDropzone({
                     <Check className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium truncate max-w-[200px]">
+                    <p className="text-sm font-medium truncate max-w-[400px]">
                       {spreadsheetData.fileName}
                     </p>
                     <p className="text-xs text-muted-foreground">
