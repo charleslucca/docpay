@@ -169,6 +169,14 @@ function extractBancoFromContrato(contrato: string): string | null {
 }
 
 /**
+ * Normalize a value for safe comparison: treat null, undefined, "" as null; trim and uppercase otherwise
+ */
+function normalizeFieldValue(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === "") return null;
+  return value.trim().toUpperCase();
+}
+
+/**
  * BATCH: Sync funcionarios with the database
  * Reduced from ~2N requests to ~5-10 requests
  */
