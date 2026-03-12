@@ -1104,6 +1104,7 @@ export function useDocumentProcessor() {
     const STATUS_UPDATE_INTERVAL_MS = 250; // Max 4 updates per second
     let comparisons = 0;
     let lastStatusUpdate = Date.now();
+    const matchMethodCounts: Record<string, number> = { favorecido: 0, substring: 0, "word-overlap": 0 };
 
     const totalComprovantes = comprovanteList.length;
     const totalEntries = preparedEntries.length;
