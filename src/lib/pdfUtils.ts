@@ -349,8 +349,14 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
   ];
 
   for (const pattern of namePatterns) {
-    const match = normalizedText.match(pattern);
-    if (match && match[1]) {
+    // Usar matchAll para iterar por TODAS as ocorrências do padrão,
+    // não apenas a primeira. Resolve problema no Windows onde a ordenação
+    // do texto extraído pelo PDF.js varia e a primeira ocorrência pode ser lixo.
+    const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
+    
+    for (const match of normalizedText.matchAll(globalPattern)) {
+      if (!match[1]) continue;
+      
       const name = match[1].trim().replace(/\s+/g, " ");
       const words = name.split(" ").filter((w) => w.length > 1);
 

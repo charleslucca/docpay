@@ -1,76 +1,56 @@
 
 
-## Diagnóstico
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-O log mostra claramente o problema:
+## Diagnostico
 
-```
-[DEBUG] Ignorando - contém palavra inválida: FOLHA MENSAL MENSALISTA FEVEREIRO DE
-[DEBUG] Ignorando - contém palavra inválida: SPACE ATIVIDADES DE LIMPEZA EIRELI
-[DEBUG] Nenhum nome encontrado.
-```
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-O nome "ALINE BIANCA KICHLER" está presente no texto (visível na linha 20 do log: `520 ALINE BIANCA KICHLER 514320`), mas a extração falha.
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-**Causa raiz**: Na função `extractEmployeeName` (pdfUtils.ts, linhas 351-385), cada padrão regex usa `normalizedText.match(pattern)` que retorna apenas a **primeira** ocorrência. Quando essa primeira ocorrência é rejeitada (palavra inválida), o `continue` pula para o **próximo padrão** em vez de tentar a **próxima ocorrência do mesmo padrão**.
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-Exemplo concreto:
-1. Padrão 1 (`[A-Z0-9]{2,5} + nome + CBO`) faz match com `GERAL` como código e captura `FOLHA MENSAL MENSALISTA FEVEREIRO DE` com `2026` como CBO. Rejeitado (FOLHA é palavra inválida).
-2. O match correto (`520 ALINE BIANCA KICHLER 514320`) é a **segunda** ocorrência do mesmo padrão, mas nunca é tentada.
-3. Padrões seguintes também capturam lixo primeiro ("SPACE ATIVIDADES DE LIMPEZA EIRELI").
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-Isso explica por que funciona em alguns ambientes e não em outros: a ordenação do texto extraído pelo PDF.js varia entre sistemas, alterando qual match vem primeiro.
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-## Correção
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-### Arquivo: `src/lib/pdfUtils.ts`, função `extractEmployeeName` (linhas 351-385)
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-Trocar `normalizedText.match(pattern)` (retorna só o primeiro match) por um loop com `matchAll` que itera por **todas** as ocorrências de cada padrão até encontrar uma válida:
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
 
 ```typescript
-for (const pattern of namePatterns) {
-  // Criar versão global do regex para matchAll
-  const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
-  
-  for (const match of normalizedText.matchAll(globalPattern)) {
-    if (!match[1]) continue;
-    
-    const name = match[1].trim().replace(/\s+/g, " ");
-    const words = name.split(" ").filter((w) => w.length > 1);
-
-    if (words.length < 2 || name.length < 5 || name.length > 60) continue;
-
-    const hasVeryLongWord = words.some((w) => w.length > 15);
-    if (hasVeryLongWord) {
-      if (debug) console.log("[DEBUG] Ignorando - palavra OCR malformada:", name);
-      continue; // Tenta próximo match do MESMO padrão
-    }
-
-    const hasInvalidWord = words.some((w) => invalidWords.includes(w));
-    if (hasInvalidWord) {
-      if (debug) console.log("[DEBUG] Ignorando - contém palavra inválida:", name);
-      continue; // Tenta próximo match do MESMO padrão
-    }
-
-    if (debug) console.log("[DEBUG] Nome extraído:", name);
-    return name;
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
   }
 }
 ```
 
-Com essa mudança, o padrão 1 vai:
-1. Match 1: `GERAL → FOLHA MENSAL... → 2026` → rejeitado (FOLHA)
-2. Match 2: `520 → ALINE BIANCA KICHLER → 514320` → aceito
-
 ## Impacto
 
-- Correção cirúrgica: apenas a iteração interna muda, sem alterar padrões ou validações
-- Resolve o problema no Windows porque agora todas as ocorrências de cada padrão são testadas
-- Também melhora a robustez em qualquer ambiente onde a ordem do texto varie
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
 ## Arquivos alterados
 
-| Arquivo | Alteração |
+| Arquivo | Alteracao |
 |---------|-----------|
-| `src/lib/pdfUtils.ts` | Trocar `.match()` por loop com `.matchAll()` na função `extractEmployeeName` |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
