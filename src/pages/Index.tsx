@@ -86,25 +86,36 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="flex flex-col flex-1">
       <ResumeProcessingDialog
         open={hasSavedState && !isCheckingState}
         onResume={resumeProcessing}
         onDiscard={discardSavedState}
       />
 
-      <Header
-        profile={profile}
-        role={role}
-        signOut={signOut}
-        navigate={navigate}
-        onReset={handleReset}
-        showReset={currentStep > 1 || holerites.length > 0 || comprovantes.length > 0}
-        isProcessing={isProcessing}
-        onRepository={() => setShowRepository(true)}
-        repositoryActive={false}
-        docCount={generatedDocs.length}
-      />
+      {/* Top action bar */}
+      <div className="container mx-auto px-4 pt-4 flex items-center gap-2 justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowRepository(true)}
+          className="gap-2"
+        >
+          <FolderOpen className="h-4 w-4" />
+          <span className="hidden sm:inline">Histórico</span>
+          {generatedDocs.length > 0 && (
+            <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
+              {generatedDocs.length}
+            </span>
+          )}
+        </Button>
+        {(currentStep > 1 || holerites.length > 0 || comprovantes.length > 0) && (
+          <Button variant="outline" size="sm" onClick={handleReset} disabled={isProcessing}>
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Recomeçar
+          </Button>
+        )}
+      </div>
 
       <main className="container mx-auto px-4 py-8 flex-1">
         <div className="mb-8">
