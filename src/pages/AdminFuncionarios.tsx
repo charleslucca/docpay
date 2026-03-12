@@ -19,7 +19,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Pencil, Trash2, Search, Users, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Users, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Funcionario {
   id: string;
