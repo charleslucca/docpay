@@ -314,16 +314,20 @@ async function syncFuncionariosBatch(
   }
 
   // 6. BATCH DEACTIVATE: Mark funcionarios not in current Excel as inactive
+  // Only consider funcionarios from municipios present in the Excel file
+  const municipioIdSet = new Set(municipioIds);
   const toDeactivate = (allExisting || [])
-    .filter(f => f.ativo && !processedIds.has(f.id))
-    .map(f => f.id);
+    .filter(f => f.ativo && !processedIds.has(f.id) && municipioIdSet.has(f.municipio_id));
 
   if (toDeactivate.length > 0) {
+    toDeactivate.forEach(f => console.log(`[Sync] Desativando: ${f.nome_normalizado} (empresa: ${f.empresa_id}, município: ${f.municipio_id})`));
+    
+    const deactivateIds = toDeactivate.map(f => f.id);
     // Use IN clause for batch update in ONE request
     const { error } = await supabase
       .from("funcionarios")
       .update({ ativo: false })
-      .in("id", toDeactivate);
+      .in("id", deactivateIds);
 
     if (error) {
       console.error("[Sync] Batch deactivate error:", error);
