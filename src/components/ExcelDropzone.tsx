@@ -193,7 +193,7 @@ export function ExcelDropzone({
           </p>
         </div>
 
-        <ScrollArea className="h-[300px] rounded-md border">
+        <ScrollArea className="h-[400px] rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
