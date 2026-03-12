@@ -238,7 +238,7 @@ export function ExcelDropzone({
             Cancelar
           </Button>
           <Button
-            size="sm"
+            size="default"
             onClick={handleConfirmImport}
             disabled={syncStatus === 'syncing'}
           >
