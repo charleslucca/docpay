@@ -507,7 +507,7 @@ const AdminFuncionarios = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 };
 
