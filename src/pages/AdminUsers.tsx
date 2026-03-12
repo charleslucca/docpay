@@ -214,23 +214,29 @@ const AdminUsers = () => {
   const handleDelete = async () => {
     if (!deleteUser) return;
     setDeleting(true);
-    const token = await getToken();
+    try {
+      const token = await getToken();
 
-    const res = await fetch(FUNCTION_URL, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: deleteUser.id }),
-    });
+      const res = await fetch(FUNCTION_URL, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: deleteUser.id }),
+      });
 
-    const json = await res.json();
-    if (res.ok && json.success) {
-      toast({ title: "Usuário excluído" });
-      setDeleteUser(null);
-      fetchUsers();
-    } else {
-      toast({ title: "Erro ao excluir", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        toast({ title: "Usuário excluído" });
+        setDeleteUser(null);
+        fetchUsers();
+      } else {
+        toast({ title: "Erro ao excluir", description: json.error || "Erro desconhecido.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("handleDelete error:", error);
+      toast({ title: "Erro ao excluir", description: "Falha na requisição.", variant: "destructive" });
+    } finally {
+      setDeleting(false);
     }
-    setDeleting(false);
   };
 
   return (

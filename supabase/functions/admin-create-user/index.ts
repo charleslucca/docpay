@@ -40,9 +40,6 @@ Deno.serve(async (req) => {
 
   const callerId = userData.user.id;
 
-  // Use service role client for admin operations
-  const adminClient = createClient(supabaseUrl, serviceRoleKey);
-
   // Verify caller is admin
   const { data: roleData } = await adminClient
     .from("user_roles")
