@@ -52,7 +52,6 @@ const FUNCTION_URL = `https://zouizzfomwrxfptgxkwj.supabase.co/functions/v1/admi
 
 const AdminUsers = () => {
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserEntry[]>([]);
