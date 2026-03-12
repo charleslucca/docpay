@@ -262,9 +262,14 @@ export function extractEmployeeName(text: string, debug: boolean = true): string
 
   // Padrões ordenados do mais específico ao mais genérico
   const namePatterns = [
-    // 1. Formato B SERVICE: código (pode ter letras OCR) + nome + cargo/CBO na mesma linha
+    // 0. Formato B SERVICE explícito: cabeçalho completo + código + nome + CBO
+    // Captura nome diretamente após "NOME DO FUNCIONARIO CBO [DEPARTAMENTO] [FILIAL] {código}"
+    /NOME\s+DO\s+FUNCIONARIO\s+CBO\s+(?:DEPARTAMENTO\s+)?(?:FILIAL\s+)?(\d{1,5})\s+([A-Z][A-Z\s]{5,55}?)\s+S?\d{4,6}/,
+
+    // 1. Formato B SERVICE: código (deve conter dígito) + nome + cargo/CBO na mesma linha
     // Ex: "2445 JOCELI BRZEZINSKI 513205" ou "S0 CAMILLO ALVES PELZER S14320"
-    /\b[A-Z0-9]{2,5}\s+([A-Z][A-Z\s]{5,55}?)\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|SUPERVISOR|OPERADOR|TECNICO|LIDER|ENCARREGADO|FISCAL|PORTEIRO|ZELADOR|JARDINEIRO|MOTORISTA|VIGILANTE|RECEPCIONISTA|COPEIRA|LAVADOR|PEDREIRO|PINTOR|ELETRICISTA|BOMBEIRO|MECANICO|ALMOXARIFE|S?\d{4,6})\b/,
+    // Lookahead (?=[A-Z0-9]*\d) impede que "CBO", "CC" sejam interpretados como códigos
+    /\b(?=[A-Z0-9]*\d)[A-Z0-9]{1,5}\s+([A-Z][A-Z\s]{5,55}?)\s+(?:COZINHEIRA|SERVENTE|AJUDANTE|AUXILIAR|SUPERVISOR|OPERADOR|TECNICO|LIDER|ENCARREGADO|FISCAL|PORTEIRO|ZELADOR|JARDINEIRO|MOTORISTA|VIGILANTE|RECEPCIONISTA|COPEIRA|LAVADOR|PEDREIRO|PINTOR|ELETRICISTA|BOMBEIRO|MECANICO|ALMOXARIFE|S?\d{4,6})\b/,
 
     // 1.5 Formato B SERVICE (OCR ruidoso): nome entre mês/ano e código CBO
     // Ex: "AGOSTO DE 2025 S0 CAMILLO ALVES PELZER S14320" -> "CAMILLO ALVES PELZER"
