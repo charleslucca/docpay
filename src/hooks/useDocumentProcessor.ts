@@ -1216,6 +1216,8 @@ export function useDocumentProcessor() {
     }
 
     console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
+    console.log(`[Match] Methods: favorecido=${matchMethodCounts.favorecido}, substring=${matchMethodCounts.substring}, word-overlap=${matchMethodCounts["word-overlap"]}`);
+    console.log(`[Match] UserAgent: ${navigator.userAgent}`);
 
     // === RELATÓRIO COMPLETO DE PROCESSAMENTO ===
     const unmatchedEntries = preparedEntries
