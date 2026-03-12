@@ -149,7 +149,7 @@ export async function countPagesWithEmployeeName(file: File, cachedPdf?: PDFDocu
   ];
 
   // ETAPA 1: Amostragem de texto nativo - verificar se os PADRÕES aparecem
-  const samplePages = [1, Math.floor(totalPages / 2), Math.max(1, totalPages - 1)];
+  const samplePages = [...new Set([1, Math.max(1, Math.floor(totalPages / 2)), Math.max(1, totalPages - 1)])].filter(p => p >= 1 && p <= totalPages);
   let pagesWithEmployeePattern = 0;
 
   console.log(`[countEmployees] Amostrando ${samplePages.length} páginas de ${file.name} (${totalPages} páginas)...`);
