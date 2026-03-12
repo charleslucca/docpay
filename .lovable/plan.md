@@ -1,50 +1,56 @@
 
 
-## Diagnóstico
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-O padrão 7 da extração de nomes (`\b([A-Z]{3,15}(?:\s+[A-Z]{2,15}){1,4})\b`) é genérico demais e captura fragmentos de texto como "DE SETEMBRO", "DE OUTUBRO", etc. como nomes válidos. Isso ocorre porque:
+## Diagnostico
 
-1. "SETEMBRO", "OUTUBRO" e outros meses **não estão** na lista `invalidWords`
-2. "DE" tem 2 caracteres e passa no filtro `w.length > 1`
-3. Essas palavras são todas maiúsculas, então o padrão genérico as captura
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-Resultado: o sistema extrai "DE SETEMBRO" como nome de funcionário, tenta fazer matching com os comprovantes, falha, e aparece no relatório de não processados.
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-## Correção
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-### Arquivo: `src/lib/pdfUtils.ts`, lista `invalidWords` (linhas 303-349)
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-Adicionar à lista de palavras inválidas:
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-**Meses do ano:**
-`JANEIRO`, `FEVEREIRO`, `MARCO`, `ABRIL`, `MAIO`, `JUNHO`, `JULHO`, `AGOSTO`, `SETEMBRO`, `OUTUBRO`, `NOVEMBRO`, `DEZEMBRO`
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-**Palavras de calendário/período:**
-`SEMESTRE`, `TRIMESTRE`, `BIMESTRE`, `QUINZENA`, `MENSALISTA`, `HORISTA`
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-**Preposições isoladas que nunca iniciam nomes válidos (validação extra):**
-Adicionar validação: se a primeira palavra do nome for uma preposição curta (`DE`, `DA`, `DO`, `DAS`, `DOS`, `EM`, `NO`, `NA`, `AO`, `AS`, `OS`, `POR`), rejeitar — nomes de pessoas nunca começam com preposição.
+## Correcao
 
-### Lógica adicional (após validação 3):
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
 
 ```typescript
-// Validação 4: nome não pode começar com preposição
-const prepositions = ["DE", "DA", "DO", "DAS", "DOS", "EM", "NO", "NA", "AO", "AS", "OS", "POR", "ATE", "COM", "SEM", "SOB"];
-if (prepositions.includes(words[0])) {
-  if (debug) console.log("[DEBUG] Ignorando - começa com preposição:", name);
-  continue;
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
 }
 ```
 
 ## Impacto
 
-- "DE SETEMBRO", "DE OUTUBRO", etc. serão rejeitados por ambas as validações (mês na invalidWords + começa com preposição)
-- Nomes reais como "MARIA DE SETEMBRO" (improvável mas possível) seriam aceitos pois "MARIA" não é preposição
-- Reduz ruído no relatório de não processados, mostrando apenas funcionários reais
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-## Arquivo alterado
+## Arquivos alterados
 
-| Arquivo | Alteração |
+| Arquivo | Alteracao |
 |---------|-----------|
-| `src/lib/pdfUtils.ts` | Adicionar meses e termos de período à `invalidWords`; adicionar validação contra nomes iniciando com preposição |
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
