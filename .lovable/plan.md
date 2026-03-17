@@ -1,56 +1,114 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+## Análise da Nova Planilha
 
-## Diagnostico
+### Formato identificado: "Relação da Folha por Empregado"
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+É um relatório de folha de pagamento com estrutura completamente diferente das planilhas anteriores.
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+**Cabeçalho (linhas 1-4):**
+| Linha | Campo | Exemplo |
+|---|---|---|
+| 1 | Empresa | 2 - B SERVICE PRESTADORA DE SERVICOS EIRELI |
+| 2 | CNPJ | 29.639.536/0001-33 |
+| 3 | Cálculo | Folha Mensal |
+| 4 | Competência | 02/2026 |
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+**Colunas de dados (linha 8):**
+Código | Nome do empregado | Salário | Out.Prov | Sal.Fam | INSS | IRRF | Out.Des | Líquid | FGTS
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+**Agrupamento:** Dados agrupados por linhas `Serviço: N-NOME DO SERVIÇO/MUNICÍPIO`, com sub-seções "Empregados" e "Contribuintes". Cada grupo tem uma linha "Total" no final.
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+### Comparação com formato anterior
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+| Aspecto | Formato anterior | Novo formato |
+|---|---|---|
+| Estrutura | Aba "Todos" + abas por cidade | Única aba, agrupado por "Serviço" |
+| Empresa | Coluna EMPRESA | Cabeçalho fixo (linha 1) |
+| Cidade | Coluna CIDADE ou nome da aba | Extraída de "Serviço: N-MUNICIPIO DE X" |
+| Contrato | Coluna CONTRATO | Número/nome do Serviço |
+| Colaborador | Coluna COLABORADOR | Coluna "Nome do empregado" |
+| Banco | Coluna BANCO | Não existe |
+| Observações | Coluna OBSERVAÇÕES | Não existe |
+| Salário | Coluna SALARIO | Coluna "Salário" |
+| Código funcionário | Não existia | Coluna "Código" (NOVO) |
+| Dados financeiros | Não existiam | Out.Prov, Sal.Fam, INSS, IRRF, Out.Des, Líquid, FGTS (NOVOS) |
+| CNPJ | Não existia | Cabeçalho (NOVO) |
+| Competência | Não existia | Cabeçalho (NOVO) |
 
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+---
 
-## Correcao
+## Mapeamento dos campos
 
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
+| Coluna da planilha | Campo EmployeeRecord | Campo DB (funcionarios) | Observação |
+|---|---|---|---|
+| Empresa (header) | `empresa` | `empresa_id` → tabela `empresas` | Extrair nome limpo (sem o prefixo numérico) |
+| Serviço (agrupador) | `cidade` | `municipio_id` → tabela `municipios` | Extrair nome do município da linha "Serviço:" |
+| Serviço (agrupador) | `contrato` | `contrato` | Usar o texto completo do serviço |
+| Nome do empregado | `colaborador` | `nome` / `nome_normalizado` | Igual ao fluxo atual |
+| Código | `codigo` (novo) | `codigo` (novo campo) | Código do empregado na folha |
+| Salário | `salario` | `funcionarios_salario.salario` | Dado sensível, tabela separada |
+| CNPJ | metadado | não armazenado | Metadata do header |
+| Out.Prov, Sal.Fam, INSS, IRRF, Out.Des, Líquid, FGTS | dados financeiros | `funcionarios_salario` (novas colunas) | Dados sensíveis, mesma tabela de salário |
 
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+---
 
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+## Plano de Implementação
 
-### Logica resultante simplificada:
+### Etapa 1: Migração do banco de dados
 
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
-```
+- Adicionar coluna `codigo` (text, nullable) à tabela `funcionarios`
+- Adicionar colunas financeiras à tabela `funcionarios_salario`: `outros_proventos`, `salario_familia`, `inss`, `irrf`, `outros_descontos`, `liquido`, `fgts` (todas numeric, nullable)
 
-## Impacto
+Não criar novas tabelas. Reutilizar `funcionarios_salario` que já tem RLS configurada para admin/financeiro.
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+### Etapa 2: Novo parser em `excelUtils.ts`
 
-## Arquivos alterados
+Adicionar função `parsePayrollReport()` que:
+1. Detecta o formato pela presença de "RELAÇÃO DA FOLHA POR EMPREGADO" no texto
+2. Extrai empresa do header (linha 1), limpando prefixo numérico "2 - "
+3. Itera pelas linhas, detectando "Serviço:" para trocar cidade/contrato atual
+4. Para cada linha de empregado (tem código numérico na coluna A), extrai nome e dados financeiros
+5. Ignora linhas de total, subtotal, cabeçalho "Empregados", "Contribuintes"
+6. Retorna `SpreadsheetData` no mesmo formato que os parsers existentes
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+Extração de cidade do "Serviço:":
+- `"6-MUNICIPIO DE SANTO ANTONIO DA PATRULHA"` → cidade = `"SANTO ANTONIO DA PATRULHA"`
+- `"1-B SERVICE PRESTADORA DE SERVICOS EIRELI"` → cidade = empresa (serviço interno)
+- `"14-IPAM INST DE PREV E ASS MUNICIPAL"` → cidade = `"IPAM INST DE PREV E ASS MUNICIPAL"`
+
+### Etapa 3: Atualizar `EmployeeRecord` e detecção de formato
+
+- Adicionar `codigo?: string` ao `EmployeeRecord`
+- Adicionar campos financeiros opcionais
+- Na função `parseExcelFile()`, adicionar detecção do novo formato ANTES dos parsers existentes:
+  - Se encontra "RELAÇÃO DA FOLHA" → usa `parsePayrollReport()`
+  - Senão → fluxo atual (Todos → Municipality sheets)
+
+### Etapa 4: Atualizar sincronização (`supabaseExcelSync.ts`)
+
+- Incluir `codigo` no insert/update de funcionarios
+- Incluir campos financeiros no upsert de `funcionarios_salario`
+- Sanitizar logs (nunca expor valores financeiros)
+
+### Etapa 5: UI (`AdminFuncionarios.tsx`)
+
+- Exibir coluna "Código" na tabela de funcionários
+- Exibir colunas financeiras apenas para admin/financeiro (junto com salário)
+
+### Preservação do fluxo de PDFs
+
+`findEmployeeInSpreadsheet` e `enrichNamesWithSpreadsheet` continuam funcionando sem alteração — operam sobre `colaborador`, `empresa`, `cidade` que são preenchidos normalmente pelo novo parser.
+
+---
+
+## Alterações por arquivo
+
+| Arquivo | Alteração |
+|---|---|
+| Migration SQL | `codigo` em funcionarios; colunas financeiras em funcionarios_salario |
+| `src/lib/excelUtils.ts` | Nova função `parsePayrollReport()`; campos novos no interface; detecção de formato |
+| `src/lib/supabaseExcelSync.ts` | Sync de `codigo` e dados financeiros |
+| `src/pages/AdminFuncionarios.tsx` | Exibir código e dados financeiros (condicional) |
+| `src/integrations/supabase/types.ts` | Auto-atualizado após migration |
 
