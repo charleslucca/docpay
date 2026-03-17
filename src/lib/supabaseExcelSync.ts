@@ -175,7 +175,17 @@ async function syncSalariosBatch(
     const funcionarioId = funcionarioIdMap.get(key);
     if (!funcionarioId) continue;
 
-    salarioRecords.push({ funcionario_id: funcionarioId, salario: record.salario });
+    salarioRecords.push({
+      funcionario_id: funcionarioId,
+      salario: record.salario,
+      outros_proventos: record.outrosProventos ?? null,
+      salario_familia: record.salarioFamilia ?? null,
+      inss: record.inss ?? null,
+      irrf: record.irrf ?? null,
+      outros_descontos: record.outrosDescontos ?? null,
+      liquido: record.liquido ?? null,
+      fgts: record.fgts ?? null,
+    });
   }
 
   if (salarioRecords.length === 0) return;
