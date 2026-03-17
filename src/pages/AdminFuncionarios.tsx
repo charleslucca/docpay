@@ -121,11 +121,11 @@ const AdminFuncionarios = () => {
     if (canSeeSalary) {
       const { data: salarios } = await supabase
         .from("funcionarios_salario" as any)
-        .select("funcionario_id, salario") as { data: SalarioRecord[] | null };
+        .select("funcionario_id, salario, outros_proventos, salario_familia, inss, irrf, outros_descontos, liquido, fgts") as { data: SalarioRecord[] | null };
       
       if (salarios) {
-        const map = new Map<string, number | null>();
-        salarios.forEach(s => map.set(s.funcionario_id, s.salario));
+        const map = new Map<string, SalarioRecord>();
+        salarios.forEach(s => map.set(s.funcionario_id, s));
         setSalarioMap(map);
       }
     }
