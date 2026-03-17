@@ -340,6 +340,7 @@ const AdminFuncionarios = () => {
                     />
                   </TableHead>
                   <TableHead>Nome</TableHead>
+                  <TableHead className="hidden sm:table-cell">Código</TableHead>
                   <TableHead>Empresa</TableHead>
                   <TableHead className="hidden md:table-cell">Município</TableHead>
                   <TableHead className="hidden lg:table-cell">Cargo</TableHead>
@@ -347,6 +348,7 @@ const AdminFuncionarios = () => {
                   <TableHead className="hidden xl:table-cell">Contrato</TableHead>
                   <TableHead className="hidden xl:table-cell">Observações</TableHead>
                   {canSeeSalary && <TableHead className="hidden xl:table-cell">Salário</TableHead>}
+                  {canSeeSalary && <TableHead className="hidden xl:table-cell">Líquido</TableHead>}
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
