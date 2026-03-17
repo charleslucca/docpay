@@ -8,6 +8,8 @@ export interface EmployeeRecord {
   banco?: string;
   tipo?: string;
   totalFuncionarios?: number;
+  observacoes?: string;
+  salario?: number;
 }
 
 export interface SpreadsheetData {
@@ -23,7 +25,8 @@ export interface ValidationResult {
   missingColumns: string[];
 }
 
-const REQUIRED_COLUMNS = ["EMPRESA", "CIDADE", "CONTRATO", "COLABORADOR", "TOTAL FUNCIONARIOS", "BANCO", "TIPO"];
+// Required columns — OBSERVAÇÕES, SALARIO, TOTAL FUNCIONARIOS and TIPO are optional
+const REQUIRED_COLUMNS = ["EMPRESA", "CIDADE", "CONTRATO", "COLABORADOR", "BANCO"];
 
 /**
  * Normalize a string for comparison: remove accents, convert to uppercase, trim
@@ -41,7 +44,6 @@ export function normalizeForComparison(str: string): string {
  * Validate that the Excel workbook has a "Todos" sheet with the required column structure
  */
 export function validateExcelStructure(workbook: XLSX.WorkBook): ValidationResult {
-  // Find "Todos" sheet
   const todosSheet = workbook.SheetNames.find(
     (name) => normalizeForComparison(name) === "TODOS"
   );
@@ -53,7 +55,6 @@ export function validateExcelStructure(workbook: XLSX.WorkBook): ValidationResul
   const sheet = workbook.Sheets[todosSheet];
   const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
 
-  // Find header row in first 10 rows
   for (let i = 0; i < Math.min(10, jsonData.length); i++) {
     const row = jsonData[i] as unknown[];
     if (!row) continue;
@@ -70,7 +71,6 @@ export function validateExcelStructure(workbook: XLSX.WorkBook): ValidationResul
       return { valid: true, missingColumns: [] };
     }
 
-    // If we found at least some columns, report what's missing
     const found = REQUIRED_COLUMNS.filter((col) =>
       headerCells.some((h) => h === normalizeForComparison(col))
     );
@@ -83,26 +83,20 @@ export function validateExcelStructure(workbook: XLSX.WorkBook): ValidationResul
 }
 
 /**
- * Parse the "Todos" sheet with the validated tabular structure
- */
-/**
  * Flexible column detection: exact → startsWith → contains, with aliases
  */
 function findColumnIndex(headers: string[], possibleNames: string[]): number {
   const normalizedHeaders = headers.map(h => h ? normalizeForComparison(String(h)) : "");
   const normalizedNames = possibleNames.map(normalizeForComparison);
 
-  // Priority 1: Exact match
   for (const name of normalizedNames) {
     const idx = normalizedHeaders.indexOf(name);
     if (idx !== -1) return idx;
   }
-  // Priority 2: Starts with
   for (const name of normalizedNames) {
     const idx = normalizedHeaders.findIndex(h => h.startsWith(name));
     if (idx !== -1) return idx;
   }
-  // Priority 3: Contains
   for (const name of normalizedNames) {
     const idx = normalizedHeaders.findIndex(h => h.includes(name));
     if (idx !== -1) return idx;
@@ -117,6 +111,8 @@ const COLABORADOR_ALIASES = ["COLABORADOR", "FUNCIONARIO", "NOME", "EMPREGADO", 
 const TOTAL_FUNC_ALIASES = ["TOTAL FUNCIONARIOS", "TOTAL FUNC", "QTD FUNCIONARIOS"];
 const BANCO_ALIASES = ["BANCO", "INSTITUICAO", "BANK"];
 const TIPO_ALIASES = ["TIPO", "MODALIDADE", "TYPE"];
+const OBSERVACOES_ALIASES = ["OBSERVACOES", "OBSERVAÇÕES", "OBS", "OBSERVACAO", "OBSERVAÇÃO"];
+const SALARIO_ALIASES = ["SALARIO", "SALÁRIO", "SAL", "REMUNERACAO", "REMUNERAÇÃO", "VALOR"];
 
 function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: string): SpreadsheetData {
   const sheet = workbook.Sheets[sheetName];
@@ -130,6 +126,8 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
   let totalFuncCol = -1;
   let bancoCol = -1;
   let tipoCol = -1;
+  let observacoesCol = -1;
+  let salarioCol = -1;
 
   for (let i = 0; i < Math.min(10, jsonData.length); i++) {
     const row = jsonData[i] as unknown[];
@@ -144,6 +142,8 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
     totalFuncCol = findColumnIndex(headerStrings, TOTAL_FUNC_ALIASES);
     bancoCol = findColumnIndex(headerStrings, BANCO_ALIASES);
     tipoCol = findColumnIndex(headerStrings, TIPO_ALIASES);
+    observacoesCol = findColumnIndex(headerStrings, OBSERVACOES_ALIASES);
+    salarioCol = findColumnIndex(headerStrings, SALARIO_ALIASES);
 
     if (empresaCol >= 0 && cidadeCol >= 0 && colaboradorCol >= 0) {
       headerRowIndex = i;
@@ -172,12 +172,28 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
     const banco = bancoCol >= 0 ? String(row[bancoCol] || "").trim() : "";
     const tipo = tipoCol >= 0 ? String(row[tipoCol] || "").trim() : "";
     const totalFunc = totalFuncCol >= 0 ? Number(row[totalFuncCol]) || undefined : undefined;
+    const observacoes = observacoesCol >= 0 ? String(row[observacoesCol] || "").trim() || undefined : undefined;
+    
+    // Parse salary safely — never log the value
+    let salario: number | undefined;
+    if (salarioCol >= 0) {
+      const rawSalario = row[salarioCol];
+      if (rawSalario !== null && rawSalario !== undefined && rawSalario !== "") {
+        const parsed = Number(rawSalario);
+        if (!isNaN(parsed) && parsed > 0) {
+          salario = parsed;
+        }
+      }
+    }
 
-    records.push({ empresa, cidade, contrato, colaborador, banco, tipo, totalFuncionarios: totalFunc });
+    records.push({ empresa, cidade, contrato, colaborador, banco, tipo, totalFuncionarios: totalFunc, observacoes, salario });
 
     if (empresa) empresasSet.add(empresa);
     if (cidade) cidadesSet.add(cidade);
   }
+
+  // Log safe metadata only — never log salary values
+  console.log(`[Excel] Parsed "Todos" sheet: ${records.length} employees, ${empresasSet.size} companies, ${cidadesSet.size} cities`);
 
   const funcionariosPorCidade: Record<string, number> = {};
   for (const record of records) {
@@ -194,7 +210,7 @@ function parseTodosSheet(workbook: XLSX.WorkBook, sheetName: string, fileName: s
 }
 
 /**
- * Detect if a line looks like a city (contains " - ITAU", " - SICREDI", " - PREFEITURA", etc.)
+ * Detect if a line looks like a city
  */
 function looksLikeCity(value: string): boolean {
   const cityPatterns = [
@@ -215,18 +231,12 @@ function looksLikeCity(value: string): boolean {
   return cityPatterns.some((pattern) => pattern.test(value));
 }
 
-/**
- * Detect if a line is a known company name
- */
 function looksLikeCompany(value: string): boolean {
   const normalized = value.trim().toUpperCase();
   const knownCompanies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
   return knownCompanies.some((c) => normalized.startsWith(c) || normalized === c);
 }
 
-/**
- * Extract city from a municipality line
- */
 function extractCityFromLine(line: string): string {
   const parts = line.split(/\s*-\s*/);
 
@@ -319,6 +329,14 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
     empresasSet.add(empresa);
     cidadesSet.add(cidadeExtraida);
 
+    // Detect salary column in municipality sheet headers
+    let salarioColMun = -1;
+    const headerRow = jsonData[startIndex - 1] as unknown[];
+    if (headerRow) {
+      const headerStrings = headerRow.map(cell => String(cell || ""));
+      salarioColMun = findColumnIndex(headerStrings, SALARIO_ALIASES);
+    }
+
     const row4 = String((jsonData[3] as unknown[])?.[0] || "").trim();
     const row4Norm = normalizeForComparison(row4);
     if (!row4 || skipValues.includes(row4Norm) || /^COLUNA/i.test(row4Norm)) {
@@ -344,11 +362,24 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
       const words = name.split(" ").filter((w) => w.length >= 2);
       if (words.length < 2) continue;
 
+      // Parse salary from municipality sheet — never log value
+      let salario: number | undefined;
+      if (salarioColMun >= 0) {
+        const rawSalario = row[salarioColMun];
+        if (rawSalario !== null && rawSalario !== undefined && rawSalario !== "") {
+          const parsed = Number(rawSalario);
+          if (!isNaN(parsed) && parsed > 0) {
+            salario = parsed;
+          }
+        }
+      }
+
       records.push({
         empresa,
         cidade: cidadeExtraida,
         contrato: sheetName,
         colaborador: name,
+        salario,
       });
     }
   }
@@ -373,7 +404,6 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 
 /**
  * Parse an Excel file and extract employee records
- * Strategy: First try "Todos" tab with validated structure, fallback to individual municipality sheets
  */
 export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetData; validation: ValidationResult }> {
   return new Promise((resolve, reject) => {
@@ -388,11 +418,9 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
           throw new Error("Nenhuma aba encontrada na planilha");
         }
 
-        // Validate structure first
         const validation = validateExcelStructure(workbook);
 
         if (validation.valid) {
-          // Use "Todos" sheet
           const todosSheet = workbook.SheetNames.find(
             (name) => normalizeForComparison(name) === "TODOS"
           )!;
@@ -404,7 +432,6 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
 
           resolve({ data: result, validation });
         } else {
-          // Fallback to municipality sheets
           const municipalityResult = parseMunicipalitySheets(workbook, file.name);
 
           if (municipalityResult.records.length === 0) {
@@ -414,7 +441,8 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
           resolve({ data: municipalityResult, validation });
         }
       } catch (error) {
-        console.error("[Excel] Parse error:", error);
+        // Safe error logging — never expose record data
+        console.error("[Excel] Parse error:", error instanceof Error ? error.message : "Unknown error");
         reject(error);
       }
     };
@@ -438,11 +466,9 @@ export function findEmployeeInSpreadsheet(name: string, records: EmployeeRecord[
 
   if (nameWords.length === 0) return null;
 
-  // 1. Exact match (highest confidence)
   const exact = records.find((r) => normalizeForComparison(r.colaborador) === normalizedName);
   if (exact) return exact;
 
-  // 2. First + last name exact match, but ONLY if unique (no ambiguity)
   const firstName = nameWords[0];
   const lastName = nameWords[nameWords.length - 1];
 
@@ -453,10 +479,8 @@ export function findEmployeeInSpreadsheet(name: string, records: EmployeeRecord[
     return rWords[0] === firstName && rWords[rWords.length - 1] === lastName;
   });
 
-  // Only return if there's exactly ONE match (no ambiguity)
   if (firstLastMatches.length === 1) return firstLastMatches[0];
 
-  // NO further fallbacks (overlap/partial removed to prevent wrong company assignment)
   if (firstLastMatches.length > 1) {
     console.warn(`[Excel] Ambiguous match for "${name}": ${firstLastMatches.length} candidates with same first+last name. Skipping.`);
   }

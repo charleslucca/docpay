@@ -134,6 +134,32 @@ export type Database = {
           },
         ]
       }
+      funcionarios_salario: {
+        Row: {
+          funcionario_id: string
+          id: string
+          salario: number | null
+        }
+        Insert: {
+          funcionario_id: string
+          id?: string
+          salario?: number | null
+        }
+        Update: {
+          funcionario_id?: string
+          id?: string
+          salario?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "funcionarios_salario_funcionario_id_fkey"
+            columns: ["funcionario_id"]
+            isOneToOne: true
+            referencedRelation: "funcionarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ip_whitelist: {
         Row: {
           active: boolean
@@ -269,9 +295,16 @@ export type Database = {
         }
         Returns: boolean
       }
+      has_role_any: {
+        Args: {
+          _roles: Database["public"]["Enums"]["app_role"][]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      app_role: "admin" | "employee"
+      app_role: "admin" | "employee" | "financeiro"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -399,7 +432,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "employee"],
+      app_role: ["admin", "employee", "financeiro"],
     },
   },
 } as const

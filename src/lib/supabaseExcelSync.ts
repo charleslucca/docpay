@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { normalizeForComparison, type SpreadsheetData, type EmployeeRecord } from "./excelUtils";
 
 export interface SyncProgress {
-  stage: 'uploading' | 'syncing-empresas' | 'syncing-municipios' | 'syncing-funcionarios' | 'finalizing';
+  stage: 'uploading' | 'syncing-empresas' | 'syncing-municipios' | 'syncing-funcionarios' | 'syncing-salarios' | 'finalizing';
   message: string;
 }
 
@@ -27,12 +27,10 @@ interface FuncionarioExisting {
   nome_normalizado: string;
   banco: string | null;
   contrato: string | null;
+  observacoes: string | null;
   ativo: boolean;
 }
 
-/**
- * Helper function to split array into chunks
- */
 function chunkArray<T>(array: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < array.length; i += chunkSize) {
@@ -41,9 +39,6 @@ function chunkArray<T>(array: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
-/**
- * Upload Excel file to Supabase Storage
- */
 async function uploadExcelFile(file: File): Promise<string | null> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const fileName = `${timestamp}_${file.name}`;
@@ -54,23 +49,17 @@ async function uploadExcelFile(file: File): Promise<string | null> {
     .upload(filePath, file);
 
   if (error) {
-    console.error("[Sync] Upload error:", error);
+    console.error("[Sync] Upload error:", error.message);
     return null;
   }
 
   return filePath;
 }
 
-/**
- * BATCH: Upsert empresas and return mapping of nome_normalizado -> id
- * Reduced from N requests to 2-3 requests
- */
 async function upsertEmpresasBatch(empresas: string[]): Promise<Map<string, string>> {
   const mapping = new Map<string, string>();
-  
   if (empresas.length === 0) return mapping;
 
-  // 1. Fetch ALL existing empresas in ONE request
   const { data: existingEmpresas } = await supabase
     .from("empresas")
     .select("id, nome_normalizado");
@@ -79,7 +68,6 @@ async function upsertEmpresasBatch(empresas: string[]): Promise<Map<string, stri
     (existingEmpresas || []).map(e => [e.nome_normalizado, e.id])
   );
 
-  // 2. Prepare data and find which ones need to be inserted
   const empresasData = empresas.map((nome) => ({
     nome,
     nome_normalizado: normalizeForComparison(nome),
@@ -87,7 +75,6 @@ async function upsertEmpresasBatch(empresas: string[]): Promise<Map<string, stri
 
   const toInsert = empresasData.filter(e => !existingMap.has(e.nome_normalizado));
 
-  // 3. Insert all new empresas in ONE batch request
   if (toInsert.length > 0) {
     const { data: inserted, error } = await supabase
       .from("empresas")
@@ -95,13 +82,12 @@ async function upsertEmpresasBatch(empresas: string[]): Promise<Map<string, stri
       .select("id, nome_normalizado");
 
     if (error) {
-      console.error("[Sync] Batch insert empresas error:", error);
+      console.error("[Sync] Batch insert empresas error:", error.message);
     } else if (inserted) {
       inserted.forEach(e => existingMap.set(e.nome_normalizado, e.id));
     }
   }
 
-  // 4. Build final mapping from all empresas
   empresasData.forEach(e => {
     const id = existingMap.get(e.nome_normalizado);
     if (id) mapping.set(e.nome_normalizado, id);
@@ -110,16 +96,10 @@ async function upsertEmpresasBatch(empresas: string[]): Promise<Map<string, stri
   return mapping;
 }
 
-/**
- * BATCH: Upsert municipios and return mapping of nome_normalizado -> id
- * Reduced from N requests to 2-3 requests
- */
 async function upsertMunicipiosBatch(municipios: string[]): Promise<Map<string, string>> {
   const mapping = new Map<string, string>();
-  
   if (municipios.length === 0) return mapping;
 
-  // 1. Fetch ALL existing municipios in ONE request
   const { data: existingMunicipios } = await supabase
     .from("municipios")
     .select("id, nome_normalizado");
@@ -128,7 +108,6 @@ async function upsertMunicipiosBatch(municipios: string[]): Promise<Map<string, 
     (existingMunicipios || []).map(m => [m.nome_normalizado, m.id])
   );
 
-  // 2. Prepare data and find which ones need to be inserted
   const municipiosData = municipios.map((nome) => ({
     nome,
     nome_normalizado: normalizeForComparison(nome),
@@ -136,7 +115,6 @@ async function upsertMunicipiosBatch(municipios: string[]): Promise<Map<string, 
 
   const toInsert = municipiosData.filter(m => !existingMap.has(m.nome_normalizado));
 
-  // 3. Insert all new municipios in ONE batch request
   if (toInsert.length > 0) {
     const { data: inserted, error } = await supabase
       .from("municipios")
@@ -144,13 +122,12 @@ async function upsertMunicipiosBatch(municipios: string[]): Promise<Map<string, 
       .select("id, nome_normalizado");
 
     if (error) {
-      console.error("[Sync] Batch insert municipios error:", error);
+      console.error("[Sync] Batch insert municipios error:", error.message);
     } else if (inserted) {
       inserted.forEach(m => existingMap.set(m.nome_normalizado, m.id));
     }
   }
 
-  // 4. Build final mapping from all municipios
   municipiosData.forEach(m => {
     const id = existingMap.get(m.nome_normalizado);
     if (id) mapping.set(m.nome_normalizado, id);
@@ -159,50 +136,86 @@ async function upsertMunicipiosBatch(municipios: string[]): Promise<Map<string, 
   return mapping;
 }
 
-/**
- * Extract banco from the second line format: "CIDADE - BANCO" or "CIDADE - CARGO - BANCO"
- */
 function extractBancoFromContrato(contrato: string): string | null {
   if (!contrato) return null;
   const parts = contrato.split(/\s*-\s*/);
   return parts.length > 1 ? parts[parts.length - 1]?.trim() || null : null;
 }
 
-/**
- * Normalize a value for safe comparison: treat null, undefined, "" as null; trim and uppercase otherwise
- */
 function normalizeFieldValue(value: string | null | undefined): string | null {
   if (value === null || value === undefined || value.trim() === "") return null;
   return value.trim().toUpperCase();
 }
 
 /**
- * BATCH: Sync funcionarios with the database
- * Reduced from ~2N requests to ~5-10 requests
+ * Sync salary data to the separate funcionarios_salario table
+ * SECURITY: salary values are never logged
  */
+async function syncSalariosBatch(
+  records: EmployeeRecord[],
+  empresaMap: Map<string, string>,
+  municipioMap: Map<string, string>,
+  funcionarioIdMap: Map<string, string>
+): Promise<void> {
+  const salarioRecords: Array<{ funcionario_id: string; salario: number }> = [];
+
+  for (const record of records) {
+    if (record.salario === undefined || record.salario === null) continue;
+
+    const empresaNorm = normalizeForComparison(record.empresa);
+    const municipioNorm = normalizeForComparison(record.cidade);
+    const nomeNorm = normalizeForComparison(record.colaborador);
+
+    const empresaId = empresaMap.get(empresaNorm);
+    const municipioId = municipioMap.get(municipioNorm);
+    if (!empresaId || !municipioId) continue;
+
+    const key = `${empresaId}|${municipioId}|${nomeNorm}`;
+    const funcionarioId = funcionarioIdMap.get(key);
+    if (!funcionarioId) continue;
+
+    salarioRecords.push({ funcionario_id: funcionarioId, salario: record.salario });
+  }
+
+  if (salarioRecords.length === 0) return;
+
+  // Upsert in chunks to avoid payload limits
+  const chunks = chunkArray(salarioRecords, 50);
+  for (const chunk of chunks) {
+    const { error } = await supabase
+      .from("funcionarios_salario" as any)
+      .upsert(chunk as any, { onConflict: "funcionario_id" });
+
+    if (error) {
+      console.error("[Sync] Salary sync error:", error.message);
+    }
+  }
+
+  console.log(`[Sync] Salary data synced for ${salarioRecords.length} employees`);
+}
+
 async function syncFuncionariosBatch(
   records: EmployeeRecord[],
   empresaMap: Map<string, string>,
   municipioMap: Map<string, string>
-): Promise<{ novos: number; atualizados: number; removidos: number }> {
+): Promise<{ novos: number; atualizados: number; removidos: number; funcionarioIdMap: Map<string, string> }> {
   let novos = 0;
   let atualizados = 0;
   let removidos = 0;
+  const funcionarioIdMap = new Map<string, string>();
 
   const empresaIds = Array.from(empresaMap.values());
   const municipioIds = Array.from(municipioMap.values());
 
   if (empresaIds.length === 0 || municipioIds.length === 0) {
-    return { novos, atualizados, removidos };
+    return { novos, atualizados, removidos, funcionarioIdMap };
   }
 
-  // 1. BATCH FETCH: Get ALL existing funcionarios for these empresas in ONE request
+  // Cast needed: observacoes column exists in DB but types.ts is auto-generated and may lag behind
   const { data: allExisting } = await supabase
     .from("funcionarios")
-    .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, ativo")
-    .in("empresa_id", empresaIds);
+    .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, observacoes, ativo") as { data: FuncionarioExisting[] | null };
 
-  // 2. Build lookup Map for O(1) access
   const existingMap = new Map<string, FuncionarioExisting>(
     (allExisting || []).map(f => [
       `${f.empresa_id}|${f.municipio_id}|${f.nome_normalizado}`,
@@ -210,7 +223,6 @@ async function syncFuncionariosBatch(
     ])
   );
 
-  // 3. Compare in memory and categorize records
   const toInsert: Array<{
     empresa_id: string;
     municipio_id: string;
@@ -218,11 +230,15 @@ async function syncFuncionariosBatch(
     nome_normalizado: string;
     banco: string | null;
     contrato: string | null;
+    observacoes: string | null;
     ativo: boolean;
   }> = [];
 
-  const toUpdate: Array<{ id: string; data: { banco: string | null; contrato: string | null; ativo: boolean } }> = [];
+  const toUpdate: Array<{ id: string; data: { banco: string | null; contrato: string | null; observacoes: string | null; ativo: boolean } }> = [];
   const processedIds = new Set<string>();
+
+  // Track keys for inserted records to build funcionarioIdMap later
+  const insertKeys: string[] = [];
 
   for (const record of records) {
     const empresaNorm = normalizeForComparison(record.empresa);
@@ -243,26 +259,29 @@ async function syncFuncionariosBatch(
 
     if (existing) {
       processedIds.add(existing.id);
+      funcionarioIdMap.set(key, existing.id);
 
-      // Normalize values for comparison to avoid false positives
       const newBancoNorm = normalizeFieldValue(banco);
       const existingBancoNorm = normalizeFieldValue(existing.banco);
       const newContratoNorm = normalizeFieldValue(record.contrato);
       const existingContratoNorm = normalizeFieldValue(existing.contrato);
+      const newObsNorm = normalizeFieldValue(record.observacoes);
+      const existingObsNorm = normalizeFieldValue(existing.observacoes);
 
-      // Check if update needed (with normalized comparison)
       const bancoChanged = newBancoNorm !== existingBancoNorm;
       const contratoChanged = newContratoNorm !== existingContratoNorm;
+      const obsChanged = newObsNorm !== existingObsNorm;
       const needsReactivation = !existing.ativo;
 
-      if (bancoChanged || contratoChanged || needsReactivation) {
+      if (bancoChanged || contratoChanged || obsChanged || needsReactivation) {
         if (bancoChanged) console.log(`[Sync] Atualização banco: "${existing.banco}" → "${banco}" (${record.colaborador})`);
         if (contratoChanged) console.log(`[Sync] Atualização contrato: "${existing.contrato}" → "${record.contrato}" (${record.colaborador})`);
+        if (obsChanged) console.log(`[Sync] Atualização observações: (${record.colaborador})`);
         if (needsReactivation) console.log(`[Sync] Reativação: ${record.colaborador}`);
-        
+
         toUpdate.push({
           id: existing.id,
-          data: { banco, contrato: record.contrato, ativo: true }
+          data: { banco, contrato: record.contrato, observacoes: record.observacoes || null, ativo: true }
         });
       }
     } else {
@@ -273,30 +292,34 @@ async function syncFuncionariosBatch(
         nome_normalizado: nomeNorm,
         banco,
         contrato: record.contrato,
+        observacoes: record.observacoes || null,
         ativo: true,
       });
+      insertKeys.push(key);
     }
   }
 
-  // 4. BATCH INSERT: Insert all new funcionarios in ONE request
   if (toInsert.length > 0) {
     const { data: inserted, error } = await supabase
       .from("funcionarios")
       .insert(toInsert)
-      .select("id");
+      .select("id, empresa_id, municipio_id, nome_normalizado");
 
     if (error) {
-      console.error("[Sync] Batch insert funcionarios error:", error);
+      console.error("[Sync] Batch insert funcionarios error:", error.message);
     } else if (inserted) {
       novos = inserted.length;
-      inserted.forEach(f => processedIds.add(f.id));
+      inserted.forEach(f => {
+        processedIds.add(f.id);
+        const key = `${f.empresa_id}|${f.municipio_id}|${f.nome_normalizado}`;
+        funcionarioIdMap.set(key, f.id);
+      });
     }
   }
 
-  // 5. PARALLEL UPDATES: Process updates in parallel chunks of 50
   if (toUpdate.length > 0) {
     const updateChunks = chunkArray(toUpdate, 50);
-    
+
     await Promise.all(
       updateChunks.map(chunk =>
         Promise.all(
@@ -309,39 +332,33 @@ async function syncFuncionariosBatch(
         )
       )
     );
-    
+
     atualizados = toUpdate.length;
   }
 
-  // 6. BATCH DEACTIVATE: Mark funcionarios not in current Excel as inactive
-  // Only consider funcionarios from municipios present in the Excel file
   const municipioIdSet = new Set(municipioIds);
   const toDeactivate = (allExisting || [])
     .filter(f => f.ativo && !processedIds.has(f.id) && municipioIdSet.has(f.municipio_id));
 
   if (toDeactivate.length > 0) {
-    toDeactivate.forEach(f => console.log(`[Sync] Desativando: ${f.nome_normalizado} (empresa: ${f.empresa_id}, município: ${f.municipio_id})`));
-    
+    toDeactivate.forEach(f => console.log(`[Sync] Desativando: ${f.nome_normalizado}`));
+
     const deactivateIds = toDeactivate.map(f => f.id);
-    // Use IN clause for batch update in ONE request
     const { error } = await supabase
       .from("funcionarios")
       .update({ ativo: false })
       .in("id", deactivateIds);
 
     if (error) {
-      console.error("[Sync] Batch deactivate error:", error);
+      console.error("[Sync] Batch deactivate error:", error.message);
     } else {
       removidos = toDeactivate.length;
     }
   }
 
-  return { novos, atualizados, removidos };
+  return { novos, atualizados, removidos, funcionarioIdMap };
 }
 
-/**
- * Log the upload to history table
- */
 async function logUploadHistory(
   fileName: string,
   filePath: string | null,
@@ -363,17 +380,13 @@ async function logUploadHistory(
     .single();
 
   if (error) {
-    console.error("[Sync] Log history error:", error);
+    console.error("[Sync] Log history error:", error.message);
     return null;
   }
 
   return data?.id || null;
 }
 
-/**
- * Main sync function - orchestrates the entire process with batch processing
- * Reduced from ~900 HTTP requests to ~10-15 requests
- */
 export async function syncSpreadsheetToDatabase(
   data: SpreadsheetData,
   file?: File,
@@ -381,34 +394,38 @@ export async function syncSpreadsheetToDatabase(
 ): Promise<SyncResult> {
   try {
     const startTime = performance.now();
-    
+
+    // Log safe metadata only — never log record details that may contain salary
     console.log("[Sync] Starting optimized batch sync...", {
       empresas: data.empresas.length,
       municipios: data.cidades.length,
       funcionarios: data.records.length,
     });
 
-    // 1. Upload file to storage (optional)
     onProgress?.({ stage: 'uploading', message: 'Enviando arquivo...' });
     let filePath: string | null = null;
     if (file) {
       filePath = await uploadExcelFile(file);
     }
 
-    // 2. BATCH upsert empresas (2-3 requests instead of N*2)
     onProgress?.({ stage: 'syncing-empresas', message: `Sincronizando ${data.empresas.length} empresas...` });
     const empresaMap = await upsertEmpresasBatch(data.empresas);
     console.log("[Sync] Empresas synced:", empresaMap.size);
 
-    // 3. BATCH upsert municipios (2-3 requests instead of N*2)
     onProgress?.({ stage: 'syncing-municipios', message: `Sincronizando ${data.cidades.length} municípios...` });
     const municipioMap = await upsertMunicipiosBatch(data.cidades);
     console.log("[Sync] Municipios synced:", municipioMap.size);
 
-    // 4. BATCH sync funcionarios (~5-10 requests instead of N*2)
     onProgress?.({ stage: 'syncing-funcionarios', message: `Sincronizando ${data.records.length} funcionários...` });
     const funcStats = await syncFuncionariosBatch(data.records, empresaMap, municipioMap);
-    console.log("[Sync] Funcionarios synced:", funcStats);
+    console.log("[Sync] Funcionarios synced:", { novos: funcStats.novos, atualizados: funcStats.atualizados, removidos: funcStats.removidos });
+
+    // Sync salary data to separate table
+    const hasSalaryData = data.records.some(r => r.salario !== undefined && r.salario !== null);
+    if (hasSalaryData) {
+      onProgress?.({ stage: 'syncing-salarios', message: 'Sincronizando dados salariais...' });
+      await syncSalariosBatch(data.records, empresaMap, municipioMap, funcStats.funcionarioIdMap);
+    }
 
     const stats: SyncResult["stats"] = {
       empresas: empresaMap.size,
@@ -419,7 +436,6 @@ export async function syncSpreadsheetToDatabase(
       totalFuncionarios: data.records.length,
     };
 
-    // 5. Log to history
     onProgress?.({ stage: 'finalizing', message: 'Finalizando...' });
     const historyId = await logUploadHistory(data.fileName, filePath, stats);
 
@@ -432,7 +448,8 @@ export async function syncSpreadsheetToDatabase(
       uploadHistoryId: historyId || undefined,
     };
   } catch (error) {
-    console.error("[Sync] Error:", error);
+    // Safe error logging — never expose record data
+    console.error("[Sync] Error:", error instanceof Error ? error.message : "Unknown sync error");
     return {
       success: false,
       error: error instanceof Error ? error.message : "Erro ao sincronizar dados",

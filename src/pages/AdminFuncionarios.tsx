@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,7 @@ interface Funcionario {
   cargo: string | null;
   banco: string | null;
   contrato: string | null;
+  observacoes: string | null;
   ativo: boolean;
 }
 
@@ -43,15 +45,23 @@ interface Municipio {
   nome: string;
 }
 
+interface SalarioRecord {
+  funcionario_id: string;
+  salario: number | null;
+}
+
 const normalizeText = (text: string) =>
   text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
 
 const AdminFuncionarios = () => {
   const { toast } = useToast();
+  const { role } = useAuth();
+  const canSeeSalary = role === "admin" || role === "financeiro";
 
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [municipios, setMunicipios] = useState<Municipio[]>([]);
+  const [salarioMap, setSalarioMap] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
@@ -76,13 +86,13 @@ const AdminFuncionarios = () => {
   const [formCargo, setFormCargo] = useState("");
   const [formBanco, setFormBanco] = useState("");
   const [formContrato, setFormContrato] = useState("");
+  const [formObservacoes, setFormObservacoes] = useState("");
   const [formAtivo, setFormAtivo] = useState(true);
 
   useEffect(() => {
     fetchAll();
   }, []);
 
-  // Reset page and selection when search changes
   useEffect(() => {
     setCurrentPage(1);
     setSelectedIds(new Set());
@@ -95,9 +105,23 @@ const AdminFuncionarios = () => {
       supabase.from("empresas").select("id, nome").order("nome"),
       supabase.from("municipios").select("id, nome").order("nome"),
     ]);
-    if (funcRes.data) setFuncionarios(funcRes.data);
+    if (funcRes.data) setFuncionarios(funcRes.data.map(f => ({ ...f, observacoes: (f as any).observacoes ?? null })));
     if (empRes.data) setEmpresas(empRes.data);
     if (munRes.data) setMunicipios(munRes.data);
+
+    // Fetch salary data only if authorized (RLS will block anyway)
+    if (canSeeSalary) {
+      const { data: salarios } = await supabase
+        .from("funcionarios_salario" as any)
+        .select("funcionario_id, salario") as { data: SalarioRecord[] | null };
+      
+      if (salarios) {
+        const map = new Map<string, number | null>();
+        salarios.forEach(s => map.set(s.funcionario_id, s.salario));
+        setSalarioMap(map);
+      }
+    }
+
     setLoading(false);
   };
 
@@ -108,14 +132,12 @@ const AdminFuncionarios = () => {
     f.nome_normalizado.includes(normalizeText(search))
   );
 
-  // Pagination calculations
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, filtered.length);
   const paginatedItems = filtered.slice(startIndex, endIndex);
 
-  // Selection helpers
   const allPageSelected = paginatedItems.length > 0 && paginatedItems.every((f) => selectedIds.has(f.id));
   const somePageSelected = paginatedItems.some((f) => selectedIds.has(f.id));
 
@@ -136,6 +158,11 @@ const AdminFuncionarios = () => {
     setSelectedIds(newSet);
   };
 
+  const formatSalario = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return "—";
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+  };
+
   const openCreate = () => {
     setEditingFuncionario(null);
     setFormNome("");
@@ -144,6 +171,7 @@ const AdminFuncionarios = () => {
     setFormCargo("");
     setFormBanco("");
     setFormContrato("");
+    setFormObservacoes("");
     setFormAtivo(true);
     setDialogOpen(true);
   };
@@ -156,6 +184,7 @@ const AdminFuncionarios = () => {
     setFormCargo(f.cargo || "");
     setFormBanco(f.banco || "");
     setFormContrato(f.contrato || "");
+    setFormObservacoes(f.observacoes || "");
     setFormAtivo(f.ativo);
     setDialogOpen(true);
   };
@@ -174,18 +203,19 @@ const AdminFuncionarios = () => {
       cargo: formCargo.trim() || null,
       banco: formBanco.trim() || null,
       contrato: formContrato.trim() || null,
+      observacoes: formObservacoes.trim() || null,
       ativo: formAtivo,
     };
 
     if (editingFuncionario) {
-      const { error } = await supabase.from("funcionarios").update(payload).eq("id", editingFuncionario.id);
+      const { error } = await supabase.from("funcionarios").update(payload as any).eq("id", editingFuncionario.id);
       if (error) {
         toast({ title: "Erro ao atualizar", description: error.message, variant: "destructive" });
       } else {
         toast({ title: "Funcionário atualizado" });
       }
     } else {
-      const { error } = await supabase.from("funcionarios").insert(payload);
+      const { error } = await supabase.from("funcionarios").insert(payload as any);
       if (error) {
         toast({ title: "Erro ao criar", description: error.message, variant: "destructive" });
       } else {
@@ -230,7 +260,7 @@ const AdminFuncionarios = () => {
 
   return (
     <>
-    <div className="container mx-auto px-4 py-8 max-w-6xl">
+    <div className="container mx-auto px-4 py-8 max-w-7xl">
       <div className="flex items-center gap-3 mb-6">
         <div className="flex items-center gap-2">
           <Users className="h-5 w-5 text-primary" />
@@ -289,7 +319,7 @@ const AdminFuncionarios = () => {
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
           </div>
         ) : (
-          <div className="rounded-lg border bg-card">
+          <div className="rounded-lg border bg-card overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -307,6 +337,8 @@ const AdminFuncionarios = () => {
                   <TableHead className="hidden lg:table-cell">Cargo</TableHead>
                   <TableHead className="hidden lg:table-cell">Banco</TableHead>
                   <TableHead className="hidden xl:table-cell">Contrato</TableHead>
+                  <TableHead className="hidden xl:table-cell">Observações</TableHead>
+                  {canSeeSalary && <TableHead className="hidden xl:table-cell">Salário</TableHead>}
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
@@ -314,7 +346,7 @@ const AdminFuncionarios = () => {
               <TableBody>
                 {paginatedItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={canSeeSalary ? 11 : 10} className="text-center py-8 text-muted-foreground">
                       Nenhum funcionário encontrado.
                     </TableCell>
                   </TableRow>
@@ -334,6 +366,14 @@ const AdminFuncionarios = () => {
                       <TableCell className="hidden lg:table-cell">{f.cargo || "—"}</TableCell>
                       <TableCell className="hidden lg:table-cell">{f.banco || "—"}</TableCell>
                       <TableCell className="hidden xl:table-cell">{f.contrato || "—"}</TableCell>
+                      <TableCell className="hidden xl:table-cell max-w-[200px] truncate" title={f.observacoes || ""}>
+                        {f.observacoes || "—"}
+                      </TableCell>
+                      {canSeeSalary && (
+                        <TableCell className="hidden xl:table-cell">
+                          {formatSalario(salarioMap.get(f.id))}
+                        </TableCell>
+                      )}
                       <TableCell>
                         <Badge variant={f.ativo ? "default" : "secondary"}>
                           {f.ativo ? "Ativo" : "Inativo"}
@@ -461,6 +501,10 @@ const AdminFuncionarios = () => {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div>
+              <Label>Observações</Label>
+              <Input value={formObservacoes} onChange={(e) => setFormObservacoes(e.target.value)} placeholder="E-mail, CPF, telefone..." />
             </div>
           </div>
           <DialogFooter>
