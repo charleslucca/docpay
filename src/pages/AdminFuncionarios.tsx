@@ -371,6 +371,7 @@ const AdminFuncionarios = () => {
                         />
                       </TableCell>
                       <TableCell className="font-medium">{f.nome}</TableCell>
+                      <TableCell className="hidden sm:table-cell text-muted-foreground">{f.codigo || "—"}</TableCell>
                       <TableCell>{empresaMap[f.empresa_id] || "—"}</TableCell>
                       <TableCell className="hidden md:table-cell">{municipioMap[f.municipio_id] || "—"}</TableCell>
                       <TableCell className="hidden lg:table-cell">{f.cargo || "—"}</TableCell>
@@ -381,7 +382,12 @@ const AdminFuncionarios = () => {
                       </TableCell>
                       {canSeeSalary && (
                         <TableCell className="hidden xl:table-cell">
-                          {formatSalario(salarioMap.get(f.id))}
+                          {formatSalario(salarioMap.get(f.id)?.salario)}
+                        </TableCell>
+                      )}
+                      {canSeeSalary && (
+                        <TableCell className="hidden xl:table-cell">
+                          {formatSalario(salarioMap.get(f.id)?.liquido)}
                         </TableCell>
                       )}
                       <TableCell>
