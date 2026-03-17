@@ -10,6 +10,14 @@ export interface EmployeeRecord {
   totalFuncionarios?: number;
   observacoes?: string;
   salario?: number;
+  codigo?: string;
+  outrosProventos?: number;
+  salarioFamilia?: number;
+  inss?: number;
+  irrf?: number;
+  outrosDescontos?: number;
+  liquido?: number;
+  fgts?: number;
 }
 
 export interface SpreadsheetData {
