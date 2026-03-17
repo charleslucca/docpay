@@ -268,21 +268,25 @@ async function syncFuncionariosBatch(
       const existingContratoNorm = normalizeFieldValue(existing.contrato);
       const newObsNorm = normalizeFieldValue(record.observacoes);
       const existingObsNorm = normalizeFieldValue(existing.observacoes);
+      const newCodigoNorm = normalizeFieldValue(record.codigo);
+      const existingCodigoNorm = normalizeFieldValue(existing.codigo);
 
       const bancoChanged = newBancoNorm !== existingBancoNorm;
       const contratoChanged = newContratoNorm !== existingContratoNorm;
       const obsChanged = newObsNorm !== existingObsNorm;
+      const codigoChanged = newCodigoNorm !== existingCodigoNorm;
       const needsReactivation = !existing.ativo;
 
-      if (bancoChanged || contratoChanged || obsChanged || needsReactivation) {
+      if (bancoChanged || contratoChanged || obsChanged || codigoChanged || needsReactivation) {
         if (bancoChanged) console.log(`[Sync] Atualização banco: "${existing.banco}" → "${banco}" (${record.colaborador})`);
         if (contratoChanged) console.log(`[Sync] Atualização contrato: "${existing.contrato}" → "${record.contrato}" (${record.colaborador})`);
         if (obsChanged) console.log(`[Sync] Atualização observações: (${record.colaborador})`);
+        if (codigoChanged) console.log(`[Sync] Atualização código: (${record.colaborador})`);
         if (needsReactivation) console.log(`[Sync] Reativação: ${record.colaborador}`);
 
         toUpdate.push({
           id: existing.id,
-          data: { banco, contrato: record.contrato, observacoes: record.observacoes || null, ativo: true }
+          data: { banco, contrato: record.contrato, observacoes: record.observacoes || null, codigo: record.codigo || null, ativo: true }
         });
       }
     } else {
