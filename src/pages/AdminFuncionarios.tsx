@@ -356,7 +356,7 @@ const AdminFuncionarios = () => {
               <TableBody>
                 {paginatedItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={canSeeSalary ? 11 : 10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={canSeeSalary ? 13 : 11} className="text-center py-8 text-muted-foreground">
                       Nenhum funcionário encontrado.
                     </TableCell>
                   </TableRow>
