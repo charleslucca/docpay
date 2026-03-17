@@ -32,6 +32,7 @@ interface Funcionario {
   banco: string | null;
   contrato: string | null;
   observacoes: string | null;
+  codigo: string | null;
   ativo: boolean;
 }
 
