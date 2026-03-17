@@ -69,7 +69,7 @@ const AdminFuncionarios = () => {
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [municipios, setMunicipios] = useState<Municipio[]>([]);
-  const [salarioMap, setSalarioMap] = useState<Map<string, number | null>>(new Map());
+  const [salarioMap, setSalarioMap] = useState<Map<string, SalarioRecord>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
