@@ -231,10 +231,11 @@ async function syncFuncionariosBatch(
     banco: string | null;
     contrato: string | null;
     observacoes: string | null;
+    codigo: string | null;
     ativo: boolean;
   }> = [];
 
-  const toUpdate: Array<{ id: string; data: { banco: string | null; contrato: string | null; observacoes: string | null; ativo: boolean } }> = [];
+  const toUpdate: Array<{ id: string; data: { banco: string | null; contrato: string | null; observacoes: string | null; codigo: string | null; ativo: boolean } }> = [];
   const processedIds = new Set<string>();
 
   // Track keys for inserted records to build funcionarioIdMap later
