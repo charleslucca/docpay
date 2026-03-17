@@ -101,7 +101,7 @@ const AdminFuncionarios = () => {
   const fetchAll = async () => {
     setLoading(true);
     const [funcRes, empRes, munRes] = await Promise.all([
-      supabase.from("funcionarios").select("*").order("nome") as Promise<{ data: Funcionario[] | null; error: any }>,
+      supabase.from("funcionarios").select("*").order("nome"),
       supabase.from("empresas").select("id, nome").order("nome"),
       supabase.from("municipios").select("id, nome").order("nome"),
     ]);
