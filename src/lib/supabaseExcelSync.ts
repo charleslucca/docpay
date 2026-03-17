@@ -158,7 +158,17 @@ async function syncSalariosBatch(
   municipioMap: Map<string, string>,
   funcionarioIdMap: Map<string, string>
 ): Promise<void> {
-  const salarioRecords: Array<{ funcionario_id: string; salario: number }> = [];
+  const salarioRecords: Array<{
+    funcionario_id: string;
+    salario: number;
+    outros_proventos: number | null;
+    salario_familia: number | null;
+    inss: number | null;
+    irrf: number | null;
+    outros_descontos: number | null;
+    liquido: number | null;
+    fgts: number | null;
+  }> = [];
 
   for (const record of records) {
     if (record.salario === undefined || record.salario === null) continue;
