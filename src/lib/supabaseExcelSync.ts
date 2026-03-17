@@ -28,6 +28,7 @@ interface FuncionarioExisting {
   banco: string | null;
   contrato: string | null;
   observacoes: string | null;
+  codigo: string | null;
   ativo: boolean;
 }
 
@@ -157,7 +158,17 @@ async function syncSalariosBatch(
   municipioMap: Map<string, string>,
   funcionarioIdMap: Map<string, string>
 ): Promise<void> {
-  const salarioRecords: Array<{ funcionario_id: string; salario: number }> = [];
+  const salarioRecords: Array<{
+    funcionario_id: string;
+    salario: number;
+    outros_proventos: number | null;
+    salario_familia: number | null;
+    inss: number | null;
+    irrf: number | null;
+    outros_descontos: number | null;
+    liquido: number | null;
+    fgts: number | null;
+  }> = [];
 
   for (const record of records) {
     if (record.salario === undefined || record.salario === null) continue;
@@ -174,7 +185,17 @@ async function syncSalariosBatch(
     const funcionarioId = funcionarioIdMap.get(key);
     if (!funcionarioId) continue;
 
-    salarioRecords.push({ funcionario_id: funcionarioId, salario: record.salario });
+    salarioRecords.push({
+      funcionario_id: funcionarioId,
+      salario: record.salario,
+      outros_proventos: record.outrosProventos ?? null,
+      salario_familia: record.salarioFamilia ?? null,
+      inss: record.inss ?? null,
+      irrf: record.irrf ?? null,
+      outros_descontos: record.outrosDescontos ?? null,
+      liquido: record.liquido ?? null,
+      fgts: record.fgts ?? null,
+    });
   }
 
   if (salarioRecords.length === 0) return;
@@ -211,10 +232,9 @@ async function syncFuncionariosBatch(
     return { novos, atualizados, removidos, funcionarioIdMap };
   }
 
-  // Cast needed: observacoes column exists in DB but types.ts is auto-generated and may lag behind
   const { data: allExisting } = await supabase
     .from("funcionarios")
-    .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, observacoes, ativo") as { data: FuncionarioExisting[] | null };
+    .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, observacoes, codigo, ativo") as { data: FuncionarioExisting[] | null };
 
   const existingMap = new Map<string, FuncionarioExisting>(
     (allExisting || []).map(f => [
@@ -231,10 +251,11 @@ async function syncFuncionariosBatch(
     banco: string | null;
     contrato: string | null;
     observacoes: string | null;
+    codigo: string | null;
     ativo: boolean;
   }> = [];
 
-  const toUpdate: Array<{ id: string; data: { banco: string | null; contrato: string | null; observacoes: string | null; ativo: boolean } }> = [];
+  const toUpdate: Array<{ id: string; data: { banco: string | null; contrato: string | null; observacoes: string | null; codigo: string | null; ativo: boolean } }> = [];
   const processedIds = new Set<string>();
 
   // Track keys for inserted records to build funcionarioIdMap later
@@ -267,21 +288,25 @@ async function syncFuncionariosBatch(
       const existingContratoNorm = normalizeFieldValue(existing.contrato);
       const newObsNorm = normalizeFieldValue(record.observacoes);
       const existingObsNorm = normalizeFieldValue(existing.observacoes);
+      const newCodigoNorm = normalizeFieldValue(record.codigo);
+      const existingCodigoNorm = normalizeFieldValue(existing.codigo);
 
       const bancoChanged = newBancoNorm !== existingBancoNorm;
       const contratoChanged = newContratoNorm !== existingContratoNorm;
       const obsChanged = newObsNorm !== existingObsNorm;
+      const codigoChanged = newCodigoNorm !== existingCodigoNorm;
       const needsReactivation = !existing.ativo;
 
-      if (bancoChanged || contratoChanged || obsChanged || needsReactivation) {
+      if (bancoChanged || contratoChanged || obsChanged || codigoChanged || needsReactivation) {
         if (bancoChanged) console.log(`[Sync] Atualização banco: "${existing.banco}" → "${banco}" (${record.colaborador})`);
         if (contratoChanged) console.log(`[Sync] Atualização contrato: "${existing.contrato}" → "${record.contrato}" (${record.colaborador})`);
         if (obsChanged) console.log(`[Sync] Atualização observações: (${record.colaborador})`);
+        if (codigoChanged) console.log(`[Sync] Atualização código: (${record.colaborador})`);
         if (needsReactivation) console.log(`[Sync] Reativação: ${record.colaborador}`);
 
         toUpdate.push({
           id: existing.id,
-          data: { banco, contrato: record.contrato, observacoes: record.observacoes || null, ativo: true }
+          data: { banco, contrato: record.contrato, observacoes: record.observacoes || null, codigo: record.codigo || null, ativo: true }
         });
       }
     } else {
@@ -293,6 +318,7 @@ async function syncFuncionariosBatch(
         banco,
         contrato: record.contrato,
         observacoes: record.observacoes || null,
+        codigo: record.codigo || null,
         ativo: true,
       });
       insertKeys.push(key);

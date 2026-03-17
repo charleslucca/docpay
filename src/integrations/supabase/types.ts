@@ -82,6 +82,7 @@ export type Database = {
           ativo: boolean
           banco: string | null
           cargo: string | null
+          codigo: string | null
           contrato: string | null
           created_at: string
           empresa_id: string
@@ -95,6 +96,7 @@ export type Database = {
           ativo?: boolean
           banco?: string | null
           cargo?: string | null
+          codigo?: string | null
           contrato?: string | null
           created_at?: string
           empresa_id: string
@@ -108,6 +110,7 @@ export type Database = {
           ativo?: boolean
           banco?: string | null
           cargo?: string | null
+          codigo?: string | null
           contrato?: string | null
           created_at?: string
           empresa_id?: string
@@ -136,19 +139,40 @@ export type Database = {
       }
       funcionarios_salario: {
         Row: {
+          fgts: number | null
           funcionario_id: string
           id: string
+          inss: number | null
+          irrf: number | null
+          liquido: number | null
+          outros_descontos: number | null
+          outros_proventos: number | null
           salario: number | null
+          salario_familia: number | null
         }
         Insert: {
+          fgts?: number | null
           funcionario_id: string
           id?: string
+          inss?: number | null
+          irrf?: number | null
+          liquido?: number | null
+          outros_descontos?: number | null
+          outros_proventos?: number | null
           salario?: number | null
+          salario_familia?: number | null
         }
         Update: {
+          fgts?: number | null
           funcionario_id?: string
           id?: string
+          inss?: number | null
+          irrf?: number | null
+          liquido?: number | null
+          outros_descontos?: number | null
+          outros_proventos?: number | null
           salario?: number | null
+          salario_familia?: number | null
         }
         Relationships: [
           {

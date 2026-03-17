@@ -10,6 +10,14 @@ export interface EmployeeRecord {
   totalFuncionarios?: number;
   observacoes?: string;
   salario?: number;
+  codigo?: string;
+  outrosProventos?: number;
+  salarioFamilia?: number;
+  inss?: number;
+  irrf?: number;
+  outrosDescontos?: number;
+  liquido?: number;
+  fgts?: number;
 }
 
 export interface SpreadsheetData {
@@ -405,6 +413,163 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
 /**
  * Parse an Excel file and extract employee records
  */
+/**
+ * Detect if a workbook is a "Relação da Folha por Empregado" payroll report
+ */
+function isPayrollReport(workbook: XLSX.WorkBook): boolean {
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!firstSheet) return false;
+  const jsonData = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1 });
+  // Check first 10 rows for the report identifier
+  for (let i = 0; i < Math.min(10, jsonData.length); i++) {
+    const row = jsonData[i] as unknown[];
+    if (!row) continue;
+    const rowText = row.map(c => String(c || "")).join(" ").toUpperCase();
+    if (rowText.includes("RELAÇÃO DA FOLHA") || rowText.includes("RELACAO DA FOLHA")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Parse a numeric value from a cell, returning undefined if invalid
+ */
+function parseNumericCell(cell: unknown): number | undefined {
+  if (cell === null || cell === undefined || cell === "") return undefined;
+  const val = typeof cell === "number" ? cell : Number(String(cell).replace(/[^\d.,-]/g, "").replace(",", "."));
+  return isNaN(val) ? undefined : val;
+}
+
+/**
+ * Extract empresa name from header line like "2 - B SERVICE PRESTADORA DE SERVICOS EIRELI"
+ */
+function extractEmpresaFromHeader(line: string): string {
+  return line.replace(/^\d+\s*-\s*/, "").trim();
+}
+
+/**
+ * Extract cidade from "Serviço:" line like "6-MUNICIPIO DE SANTO ANTONIO DA PATRULHA"
+ */
+function extractCidadeFromServico(servicoText: string): string {
+  // Remove prefix number "6-" or "6 - "
+  const cleaned = servicoText.replace(/^\d+\s*-\s*/, "").trim();
+  // If starts with "MUNICIPIO DE " or "MUNICÍPIO DE ", extract just the city name
+  const munMatch = cleaned.match(/^MUNIC[IÍ]PIO\s+DE\s+(.+)/i);
+  if (munMatch) return munMatch[1].trim();
+  // If starts with "PREFEITURA MUNICIPAL DE", extract city
+  const prefMatch = cleaned.match(/^PREFEITURA\s+MUNICIPAL\s+DE\s+(.+)/i);
+  if (prefMatch) return prefMatch[1].trim();
+  return cleaned;
+}
+
+/**
+ * Parse "Relação da Folha por Empregado" payroll report format
+ */
+function parsePayrollReport(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  const jsonData = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, defval: "" });
+
+  const records: EmployeeRecord[] = [];
+  const empresasSet = new Set<string>();
+  const cidadesSet = new Set<string>();
+
+  // Extract empresa from first row
+  let empresa = "";
+  if (jsonData.length > 0) {
+    const row0 = jsonData[0] as unknown[];
+    empresa = extractEmpresaFromHeader(String(row0?.[0] || ""));
+  }
+  if (empresa) empresasSet.add(empresa);
+
+  let currentCidade = "";
+  let currentContrato = "";
+
+  // Skip rows to ignore: total, subtotal, headers, empty
+  const skipPatterns = [
+    /^TOTAL/i, /^SUBTOTAL/i, /^SOMA/i,
+    /^EMPREGADOS?$/i, /^CONTRIBUINTES?$/i,
+    /^C[OÓ]DIGO$/i, /^NOME/i,
+  ];
+
+  for (let i = 0; i < jsonData.length; i++) {
+    const row = jsonData[i] as unknown[];
+    if (!row) continue;
+
+    const cellA = String(row[0] || "").trim();
+    const cellB = String(row[1] || "").trim();
+
+    // Detect "Serviço:" grouping line
+    // Could be in cellA like "Serviço: 6-MUNICIPIO DE ..." or split across cells
+    const fullRowText = row.map(c => String(c || "")).join(" ");
+    const servicoMatch = fullRowText.match(/Servi[çc]o\s*:\s*(.+)/i);
+    if (servicoMatch) {
+      const servicoValue = servicoMatch[1].trim();
+      currentContrato = servicoValue;
+      currentCidade = extractCidadeFromServico(servicoValue);
+      if (currentCidade) cidadesSet.add(currentCidade);
+      continue;
+    }
+
+    // Skip non-data rows
+    if (!cellA) continue;
+    const cellANorm = normalizeForComparison(cellA);
+    if (skipPatterns.some(p => p.test(cellANorm))) continue;
+
+    // Employee row: cellA should be a numeric code
+    const codigo = cellA;
+    if (!/^\d+$/.test(codigo)) continue;
+
+    // cellB = employee name
+    const colaborador = cellB.trim();
+    if (!colaborador || colaborador.length < 3) continue;
+
+    // Financial columns: Salário(C), Out.Prov(D), Sal.Fam(E), INSS(F), IRRF(G), Out.Des(H), Líquid(I), FGTS(J)
+    const salario = parseNumericCell(row[2]);
+    const outrosProventos = parseNumericCell(row[3]);
+    const salarioFamilia = parseNumericCell(row[4]);
+    const inss = parseNumericCell(row[5]);
+    const irrf = parseNumericCell(row[6]);
+    const outrosDescontos = parseNumericCell(row[7]);
+    const liquido = parseNumericCell(row[8]);
+    const fgts = parseNumericCell(row[9]);
+
+    records.push({
+      empresa,
+      cidade: currentCidade,
+      contrato: currentContrato,
+      colaborador,
+      codigo,
+      salario,
+      outrosProventos,
+      salarioFamilia,
+      inss,
+      irrf,
+      outrosDescontos,
+      liquido,
+      fgts,
+    });
+  }
+
+  console.log(`[Excel] Parsed payroll report: ${records.length} employees, ${empresasSet.size} companies, ${cidadesSet.size} cities`);
+
+  const funcionariosPorCidade: Record<string, number> = {};
+  for (const record of records) {
+    funcionariosPorCidade[record.cidade] = (funcionariosPorCidade[record.cidade] || 0) + 1;
+  }
+
+  return {
+    records,
+    empresas: Array.from(empresasSet).sort(),
+    cidades: Array.from(cidadesSet).sort(),
+    funcionariosPorCidade,
+    fileName,
+  };
+}
+
+/**
+ * Parse an Excel file and extract employee records
+ */
 export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetData; validation: ValidationResult }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -416,6 +581,19 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
 
         if (workbook.SheetNames.length === 0) {
           throw new Error("Nenhuma aba encontrada na planilha");
+        }
+
+        // Check for payroll report format first
+        if (isPayrollReport(workbook)) {
+          console.log("[Excel] Detected payroll report format (Relação da Folha por Empregado)");
+          const result = parsePayrollReport(workbook, file.name);
+
+          if (result.records.length === 0) {
+            throw new Error("Nenhum funcionário encontrado na planilha");
+          }
+
+          resolve({ data: result, validation: { valid: true, missingColumns: [] } });
+          return;
         }
 
         const validation = validateExcelStructure(workbook);
@@ -441,7 +619,6 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
           resolve({ data: municipalityResult, validation });
         }
       } catch (error) {
-        // Safe error logging — never expose record data
         console.error("[Excel] Parse error:", error instanceof Error ? error.message : "Unknown error");
         reject(error);
       }

@@ -32,6 +32,7 @@ interface Funcionario {
   banco: string | null;
   contrato: string | null;
   observacoes: string | null;
+  codigo: string | null;
   ativo: boolean;
 }
 
@@ -48,6 +49,13 @@ interface Municipio {
 interface SalarioRecord {
   funcionario_id: string;
   salario: number | null;
+  outros_proventos: number | null;
+  salario_familia: number | null;
+  inss: number | null;
+  irrf: number | null;
+  outros_descontos: number | null;
+  liquido: number | null;
+  fgts: number | null;
 }
 
 const normalizeText = (text: string) =>
@@ -61,7 +69,7 @@ const AdminFuncionarios = () => {
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [municipios, setMunicipios] = useState<Municipio[]>([]);
-  const [salarioMap, setSalarioMap] = useState<Map<string, number | null>>(new Map());
+  const [salarioMap, setSalarioMap] = useState<Map<string, SalarioRecord>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
@@ -105,7 +113,7 @@ const AdminFuncionarios = () => {
       supabase.from("empresas").select("id, nome").order("nome"),
       supabase.from("municipios").select("id, nome").order("nome"),
     ]);
-    if (funcRes.data) setFuncionarios(funcRes.data.map(f => ({ ...f, observacoes: (f as any).observacoes ?? null })));
+    if (funcRes.data) setFuncionarios(funcRes.data.map(f => ({ ...f, observacoes: (f as any).observacoes ?? null, codigo: (f as any).codigo ?? null })));
     if (empRes.data) setEmpresas(empRes.data);
     if (munRes.data) setMunicipios(munRes.data);
 
@@ -113,11 +121,11 @@ const AdminFuncionarios = () => {
     if (canSeeSalary) {
       const { data: salarios } = await supabase
         .from("funcionarios_salario" as any)
-        .select("funcionario_id, salario") as { data: SalarioRecord[] | null };
+        .select("funcionario_id, salario, outros_proventos, salario_familia, inss, irrf, outros_descontos, liquido, fgts") as { data: SalarioRecord[] | null };
       
       if (salarios) {
-        const map = new Map<string, number | null>();
-        salarios.forEach(s => map.set(s.funcionario_id, s.salario));
+        const map = new Map<string, SalarioRecord>();
+        salarios.forEach(s => map.set(s.funcionario_id, s));
         setSalarioMap(map);
       }
     }
@@ -332,6 +340,7 @@ const AdminFuncionarios = () => {
                     />
                   </TableHead>
                   <TableHead>Nome</TableHead>
+                  <TableHead className="hidden sm:table-cell">Código</TableHead>
                   <TableHead>Empresa</TableHead>
                   <TableHead className="hidden md:table-cell">Município</TableHead>
                   <TableHead className="hidden lg:table-cell">Cargo</TableHead>
@@ -339,6 +348,7 @@ const AdminFuncionarios = () => {
                   <TableHead className="hidden xl:table-cell">Contrato</TableHead>
                   <TableHead className="hidden xl:table-cell">Observações</TableHead>
                   {canSeeSalary && <TableHead className="hidden xl:table-cell">Salário</TableHead>}
+                  {canSeeSalary && <TableHead className="hidden xl:table-cell">Líquido</TableHead>}
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
@@ -346,7 +356,7 @@ const AdminFuncionarios = () => {
               <TableBody>
                 {paginatedItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={canSeeSalary ? 11 : 10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={canSeeSalary ? 13 : 11} className="text-center py-8 text-muted-foreground">
                       Nenhum funcionário encontrado.
                     </TableCell>
                   </TableRow>
@@ -361,6 +371,7 @@ const AdminFuncionarios = () => {
                         />
                       </TableCell>
                       <TableCell className="font-medium">{f.nome}</TableCell>
+                      <TableCell className="hidden sm:table-cell text-muted-foreground">{f.codigo || "—"}</TableCell>
                       <TableCell>{empresaMap[f.empresa_id] || "—"}</TableCell>
                       <TableCell className="hidden md:table-cell">{municipioMap[f.municipio_id] || "—"}</TableCell>
                       <TableCell className="hidden lg:table-cell">{f.cargo || "—"}</TableCell>
@@ -371,7 +382,12 @@ const AdminFuncionarios = () => {
                       </TableCell>
                       {canSeeSalary && (
                         <TableCell className="hidden xl:table-cell">
-                          {formatSalario(salarioMap.get(f.id))}
+                          {formatSalario(salarioMap.get(f.id)?.salario)}
+                        </TableCell>
+                      )}
+                      {canSeeSalary && (
+                        <TableCell className="hidden xl:table-cell">
+                          {formatSalario(salarioMap.get(f.id)?.liquido)}
                         </TableCell>
                       )}
                       <TableCell>
