@@ -211,15 +211,15 @@ async function syncFuncionariosBatch(
     return { novos, atualizados, removidos, funcionarioIdMap };
   }
 
+  // Cast needed: observacoes column exists in DB but types.ts is auto-generated and may lag behind
   const { data: allExisting } = await supabase
     .from("funcionarios")
-    .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, observacoes, ativo")
-    .in("empresa_id", empresaIds);
+    .select("id, empresa_id, municipio_id, nome_normalizado, banco, contrato, observacoes, ativo") as { data: FuncionarioExisting[] | null };
 
   const existingMap = new Map<string, FuncionarioExisting>(
     (allExisting || []).map(f => [
       `${f.empresa_id}|${f.municipio_id}|${f.nome_normalizado}`,
-      f as FuncionarioExisting
+      f
     ])
   );
 
