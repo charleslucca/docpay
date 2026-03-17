@@ -298,6 +298,7 @@ async function syncFuncionariosBatch(
         banco,
         contrato: record.contrato,
         observacoes: record.observacoes || null,
+        codigo: record.codigo || null,
         ativo: true,
       });
       insertKeys.push(key);
