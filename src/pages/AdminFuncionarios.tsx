@@ -105,7 +105,7 @@ const AdminFuncionarios = () => {
       supabase.from("empresas").select("id, nome").order("nome"),
       supabase.from("municipios").select("id, nome").order("nome"),
     ]);
-    if (funcRes.data) setFuncionarios(funcRes.data);
+    if (funcRes.data) setFuncionarios(funcRes.data.map(f => ({ ...f, observacoes: (f as any).observacoes ?? null })));
     if (empRes.data) setEmpresas(empRes.data);
     if (munRes.data) setMunicipios(munRes.data);
 
