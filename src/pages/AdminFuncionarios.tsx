@@ -49,6 +49,13 @@ interface Municipio {
 interface SalarioRecord {
   funcionario_id: string;
   salario: number | null;
+  outros_proventos: number | null;
+  salario_familia: number | null;
+  inss: number | null;
+  irrf: number | null;
+  outros_descontos: number | null;
+  liquido: number | null;
+  fgts: number | null;
 }
 
 const normalizeText = (text: string) =>
