@@ -134,6 +134,32 @@ export type Database = {
           },
         ]
       }
+      funcionarios_salario: {
+        Row: {
+          funcionario_id: string
+          id: string
+          salario: number | null
+        }
+        Insert: {
+          funcionario_id: string
+          id?: string
+          salario?: number | null
+        }
+        Update: {
+          funcionario_id?: string
+          id?: string
+          salario?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "funcionarios_salario_funcionario_id_fkey"
+            columns: ["funcionario_id"]
+            isOneToOne: true
+            referencedRelation: "funcionarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ip_whitelist: {
         Row: {
           active: boolean
@@ -265,6 +291,13 @@ export type Database = {
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      has_role_any: {
+        Args: {
+          _roles: Database["public"]["Enums"]["app_role"][]
           _user_id: string
         }
         Returns: boolean
