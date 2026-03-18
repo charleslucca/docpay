@@ -1262,9 +1262,71 @@ export function useDocumentProcessor() {
       }
     }
 
-    console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
+    console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found (before conflict resolution)`);
     console.log(`[Match] Methods: favorecido=${matchMethodCounts.favorecido}, substring=${matchMethodCounts.substring}, word-overlap=${matchMethodCounts["word-overlap"]}`);
     console.log(`[Match] UserAgent: ${navigator.userAgent}`);
+
+    // === PAGE CONFLICT RESOLUTION ===
+    // When multiple employees match the same comprovante page, keep only the highest-score match
+    const pageConflictMap = new Map<string, Array<{ pairIndex: number; name: string; score: number; method: string }>>();
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i];
+      const pageKey = `${pair.comprovante.id || pair.comprovante.name}:pg${pair.comprovante.pageNumber}`;
+      if (!pageConflictMap.has(pageKey)) pageConflictMap.set(pageKey, []);
+      const audit = matchAuditLog.find(a => a.name === pair.employeeName && a.page === pair.comprovante.pageNumber);
+      pageConflictMap.get(pageKey)!.push({
+        pairIndex: i,
+        name: pair.employeeName,
+        score: audit?.score ?? 0,
+        method: audit?.method ?? "unknown",
+      });
+    }
+
+    const indicesToRemove = new Set<number>();
+    for (const [pageKey, entries] of pageConflictMap) {
+      if (entries.length <= 1) continue;
+      // Sort by score descending, keep best
+      entries.sort((a, b) => b.score - a.score);
+      const winner = entries[0];
+      console.log(`[ConflictRes] Page ${pageKey}: keeping "${winner.name}" (score=${winner.score}, method=${winner.method}), rejecting ${entries.length - 1} others:`);
+      for (let j = 1; j < entries.length; j++) {
+        console.log(`  └─ Rejected: "${entries[j].name}" (score=${entries[j].score}, method=${entries[j].method})`);
+        indicesToRemove.add(entries[j].pairIndex);
+        // Decrement method count
+        if (entries[j].method && matchMethodCounts[entries[j].method]) {
+          matchMethodCounts[entries[j].method]--;
+        }
+      }
+    }
+
+    if (indicesToRemove.size > 0) {
+      const beforeCount = pairs.length;
+      // Remove in reverse order to preserve indices
+      const sortedIndices = [...indicesToRemove].sort((a, b) => b - a);
+      for (const idx of sortedIndices) {
+        // Also remove from matchedEntryKeys so the employee appears as unmatched
+        const removedPair = pairs[idx];
+        const removedEntry = preparedEntries.find(e => e.name === removedPair.employeeName);
+        if (removedEntry) {
+          matchedEntryKeys.delete(`${removedEntry.originalHolerite.id}_${removedEntry.pageNumber}`);
+        }
+        pairs.splice(idx, 1);
+      }
+      console.log(`[ConflictRes] Removed ${indicesToRemove.size} duplicate page matches: ${beforeCount} → ${pairs.length} pairs`);
+      // Also clean up audit log
+      const removedNames = new Set([...indicesToRemove].map(i => matchAuditLog[i]?.name).filter(Boolean));
+      // Rebuild audit log without removed entries (used later for duplicate detection)
+      const cleanAuditLog = matchAuditLog.filter(a => !removedNames.has(a.name) || pageConflictMap.get(`${a.comprovante}:pg${a.page}`)?.find(e => e.name === a.name)?.pairIndex === pageConflictMap.get(`${a.comprovante}:pg${a.page}`)?.[0]?.pairIndex);
+      matchAuditLog.length = 0;
+      matchAuditLog.push(...cleanAuditLog);
+    }
+
+    // === PRE-GENERATION VALIDATION ===
+    const uniquePages = new Set(pairs.map(p => `${p.comprovante.id || p.comprovante.name}:pg${p.comprovante.pageNumber}`));
+    console.log(`[Validation] ${pairs.length} matches → ${uniquePages.size} unique comprovante pages`);
+    if (pairs.length !== uniquePages.size) {
+      console.warn(`[Validation] ⚠️ INCONSISTÊNCIA: ${pairs.length} matches para ${uniquePages.size} páginas únicas`);
+    }
 
     // === AUDIT: Confidence distribution ===
     console.log(`\n  AUDITORIA DE CONFIANÇA`);
