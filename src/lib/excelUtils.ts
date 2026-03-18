@@ -678,18 +678,43 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
     const row = jsonData[i] as unknown[];
     if (!row) continue;
 
-    // Detect "Serviço:" in any cell
+    // Detect "Serviço:" — may be in one cell with value, or split across cells
     let servicoDetected = false;
-    for (const cell of row) {
-      const cellStr = String(cell || "");
-      const servicoMatch = cellStr.match(/Servi[çc]o\s*:\s*(.+)/i);
+    for (let ci = 0; ci < row.length; ci++) {
+      const cellStr = String(row[ci] || "").trim();
+      if (!cellStr) continue;
+      const servicoMatch = cellStr.match(/Servi[çc]o\s*:\s*(.*)/i);
+      if (servicoMatch) {
+        let servicoValue = servicoMatch[1].trim();
+        // If value is empty, look at next non-empty cells in the row
+        if (!servicoValue) {
+          for (let cj = ci + 1; cj < row.length; cj++) {
+            const nextCell = String(row[cj] || "").trim();
+            if (nextCell) {
+              servicoValue = nextCell;
+              break;
+            }
+          }
+        }
+        if (servicoValue) {
+          currentContrato = servicoValue;
+          currentCidade = extractCidadeFromServico(servicoValue);
+          if (currentCidade) cidadesSet.add(currentCidade);
+        }
+        servicoDetected = true;
+        break;
+      }
+    }
+    // Fallback: join all cells and try again (merged cells may produce combined text)
+    if (!servicoDetected) {
+      const fullRowText = row.map(c => String(c || "")).join(" ");
+      const servicoMatch = fullRowText.match(/Servi[çc]o\s*:\s*(.+)/i);
       if (servicoMatch) {
         const servicoValue = servicoMatch[1].trim();
         currentContrato = servicoValue;
         currentCidade = extractCidadeFromServico(servicoValue);
         if (currentCidade) cidadesSet.add(currentCidade);
         servicoDetected = true;
-        break;
       }
     }
     if (servicoDetected) continue;
