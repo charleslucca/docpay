@@ -882,7 +882,8 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       const fullRowText = row.map(c => String(c || "")).join(" ");
       const servicoMatch = fullRowText.match(/Servi[çc]o\s*:\s*(.+)/i);
       if (servicoMatch) {
-        const servicoValue = servicoMatch[1].trim();
+        // Clean residual "Serviço:" labels from the captured value
+        const servicoValue = servicoMatch[1].replace(/Servi[çc]o\s*:?\s*/gi, "").trim();
         currentContrato = servicoValue;
         const cidadeExtracted = extractCidadeFromServico(servicoValue);
         if (cidadeExtracted) {
