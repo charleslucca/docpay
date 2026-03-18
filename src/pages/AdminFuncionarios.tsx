@@ -216,7 +216,7 @@ const AdminFuncionarios = () => {
     };
 
     if (editingFuncionario) {
-      const { error } = await supabase.from("funcionarios").update(payload as any).eq("id", editingFuncionario.id);
+      const { error } = await supabase.from("funcionarios").update(payload).eq("id", editingFuncionario.id);
       if (error) {
         toast({ title: "Erro ao atualizar", description: error.message, variant: "destructive" });
       } else {
