@@ -342,6 +342,8 @@ function looksLikeCompany(value: string): boolean {
  */
 function isServicoMunicipio(value: string): boolean {
   const norm = normalizeForComparison(value);
+  // Guard: the literal label "Serviço:" is not a municipality
+  if (/^SERVICO:?$/i.test(norm.replace(/\s/g, ""))) return false;
   const municipioPatterns = [
     /MUNIC[IÍ]PIO/i, /PREFEITURA/i, /CAMARA\s+MUNICIPAL/i,
     /CÂMARA\s+MUNICIPAL/i, /PACO\s+MUNICIPAL/i, /PAÇO\s+MUNICIPAL/i,
@@ -758,6 +760,8 @@ function extractEmpresaFromHeader(line: string): string {
  * Extract cidade from "Serviço:" line
  */
 function extractCidadeFromServico(servicoText: string): string {
+  // Guard: reject empty or literal "Serviço:" label
+  if (!servicoText || /^Servi[çc]o\s*:?\s*$/i.test(servicoText.trim())) return "";
   // Only extract cidade if this looks like a municipality, not a company
   if (!isServicoMunicipio(servicoText)) {
     return "";
@@ -852,7 +856,8 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
         if (!servicoValue) {
           for (let cj = ci + 1; cj < row.length; cj++) {
             const nextCell = String(row[cj] || "").trim();
-            if (nextCell) {
+            // Skip cells that are just another "Serviço:" label
+            if (nextCell && !/^Servi[çc]o\s*:?\s*$/i.test(nextCell)) {
               servicoValue = nextCell;
               break;
             }
@@ -877,7 +882,8 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       const fullRowText = row.map(c => String(c || "")).join(" ");
       const servicoMatch = fullRowText.match(/Servi[çc]o\s*:\s*(.+)/i);
       if (servicoMatch) {
-        const servicoValue = servicoMatch[1].trim();
+        // Clean residual "Serviço:" labels from the captured value
+        const servicoValue = servicoMatch[1].replace(/Servi[çc]o\s*:?\s*/gi, "").trim();
         currentContrato = servicoValue;
         const cidadeExtracted = extractCidadeFromServico(servicoValue);
         if (cidadeExtracted) {

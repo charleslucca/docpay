@@ -1,32 +1,56 @@
 
 
-## Diagnóstico
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-O bug está nas linhas 852-859. Quando uma célula contém "Serviço:" e o valor está vazio, o código procura a **próxima célula não-vazia** na linha. Porém, se a próxima célula também contiver "Serviço:" (o que acontece neste layout — a planilha tem "Serviço:" repetido em múltiplas colunas na mesma linha), o `servicoValue` é setado como `"Serviço:"` literalmente.
+## Diagnostico
 
-Resultado:
-- `currentContrato = "Serviço:"` 
-- `isServicoMunicipio("Serviço:")` retorna `true` (a string tem >= 3 chars e não parece empresa)
-- `extractCidadeFromServico("Serviço:")` retorna `"Serviço:"` como cidade
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-Isso explica exatamente a imagem: todas as linhas mostram "Serviço:" em CIDADE e CONTRATO.
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-## Correção — Arquivo: `src/lib/excelUtils.ts`
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-### 1. Filtrar células "Serviço:" ao buscar o valor (linhas 852-859)
-- Ao procurar a próxima célula não-vazia após "Serviço:", **pular células** que também contenham "Serviço:" ou "Serviço"
-- Isso garante que o código encontre o valor real (ex: "8-MUNICIPIO DE CACHOEIRA DO SUL")
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### 2. Proteger `isServicoMunicipio` contra o valor literal "Serviço:"
-- Adicionar guard no início: se o valor normalizado for apenas "SERVICO" ou "SERVICO:", retornar `false`
-- Isso evita que "Serviço:" sozinho seja tratado como nome de município
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-### 3. Proteger `extractCidadeFromServico` 
-- Se o valor passado for vazio ou "Serviço:" literal, retornar string vazia
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-### 4. Melhorar fallback (linhas 876-888)
-- No regex do `fullRowText`, o `.+` após "Serviço:" pode capturar outro "Serviço:" concatenado
-- Limpar o valor capturado removendo ocorrências de "Serviço:" residuais
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-Resultado: cidade e contrato passarão a mostrar os valores reais (ex: "CACHOEIRA DO SUL" e "8-MUNICIPIO DE CACHOEIRA DO SUL").
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
+```
+
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
