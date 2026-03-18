@@ -840,11 +840,28 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
         servicoDetected = true;
       }
     }
-    if (servicoDetected) continue;
+    if (servicoDetected) { skippedReasons.servico++; continue; }
+
+    // Also detect "Serviço:" via number-dash pattern (e.g. "6-MUNICIPIO DE...")
+    // This catches cases where the label "Serviço:" is missing but the value has the pattern
+    if (!servicoDetected) {
+      for (let ci = 0; ci < row.length; ci++) {
+        const cellStr = String(row[ci] || "").trim();
+        if (cellStr && /^\d+\s*-\s*.{5,}/.test(cellStr) && /MUNIC|PREFEIT|CAMARA/i.test(cellStr)) {
+          currentContrato = cellStr;
+          currentCidade = extractCidadeFromServico(cellStr);
+          if (currentCidade) cidadesSet.add(currentCidade);
+          servicoDetected = true;
+          skippedReasons.servico++;
+          break;
+        }
+      }
+      if (servicoDetected) continue;
+    }
 
     // Get name (required)
     const cellNome = String(row[nomeCol] || "").trim();
-    if (!cellNome || cellNome.length < 3) continue;
+    if (!cellNome || cellNome.length < 3) { skippedReasons.emptyName++; continue; }
 
     const cellNomeNorm = normalizeForComparison(cellNome);
     if (skipPatterns.some(p => p.test(cellNomeNorm))) continue;
