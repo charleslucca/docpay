@@ -972,6 +972,14 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
         return { found: true, method: "favorecido", score: 1.0 };
       }
     }
+    // Try again with relaxed threshold (0.78) for FAVORECIDO context — label already validates context
+    for (const favName of page.favorecidoNames) {
+      const { score } = calculateNameMatchScore(target.normalized, favName);
+      if (score >= 0.78) {
+        console.log(`[Match] Favorecido (relaxed ${score.toFixed(2)}):`, target.original, "↔", favName);
+        return { found: true, method: "favorecido", score: score };
+      }
+    }
     // FAVORECIDO names extracted but none matched — continue to fallback methods
     // (extraction can be noisy due to OCR errors or truncation)
   }
