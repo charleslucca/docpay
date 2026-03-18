@@ -970,6 +970,7 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       contrato: currentContrato,
       colaborador: cellNome,
       codigo: cellCodigo || undefined,
+      tipo: currentTipo || undefined,
       salario, outrosProventos, salarioFamilia, inss, irrf, outrosDescontos, liquido, fgts,
     });
   }
