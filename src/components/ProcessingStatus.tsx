@@ -241,6 +241,38 @@ export function ProcessingStatus({ status, onReset }: ProcessingStatusProps) {
         </motion.div>
       )}
 
+      {/* Match confidence distribution (shown on completion) */}
+      {(status.step === 'completed' || (status.step === 'matching' && status.progress >= 95)) && 
+       status.matchMethodCounts && status.matchesFound && status.matchesFound > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-3 p-3 rounded-lg bg-muted/50 border"
+        >
+          <p className="text-xs font-medium text-muted-foreground mb-2">Distribuição de confiança dos matches:</p>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {(status.matchMethodCounts.favorecido ?? 0) > 0 && (
+              <div className="rounded-md bg-primary/10 p-2">
+                <p className="text-sm font-bold text-primary">{status.matchMethodCounts.favorecido}</p>
+                <p className="text-[10px] text-muted-foreground">Alta (Label)</p>
+              </div>
+            )}
+            {(status.matchMethodCounts.substring ?? 0) > 0 && (
+              <div className="rounded-md bg-accent/50 p-2">
+                <p className="text-sm font-bold text-accent-foreground">{status.matchMethodCounts.substring}</p>
+                <p className="text-[10px] text-muted-foreground">Média (Substring)</p>
+              </div>
+            )}
+            {(status.matchMethodCounts["word-overlap"] ?? 0) > 0 && (
+              <div className="rounded-md bg-amber-100 dark:bg-amber-900/30 p-2">
+                <p className="text-sm font-bold text-amber-700 dark:text-amber-400">{status.matchMethodCounts["word-overlap"]}</p>
+                <p className="text-[10px] text-muted-foreground">Baixa (Overlap)</p>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      )}
+
       {/* Time information */}
       {isActive && !isZeroMatchesState && status.startTime && (
         <motion.div 
