@@ -15,6 +15,8 @@ import Account from "./pages/Account";
 import AdminIpWhitelist from "./pages/AdminIpWhitelist";
 import AdminUsers from "./pages/AdminUsers";
 import AdminFuncionarios from "./pages/AdminFuncionarios";
+import Dashboard from "./pages/Dashboard";
+import Historico from "./pages/Historico";
 import Blocked from "./pages/Blocked";
 import NotFound from "./pages/NotFound";
 
@@ -37,6 +39,10 @@ const App = () => (
             {/* Protected routes with shared layout */}
             <Route path="/" element={<ProtectedRoute><AppLayout><Index /></AppLayout></ProtectedRoute>} />
             <Route path="/account" element={<ProtectedRoute checkIp={false}><AppLayout><Account /></AppLayout></ProtectedRoute>} />
+
+            {/* Report routes */}
+            <Route path="/relatorios/dashboard" element={<ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>} />
+            <Route path="/relatorios/historico" element={<ProtectedRoute><AppLayout><Historico /></AppLayout></ProtectedRoute>} />
 
             {/* Admin routes */}
             <Route path="/admin/ip-whitelist" element={
