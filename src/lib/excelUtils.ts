@@ -913,6 +913,7 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
   }
 
   console.log(`[Excel] Parsed payroll report: ${records.length} employees, ${empresasSet.size} companies, ${cidadesSet.size} cities`);
+  console.log(`[Excel] Skip reasons: servico=${skippedReasons.servico}, emptyName=${skippedReasons.emptyName}, shortName=${skippedReasons.shortName}, skipPattern=${skippedReasons.skipPattern}, nonNumericCode=${skippedReasons.nonNumericCode}, fewWords=${skippedReasons.fewWords}`);
 
   const funcionariosPorCidade: Record<string, number> = {};
   for (const record of records) {
