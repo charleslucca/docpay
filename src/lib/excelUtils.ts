@@ -331,7 +331,32 @@ function looksLikeCity(value: string): boolean {
 function looksLikeCompany(value: string): boolean {
   const normalized = value.trim().toUpperCase();
   const knownCompanies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
-  return knownCompanies.some((c) => normalized.startsWith(c) || normalized === c);
+  if (knownCompanies.some((c) => normalized.startsWith(c) || normalized === c)) return true;
+  // Detect company legal suffixes
+  const companyKeywords = ["EIRELI", "LTDA", "SERVICOS EIRELI", "PRESTADORA", "S/A", "S.A.", " ME", " EPP", " MEI", "ASSESSORIA", "CONSULTORIA"];
+  return companyKeywords.some((kw) => normalized.includes(kw));
+}
+
+/**
+ * Check if a "Serviço:" value looks like a municipality (cidade) rather than a company
+ */
+function isServicoMunicipio(value: string): boolean {
+  const norm = normalizeForComparison(value);
+  const municipioPatterns = [
+    /MUNIC[IÍ]PIO/i, /PREFEITURA/i, /CAMARA\s+MUNICIPAL/i,
+    /CÂMARA\s+MUNICIPAL/i, /PACO\s+MUNICIPAL/i, /PAÇO\s+MUNICIPAL/i,
+  ];
+  if (municipioPatterns.some(p => p.test(norm))) return true;
+  // If it does NOT look like a company, it could be a municipality/location
+  if (!looksLikeCompany(value)) {
+    // Check if it's a simple location name (no company suffixes)
+    const cleaned = value.replace(/^\d+\s*-\s*/, "").trim();
+    // Short names without company keywords are likely cities
+    if (cleaned.length >= 3 && !/\b(SERVICO|SERVICE|CLEAN|ASSESSOR|CONSULT)\b/i.test(cleaned)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extractCityFromLine(line: string): string {
