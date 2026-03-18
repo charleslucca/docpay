@@ -172,3 +172,78 @@ describe("findEmployeeInSpreadsheet - strict metadata lookup", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("sanitizeName — invisible character handling", () => {
+  it("strips non-breaking spaces", () => {
+    expect(sanitizeName("DENIZE\u00A0BERNARDES")).toBe("DENIZE BERNARDES");
+  });
+
+  it("strips zero-width spaces", () => {
+    expect(sanitizeName("DENIZE\u200BBERNARDES")).toBe("DENIZEBERNARDES");
+  });
+
+  it("strips BOM", () => {
+    expect(sanitizeName("\uFEFFDENIZE")).toBe("DENIZE");
+  });
+
+  it("strips tabs and newlines", () => {
+    expect(sanitizeName("DENIZE\tBERNARDES")).toBe("DENIZE BERNARDES");
+    expect(sanitizeName("DENIZE\nBERNARDES")).toBe("DENIZE BERNARDES");
+    expect(sanitizeName("DENIZE\r\nBERNARDES")).toBe("DENIZE BERNARDES");
+  });
+
+  it("strips soft hyphens", () => {
+    expect(sanitizeName("BERNAR\u00ADDES")).toBe("BERNARDES");
+  });
+
+  it("strips zero-width joiners", () => {
+    expect(sanitizeName("DENIZE\u200DBERNARDES")).toBe("DENIZEBERNARDES");
+  });
+
+  it("removes accents", () => {
+    expect(sanitizeName("João da Silva")).toBe("JOAO DA SILVA");
+  });
+
+  it("collapses multiple spaces", () => {
+    expect(sanitizeName("DENIZE   BERNARDES   BARCELLA")).toBe("DENIZE BERNARDES BARCELLA");
+  });
+
+  it("removes punctuation and digits", () => {
+    expect(sanitizeName("JOAO.SILVA123")).toBe("JOAOSILVA");
+  });
+});
+
+describe("sanitizeNameWithOCR — OCR corrections", () => {
+  it("applies 0→O correction", () => {
+    expect(sanitizeNameWithOCR("J0AO")).toBe("JOAO");
+  });
+
+  it("applies 1→I correction", () => {
+    expect(sanitizeNameWithOCR("S1LVA")).toBe("SILVA");
+  });
+
+  it("applies 5→S correction", () => {
+    expect(sanitizeNameWithOCR("5ANTOS")).toBe("SANTOS");
+  });
+});
+
+describe("debugNameBytes — hex representation", () => {
+  it("returns hex for visible ASCII", () => {
+    const result = debugNameBytes("AB");
+    expect(result).toContain("A(41)");
+    expect(result).toContain("B(42)");
+  });
+
+  it("reveals non-breaking space", () => {
+    const result = debugNameBytes("A\u00A0B");
+    expect(result).toContain("00A0");
+  });
+});
+
+describe("normalizeForMatch uses sanitizeName pipeline", () => {
+  it("names with invisible chars match after normalization", () => {
+    const a = normalizeForMatch("DENIZE\u00A0BERNARDES\u200B BARCELLA");
+    const b = normalizeForMatch("DENIZE BERNARDES BARCELLA");
+    expect(a).toBe(b);
+  });
+});
