@@ -907,11 +907,17 @@ export function prepareTargetNameForMatch(name: string): PreparedTarget {
   };
 }
 
+export interface MatchResult {
+  found: boolean;
+  method: string;
+  score: number; // 0-1 confidence: 1.0=favorecido, 0.8=substring, 0.6=word-overlap
+}
+
 /**
  * Fast matching using pre-processed data
- * Returns true if target name is found in page
+ * Returns match result with method and confidence score
  */
-export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): { found: boolean; method: string } {
+export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): MatchResult {
   // 1. FAVORECIDO MATCH - highest priority for comprovantes (most precise)
   if (page.favorecidoNames.length > 0) {
     for (const favName of page.favorecidoNames) {
