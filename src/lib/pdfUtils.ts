@@ -2,6 +2,7 @@ import { PDFDocument, rgb } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { getCachedPdf, getCachedBuffer, renderPageForOCR, OCR_SCALE_FAST } from "./pdfCache";
 import { extractTextWithOCR } from "./ocrUtils";
+import { sanitizeNameWithOCR, sanitizeName } from "./nameUtils";
 
 /**
  * Sort text items by position (Y descending, then X ascending) for consistent
