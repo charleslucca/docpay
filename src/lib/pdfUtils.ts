@@ -949,7 +949,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
       const proximityRegex = new RegExp(namePattern);
       if (proximityRegex.test(page.normalized)) {
         console.log(`[Match] Word-overlap fallback: ${target.original} (${matchedWords.length}/${target.words.length} words)`);
-        return { found: true, method: "word-overlap" };
+        return { found: true, method: "word-overlap", score: 0.6 };
       }
     }
   }
