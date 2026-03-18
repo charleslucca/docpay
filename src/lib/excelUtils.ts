@@ -479,6 +479,18 @@ function extractCidadeFromServico(servicoText: string): string {
 /**
  * Parse "Relação da Folha por Empregado" payroll report format
  */
+// Column aliases for payroll report
+const PR_CODIGO_ALIASES = ["CODIGO", "CÓDIGO", "COD"];
+const PR_NOME_ALIASES = ["NOME DO EMPREGADO", "NOME EMPREGADO", "NOME", "EMPREGADO"];
+const PR_SALARIO_ALIASES = ["SALARIO", "SALÁRIO", "SAL"];
+const PR_OUTROS_PROV_ALIASES = ["OUT.PROV", "OUTROS PROVENTOS", "OUT PROV", "OUTPROV", "OUTROS PROV"];
+const PR_SAL_FAM_ALIASES = ["SAL.FAM", "SALARIO FAMILIA", "SAL FAM", "SALFAM", "SALÁRIO FAMÍLIA"];
+const PR_INSS_ALIASES = ["INSS"];
+const PR_IRRF_ALIASES = ["IRRF"];
+const PR_OUTROS_DESC_ALIASES = ["OUT.DES", "OUTROS DESCONTOS", "OUT DES", "OUTDES", "OUTROS DESC"];
+const PR_LIQUIDO_ALIASES = ["LIQUID", "LÍQUID", "LIQUIDO", "LÍQUIDO"];
+const PR_FGTS_ALIASES = ["FGTS"];
+
 function parsePayrollReport(workbook: XLSX.WorkBook, fileName: string): SpreadsheetData {
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
   const jsonData = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, defval: "" });
@@ -487,33 +499,78 @@ function parsePayrollReport(workbook: XLSX.WorkBook, fileName: string): Spreadsh
   const empresasSet = new Set<string>();
   const cidadesSet = new Set<string>();
 
-  // Extract empresa from first row
+  // Extract empresa by scanning first 6 rows for pattern "N - COMPANY NAME"
   let empresa = "";
-  if (jsonData.length > 0) {
-    const row0 = jsonData[0] as unknown[];
-    empresa = extractEmpresaFromHeader(String(row0?.[0] || ""));
+  const empresaPattern = /^\d+\s*-\s*.+/;
+  for (let i = 0; i < Math.min(6, jsonData.length); i++) {
+    const row = jsonData[i] as unknown[];
+    if (!row) continue;
+    for (const cell of row) {
+      const cellStr = String(cell || "").trim();
+      if (cellStr && empresaPattern.test(cellStr)) {
+        empresa = extractEmpresaFromHeader(cellStr);
+        break;
+      }
+    }
+    if (empresa) break;
   }
   if (empresa) empresasSet.add(empresa);
+
+  // Dynamically find the header row and column indices
+  let headerRowIndex = -1;
+  let codigoCol = -1;
+  let nomeCol = -1;
+  let salarioCol = -1;
+  let outrosProvCol = -1;
+  let salFamCol = -1;
+  let inssCol = -1;
+  let irrfCol = -1;
+  let outrosDescCol = -1;
+  let liquidoCol = -1;
+  let fgtsCol = -1;
+
+  for (let i = 0; i < Math.min(20, jsonData.length); i++) {
+    const row = jsonData[i] as unknown[];
+    if (!row) continue;
+    const headerStrings = row.map(c => String(c || ""));
+    const tmpCodigo = findColumnIndex(headerStrings, PR_CODIGO_ALIASES);
+    const tmpNome = findColumnIndex(headerStrings, PR_NOME_ALIASES);
+    if (tmpCodigo >= 0 && tmpNome >= 0) {
+      headerRowIndex = i;
+      codigoCol = tmpCodigo;
+      nomeCol = tmpNome;
+      salarioCol = findColumnIndex(headerStrings, PR_SALARIO_ALIASES);
+      outrosProvCol = findColumnIndex(headerStrings, PR_OUTROS_PROV_ALIASES);
+      salFamCol = findColumnIndex(headerStrings, PR_SAL_FAM_ALIASES);
+      inssCol = findColumnIndex(headerStrings, PR_INSS_ALIASES);
+      irrfCol = findColumnIndex(headerStrings, PR_IRRF_ALIASES);
+      outrosDescCol = findColumnIndex(headerStrings, PR_OUTROS_DESC_ALIASES);
+      liquidoCol = findColumnIndex(headerStrings, PR_LIQUIDO_ALIASES);
+      fgtsCol = findColumnIndex(headerStrings, PR_FGTS_ALIASES);
+      break;
+    }
+  }
+
+  if (headerRowIndex < 0) {
+    console.warn("[Excel] Payroll report: could not find header row with Código + Nome columns");
+    return { records: [], empresas: [], cidades: [], funcionariosPorCidade: {}, fileName };
+  }
+
+  console.log(`[Excel] Payroll report header found at row ${headerRowIndex}, codigoCol=${codigoCol}, nomeCol=${nomeCol}`);
 
   let currentCidade = "";
   let currentContrato = "";
 
-  // Skip rows to ignore: total, subtotal, headers, empty
   const skipPatterns = [
     /^TOTAL/i, /^SUBTOTAL/i, /^SOMA/i,
     /^EMPREGADOS?$/i, /^CONTRIBUINTES?$/i,
-    /^C[OÓ]DIGO$/i, /^NOME/i,
   ];
 
-  for (let i = 0; i < jsonData.length; i++) {
+  for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
     const row = jsonData[i] as unknown[];
     if (!row) continue;
 
-    const cellA = String(row[0] || "").trim();
-    const cellB = String(row[1] || "").trim();
-
-    // Detect "Serviço:" grouping line
-    // Could be in cellA like "Serviço: 6-MUNICIPIO DE ..." or split across cells
+    // Detect "Serviço:" — check all cells for merged cell compatibility
     const fullRowText = row.map(c => String(c || "")).join(" ");
     const servicoMatch = fullRowText.match(/Servi[çc]o\s*:\s*(.+)/i);
     if (servicoMatch) {
@@ -524,43 +581,34 @@ function parsePayrollReport(workbook: XLSX.WorkBook, fileName: string): Spreadsh
       continue;
     }
 
-    // Skip non-data rows
-    if (!cellA) continue;
-    const cellANorm = normalizeForComparison(cellA);
-    if (skipPatterns.some(p => p.test(cellANorm))) continue;
+    // Get code and name from dynamic columns
+    const cellCodigo = String(row[codigoCol] || "").trim();
+    const cellNome = String(row[nomeCol] || "").trim();
 
-    // Employee row: cellA should be a numeric code
-    const codigo = cellA;
-    if (!/^\d+$/.test(codigo)) continue;
+    if (!cellCodigo) continue;
+    const cellCodigoNorm = normalizeForComparison(cellCodigo);
+    if (skipPatterns.some(p => p.test(cellCodigoNorm))) continue;
 
-    // cellB = employee name
-    const colaborador = cellB.trim();
-    if (!colaborador || colaborador.length < 3) continue;
+    // Employee row: code should be numeric
+    if (!/^\d+$/.test(cellCodigo)) continue;
+    if (!cellNome || cellNome.length < 3) continue;
 
-    // Financial columns: Salário(C), Out.Prov(D), Sal.Fam(E), INSS(F), IRRF(G), Out.Des(H), Líquid(I), FGTS(J)
-    const salario = parseNumericCell(row[2]);
-    const outrosProventos = parseNumericCell(row[3]);
-    const salarioFamilia = parseNumericCell(row[4]);
-    const inss = parseNumericCell(row[5]);
-    const irrf = parseNumericCell(row[6]);
-    const outrosDescontos = parseNumericCell(row[7]);
-    const liquido = parseNumericCell(row[8]);
-    const fgts = parseNumericCell(row[9]);
+    const salario = salarioCol >= 0 ? parseNumericCell(row[salarioCol]) : undefined;
+    const outrosProventos = outrosProvCol >= 0 ? parseNumericCell(row[outrosProvCol]) : undefined;
+    const salarioFamilia = salFamCol >= 0 ? parseNumericCell(row[salFamCol]) : undefined;
+    const inss = inssCol >= 0 ? parseNumericCell(row[inssCol]) : undefined;
+    const irrf = irrfCol >= 0 ? parseNumericCell(row[irrfCol]) : undefined;
+    const outrosDescontos = outrosDescCol >= 0 ? parseNumericCell(row[outrosDescCol]) : undefined;
+    const liquido = liquidoCol >= 0 ? parseNumericCell(row[liquidoCol]) : undefined;
+    const fgts = fgtsCol >= 0 ? parseNumericCell(row[fgtsCol]) : undefined;
 
     records.push({
       empresa,
       cidade: currentCidade,
       contrato: currentContrato,
-      colaborador,
-      codigo,
-      salario,
-      outrosProventos,
-      salarioFamilia,
-      inss,
-      irrf,
-      outrosDescontos,
-      liquido,
-      fgts,
+      colaborador: cellNome,
+      codigo: cellCodigo,
+      salario, outrosProventos, salarioFamilia, inss, irrf, outrosDescontos, liquido, fgts,
     });
   }
 
