@@ -223,7 +223,8 @@ describe("sanitizeNameWithOCR — OCR corrections", () => {
   });
 
   it("applies 5→S correction between letters", () => {
-    expect(sanitizeNameWithOCR("DO5 SANTOS")).toBe("DOS SANTOS");
+    expect(sanitizeNameWithOCR("5OARES")).toBe("OARES"); // 5 at start has no left letter
+    expect(sanitizeNameWithOCR("RO5A")).toBe("ROSA");   // 5 between letters → S
   });
 });
 
