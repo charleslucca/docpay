@@ -1492,7 +1492,7 @@ export function useDocumentProcessor() {
       message: `${pairs.length} correspondência(s) encontrada(s)`,
       matchesFound: pairs.length,
       totalToMatch: totalEntries,
-      // Include OCR metrics in final status (important for 0 matches case)
+      matchMethodCounts: { ...matchMethodCounts },
       ocrPagesTotal: aggregatedMetrics.pagesTotal,
       ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
       ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
