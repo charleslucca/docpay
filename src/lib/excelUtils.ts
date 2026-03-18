@@ -881,7 +881,7 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
         // Skip rows where the "code" cell has non-numeric text (likely a header/label)
       } else {
         // Non-numeric code cell — skip (likely section header)
-        continue;
+        skippedReasons.nonNumericCode++; continue;
       }
     } else {
       // No code column at all — accept row if name looks like a person name
