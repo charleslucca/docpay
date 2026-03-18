@@ -970,7 +970,7 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       empresa,
       cidade: currentCidade,
       contrato: currentContrato,
-      colaborador: cellNome,
+      colaborador: (() => { const s = sanitizeName(cellNome); logSanitizationDiff(`colaborador[${cellNome}]`, cellNome, s); return cellNome; })(),
       codigo: cellCodigo || undefined,
       tipo: currentTipo || undefined,
       salario, outrosProventos, salarioFamilia, inss, irrf, outrosDescontos, liquido, fgts,
