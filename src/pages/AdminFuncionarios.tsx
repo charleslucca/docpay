@@ -223,7 +223,7 @@ const AdminFuncionarios = () => {
         toast({ title: "Funcionário atualizado" });
       }
     } else {
-      const { error } = await supabase.from("funcionarios").insert(payload as any);
+      const { error } = await supabase.from("funcionarios").insert(payload);
       if (error) {
         toast({ title: "Erro ao criar", description: error.message, variant: "destructive" });
       } else {
