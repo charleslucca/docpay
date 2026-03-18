@@ -745,12 +745,20 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
     "FAVORECIDO",
     "BENEFICIARIO",
     "DESTINATARIO",
+    "CREDITADO",
+    "TITULAR",
+    "TITULAR DA CONTA",
+    "RECEBEDOR",
+    "NOME COMPLETO",
     "NOME DO BENEFICIARIO",
     "NOME DO FAVORECIDO",
     "NOME BENEFICIARIO",
     "NOME FAVORECIDO",
     "NOME DESTINATARIO",
     "NOME DO DESTINATARIO",
+    "NOME DO CREDITADO",
+    "NOME DO RECEBEDOR",
+    "NOME DO TITULAR",
   ];
 
   const labelPattern = labels.join("|");
