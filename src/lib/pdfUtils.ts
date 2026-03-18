@@ -880,9 +880,9 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
  * 4. Surname intersection check
  * 5. Overall Jaro-Winkler score ≥ 0.85
  */
-export function matchNameDirect(targetNormalized: string, candidateNormalized: string): boolean {
+export function matchNameDirect(targetNormalized: string, candidateNormalized: string, threshold: number = 0.85): boolean {
   const { score } = calculateNameMatchScore(targetNormalized, candidateNormalized);
-  return score >= 0.85;
+  return score >= threshold;
 }
 
 /**
@@ -972,6 +972,14 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
         return { found: true, method: "favorecido", score: 1.0 };
       }
     }
+    // Try again with relaxed threshold (0.78) for FAVORECIDO context — label already validates context
+    for (const favName of page.favorecidoNames) {
+      const { score } = calculateNameMatchScore(target.normalized, favName);
+      if (score >= 0.78) {
+        console.log(`[Match] Favorecido (relaxed ${score.toFixed(2)}):`, target.original, "↔", favName);
+        return { found: true, method: "favorecido", score: score };
+      }
+    }
     // FAVORECIDO names extracted but none matched — continue to fallback methods
     // (extraction can be noisy due to OCR errors or truncation)
   }
@@ -985,7 +993,9 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
       const charAfter = idx + target.normalized.length < page.normalized.length
         ? page.normalized[idx + target.normalized.length]
         : " ";
-      const isWordBounded = charBefore === " " && (charAfter === " " || charAfter === undefined);
+      const validBoundaryChars = new Set([" ", undefined, "\n", "\t", ":", "/", ",", ".", ";", "-"]);
+      const isWordBounded = (charBefore === " " || idx === 0) && 
+        (validBoundaryChars.has(charAfter) || charAfter === undefined || /\d/.test(charAfter || ""));
       if (isWordBounded) {
         console.log("[Match] Substring fallback (word-bounded):", target.original);
         return { found: true, method: "substring", score: 0.8 };
