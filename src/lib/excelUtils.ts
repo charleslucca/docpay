@@ -758,11 +758,17 @@ function extractEmpresaFromHeader(line: string): string {
  * Extract cidade from "Serviço:" line
  */
 function extractCidadeFromServico(servicoText: string): string {
+  // Only extract cidade if this looks like a municipality, not a company
+  if (!isServicoMunicipio(servicoText)) {
+    return "";
+  }
   const cleaned = servicoText.replace(/^\d+\s*-\s*/, "").trim();
   const munMatch = cleaned.match(/^MUNIC[IÍ]PIO\s+DE\s+(.+)/i);
   if (munMatch) return munMatch[1].trim();
   const prefMatch = cleaned.match(/^PREFEITURA\s+MUNICIPAL\s+DE\s+(.+)/i);
   if (prefMatch) return prefMatch[1].trim();
+  const camaraMatch = cleaned.match(/^C[AÂ]MARA\s+MUNICIPAL\s+DE\s+(.+)/i);
+  if (camaraMatch) return camaraMatch[1].trim();
   return cleaned;
 }
 
