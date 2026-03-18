@@ -1135,6 +1135,7 @@ export function useDocumentProcessor() {
     let comparisons = 0;
     let lastStatusUpdate = Date.now();
     const matchMethodCounts: Record<string, number> = { favorecido: 0, substring: 0, "word-overlap": 0 };
+    const matchAuditLog: Array<{ name: string; method: string; score: number; page: number; comprovante: string }> = [];
 
     const totalComprovantes = comprovanteList.length;
     const totalEntries = preparedEntries.length;
