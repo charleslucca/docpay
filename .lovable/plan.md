@@ -1,56 +1,56 @@
 
 
-## Diagnóstico (dos logs do console)
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-Os logs revelam exatamente os problemas:
+## Diagnostico
 
-```text
-Row 8: "Serviço:" + "1-B SERVICE PRESTADORA DE SERVICOS EIRELI"
-Parsed payroll report: 646 employees, 1 companies, 1 cities
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
+
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
+
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+
+## Correcao
+
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
+
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
 ```
 
-**Problemas identificados:**
+## Impacto
 
-1. **cidade**: `extractCidadeFromServico` trata TODOS os valores de "Serviço:" como cidades — inclusive valores que são empresas (ex: "1-B SERVICE PRESTADORA DE SERVICOS EIRELI"). Resultado: 1 cidade errada.
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
 
-2. **contrato**: É preenchido com o valor bruto do "Serviço:", mas quando é uma empresa, deveria manter o contrato anterior ou extrair diferente.
+## Arquivos alterados
 
-3. **tipo**: A seção "Empregados" / "Contribuintes" (Row 10) aparece como header de grupo mas é ignorada pelo parser. Deveria ser capturada e aplicada aos registros subsequentes.
-
-4. **banco**: Não existe como coluna neste formato de relatório. Não há dados de banco disponíveis nesta planilha.
-
-## Plano de Correção
-
-### Arquivo: `src/lib/excelUtils.ts`
-
-**1. Distinguir empresa vs município nos blocos "Serviço:"**
-- Na função `parsePayrollReport`, ao detectar "Serviço:", classificar o valor:
-  - Se contém palavras-chave de empresa (EIRELI, LTDA, SERVICOS, PRESTADORA, S/A, ME, EPP), tratar como sub-contrato da empresa, NÃO como cidade
-  - Se contém MUNICIPIO, PREFEITURA, CÂMARA, ou parece nome de cidade, extrair como cidade normalmente
-- Quando o serviço é uma empresa, manter `currentCidade` do bloco anterior (ou vazio)
-
-**2. Capturar "Empregados" / "Contribuintes" como `tipo`**
-- Adicionar detecção de linhas com "Empregados" ou "Contribuintes" (sem ser "Empregados: N" que é total)
-- Manter um `currentTipo` que é aplicado a cada registro subsequente
-- Padrão: linha que contém exatamente "Empregados" ou "Contribuintes" (Row 10 no log)
-
-**3. Melhorar `extractCidadeFromServico`**
-- Adicionar filtro para rejeitar valores que são claramente empresas
-- Manter a lógica existente para extrair nomes de municípios
-
-**4. Preencher `contrato` de forma mais útil**
-- Quando "Serviço:" é uma empresa, usar como complemento do campo empresa
-- Quando é um município, usar como contrato (comportamento atual)
-
-**5. Campo `banco`**
-- Este campo não existe no formato "Relação da Folha por Empregado"
-- Manter vazio (sem alteração) — não há dados para extrair
-
-### Sem alterações em outros arquivos
-
-## Resultado esperado
-- **cidade**: preenchida apenas com nomes de municípios reais (ex: "SANTO ANTONIO DA PATRULHA")
-- **contrato**: preenchido com o valor do serviço/município correspondente
-- **tipo**: preenchido com "Empregados" ou "Contribuintes" conforme a seção
-- **banco**: permanece vazio (dado não disponível neste formato)
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 

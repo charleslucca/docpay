@@ -331,7 +331,32 @@ function looksLikeCity(value: string): boolean {
 function looksLikeCompany(value: string): boolean {
   const normalized = value.trim().toUpperCase();
   const knownCompanies = ["B SERVICE", "SPACE", "FORTCLEAN", "INTERCLEAN"];
-  return knownCompanies.some((c) => normalized.startsWith(c) || normalized === c);
+  if (knownCompanies.some((c) => normalized.startsWith(c) || normalized === c)) return true;
+  // Detect company legal suffixes
+  const companyKeywords = ["EIRELI", "LTDA", "SERVICOS EIRELI", "PRESTADORA", "S/A", "S.A.", " ME", " EPP", " MEI", "ASSESSORIA", "CONSULTORIA"];
+  return companyKeywords.some((kw) => normalized.includes(kw));
+}
+
+/**
+ * Check if a "Serviço:" value looks like a municipality (cidade) rather than a company
+ */
+function isServicoMunicipio(value: string): boolean {
+  const norm = normalizeForComparison(value);
+  const municipioPatterns = [
+    /MUNIC[IÍ]PIO/i, /PREFEITURA/i, /CAMARA\s+MUNICIPAL/i,
+    /CÂMARA\s+MUNICIPAL/i, /PACO\s+MUNICIPAL/i, /PAÇO\s+MUNICIPAL/i,
+  ];
+  if (municipioPatterns.some(p => p.test(norm))) return true;
+  // If it does NOT look like a company, it could be a municipality/location
+  if (!looksLikeCompany(value)) {
+    // Check if it's a simple location name (no company suffixes)
+    const cleaned = value.replace(/^\d+\s*-\s*/, "").trim();
+    // Short names without company keywords are likely cities
+    if (cleaned.length >= 3 && !/\b(SERVICO|SERVICE|CLEAN|ASSESSOR|CONSULT)\b/i.test(cleaned)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extractCityFromLine(line: string): string {
@@ -733,11 +758,17 @@ function extractEmpresaFromHeader(line: string): string {
  * Extract cidade from "Serviço:" line
  */
 function extractCidadeFromServico(servicoText: string): string {
+  // Only extract cidade if this looks like a municipality, not a company
+  if (!isServicoMunicipio(servicoText)) {
+    return "";
+  }
   const cleaned = servicoText.replace(/^\d+\s*-\s*/, "").trim();
   const munMatch = cleaned.match(/^MUNIC[IÍ]PIO\s+DE\s+(.+)/i);
   if (munMatch) return munMatch[1].trim();
   const prefMatch = cleaned.match(/^PREFEITURA\s+MUNICIPAL\s+DE\s+(.+)/i);
   if (prefMatch) return prefMatch[1].trim();
+  const camaraMatch = cleaned.match(/^C[AÂ]MARA\s+MUNICIPAL\s+DE\s+(.+)/i);
+  if (camaraMatch) return camaraMatch[1].trim();
   return cleaned;
 }
 
@@ -786,16 +817,24 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
 
   let currentCidade = "";
   let currentContrato = "";
+  let currentTipo = "";
 
   const skipPatterns = [
     /^TOTAL/i, /^SUBTOTAL/i, /^SOMA/i,
-    /^EMPREGADOS?\b/i, /^CONTRIBUINTES?\b/i,
     /^RELAC/i, /^COMPETENCIA/i, /^PAGAMENTO/i,
     /^Servi[çc]o/i, /^EMPRESA/i, /^CNPJ/i,
     /^CODIGO/i, /^NOME\s*(DO|DA)?\s*(EMPREGADO)?/i,
   ];
 
-  let skippedReasons = { servico: 0, emptyName: 0, shortName: 0, skipPattern: 0, nonNumericCode: 0, fewWords: 0 };
+  // Patterns for section headers that define "tipo" (Empregados, Contribuintes, etc.)
+  const tipoPatterns = [
+    { pattern: /^EMPREGADOS?\s*$/i, tipo: "Empregados" },
+    { pattern: /^CONTRIBUINTES?\s*$/i, tipo: "Contribuintes" },
+    { pattern: /^AUTONOMOS?\s*$/i, tipo: "Autônomos" },
+    { pattern: /^ESTAGIARIOS?\s*$/i, tipo: "Estagiários" },
+  ];
+
+  let skippedReasons = { servico: 0, emptyName: 0, shortName: 0, skipPattern: 0, nonNumericCode: 0, fewWords: 0, tipo: 0 };
 
   for (let i = layout.headerRowIndex + 1; i < jsonData.length; i++) {
     const row = jsonData[i] as unknown[];
@@ -821,8 +860,13 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
         }
         if (servicoValue) {
           currentContrato = servicoValue;
-          currentCidade = extractCidadeFromServico(servicoValue);
-          if (currentCidade) cidadesSet.add(currentCidade);
+          const cidadeExtracted = extractCidadeFromServico(servicoValue);
+          if (cidadeExtracted) {
+            currentCidade = cidadeExtracted;
+            cidadesSet.add(currentCidade);
+          }
+          // If it's a company, don't overwrite currentCidade
+          console.log(`[Excel] Serviço detected: "${servicoValue}" → cidade="${cidadeExtracted || "(empresa, kept previous)"}", contrato="${servicoValue}"`);
         }
         servicoDetected = true;
         break;
@@ -835,12 +879,30 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       if (servicoMatch) {
         const servicoValue = servicoMatch[1].trim();
         currentContrato = servicoValue;
-        currentCidade = extractCidadeFromServico(servicoValue);
-        if (currentCidade) cidadesSet.add(currentCidade);
+        const cidadeExtracted = extractCidadeFromServico(servicoValue);
+        if (cidadeExtracted) {
+          currentCidade = cidadeExtracted;
+          cidadesSet.add(currentCidade);
+        }
         servicoDetected = true;
       }
     }
     if (servicoDetected) { skippedReasons.servico++; continue; }
+
+    // Detect "tipo" section headers (Empregados, Contribuintes, etc.)
+    let tipoDetected = false;
+    const firstCellStr = String(row[0] || "").trim();
+    const nomeCellStr = nomeCol >= 0 ? String(row[nomeCol] || "").trim() : "";
+    for (const { pattern, tipo } of tipoPatterns) {
+      if (pattern.test(firstCellStr) || pattern.test(nomeCellStr)) {
+        currentTipo = tipo;
+        tipoDetected = true;
+        skippedReasons.tipo++;
+        console.log(`[Excel] Tipo section detected: "${tipo}"`);
+        break;
+      }
+    }
+    if (tipoDetected) continue;
 
     // Also detect "Serviço:" via number-dash pattern (e.g. "6-MUNICIPIO DE...")
     // This catches cases where the label "Serviço:" is missing but the value has the pattern
@@ -908,12 +970,13 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       contrato: currentContrato,
       colaborador: cellNome,
       codigo: cellCodigo || undefined,
+      tipo: currentTipo || undefined,
       salario, outrosProventos, salarioFamilia, inss, irrf, outrosDescontos, liquido, fgts,
     });
   }
 
   console.log(`[Excel] Parsed payroll report: ${records.length} employees, ${empresasSet.size} companies, ${cidadesSet.size} cities`);
-  console.log(`[Excel] Skip reasons: servico=${skippedReasons.servico}, emptyName=${skippedReasons.emptyName}, shortName=${skippedReasons.shortName}, skipPattern=${skippedReasons.skipPattern}, nonNumericCode=${skippedReasons.nonNumericCode}, fewWords=${skippedReasons.fewWords}`);
+  console.log(`[Excel] Skip reasons: servico=${skippedReasons.servico}, tipo=${skippedReasons.tipo}, emptyName=${skippedReasons.emptyName}, shortName=${skippedReasons.shortName}, skipPattern=${skippedReasons.skipPattern}, nonNumericCode=${skippedReasons.nonNumericCode}, fewWords=${skippedReasons.fewWords}`);
 
   const funcionariosPorCidade: Record<string, number> = {};
   for (const record of records) {
