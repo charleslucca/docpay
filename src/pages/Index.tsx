@@ -2,18 +2,17 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, RotateCcw, Play, StopCircle,
-  ArrowLeft, ArrowRight, FolderOpen, History,
+  ArrowLeft, ArrowRight,
 } from 'lucide-react';
 import { useDocumentProcessor } from '@/hooks/useDocumentProcessor';
 import { FileDropzone } from '@/components/FileDropzone';
 import { ExcelDropzone } from '@/components/ExcelDropzone';
 import { ProcessingStatus } from '@/components/ProcessingStatus';
-
-import { ProcessingHistory } from '@/components/ProcessingHistory';
 import { UnprocessedList } from '@/components/UnprocessedList';
 import { ResumeProcessingDialog } from '@/components/ResumeProcessingDialog';
 import { StepIndicator } from '@/components/StepIndicator';
 import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
 
 const slideVariants = {
   enter: (direction: number) => ({
@@ -35,10 +34,10 @@ const Index = () => {
     reset, resumeProcessing, discardSavedState, reprocessWithEnhancedOcr,
   } = useDocumentProcessor();
 
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [direction, setDirection] = useState(0);
   const [syncComplete, setSyncComplete] = useState(false);
-  const [showRepository, setShowRepository] = useState(false);
 
   const completedSteps: number[] = [];
   if (spreadsheetData && syncComplete) completedSteps.push(1);
@@ -51,7 +50,6 @@ const Index = () => {
   const canAdvanceStep1 = spreadsheetData !== null && syncComplete;
   const canAdvanceStep2 = holerites.length > 0 && comprovantes.length > 0;
 
-  // Auto-advance to step 4 when generation completes
   useEffect(() => {
     if (status.step === 'completed' && currentStep === 3 && generatedDocs.length > 0) {
       goToStep(4);
@@ -66,24 +64,8 @@ const Index = () => {
   const handleReset = () => {
     reset();
     setSyncComplete(false);
-    setShowRepository(false);
     goToStep(1);
   };
-
-  if (showRepository) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <Button variant="outline" size="sm" onClick={() => setShowRepository(false)}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Voltar
-          </Button>
-          <h2 className="text-xl font-semibold text-foreground">Histórico de Processamento</h2>
-        </div>
-        <ProcessingHistory />
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col flex-1">
@@ -95,20 +77,6 @@ const Index = () => {
 
       {/* Top action bar */}
       <div className="container mx-auto px-4 pt-4 flex items-center gap-2 justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowRepository(true)}
-          className="gap-2"
-        >
-          <FolderOpen className="h-4 w-4" />
-          <span className="hidden sm:inline">Histórico</span>
-          {generatedDocs.length > 0 && (
-            <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
-              {generatedDocs.length}
-            </span>
-          )}
-        </Button>
         {(currentStep > 1 || holerites.length > 0 || comprovantes.length > 0) && (
           <Button variant="outline" size="sm" onClick={handleReset} disabled={isProcessing}>
             <RotateCcw className="h-4 w-4 mr-2" />
@@ -243,7 +211,6 @@ const Index = () => {
                 </p>
               </div>
 
-              {/* Action buttons */}
               <div className="flex justify-center gap-4 flex-wrap">
                 {status.step === 'idle' && (
                   <Button
@@ -267,7 +234,6 @@ const Index = () => {
                 )}
               </div>
 
-              {/* Processing status */}
               {status.step !== 'idle' && (
                 <div className="space-y-4">
                   <ProcessingStatus
@@ -282,7 +248,6 @@ const Index = () => {
                         onClick={async () => {
                           await cancelProcessing();
                           setSyncComplete(false);
-                          setShowRepository(false);
                           goToStep(1);
                         }}
                         disabled={isCancelling}
@@ -294,7 +259,6 @@ const Index = () => {
                   )}
                 </div>
               )}
-
 
               <div className="flex justify-between">
                 <Button
@@ -333,9 +297,9 @@ const Index = () => {
                   <Sparkles className="h-8 w-8 text-primary" />
                 </div>
                 <h2 className="text-2xl font-bold text-foreground">Documentos Gerados</h2>
-            <p className="text-muted-foreground text-sm">
+                <p className="text-muted-foreground text-sm">
                   {generatedDocs.length} documento(s) gerado(s) com sucesso.
-               </p>
+                </p>
               </div>
 
               {unprocessedList.length > 0 && (
@@ -346,11 +310,10 @@ const Index = () => {
                 <Button
                   size="lg"
                   variant="outline"
-                  onClick={() => setShowRepository(true)}
+                  onClick={() => navigate("/relatorios/historico")}
                   className="gap-2"
                 >
-              <History className="h-5 w-5" />
-              Ver Histórico
+                  Ver Histórico
                 </Button>
                 <Button size="lg" onClick={handleReset} className="gap-2">
                   <RotateCcw className="h-4 w-4" />

@@ -40,6 +40,10 @@ const App = () => (
             <Route path="/" element={<ProtectedRoute><AppLayout><Index /></AppLayout></ProtectedRoute>} />
             <Route path="/account" element={<ProtectedRoute checkIp={false}><AppLayout><Account /></AppLayout></ProtectedRoute>} />
 
+            {/* Report routes */}
+            <Route path="/relatorios/dashboard" element={<ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>} />
+            <Route path="/relatorios/historico" element={<ProtectedRoute><AppLayout><Historico /></AppLayout></ProtectedRoute>} />
+
             {/* Admin routes */}
             <Route path="/admin/ip-whitelist" element={
               <ProtectedRoute>
