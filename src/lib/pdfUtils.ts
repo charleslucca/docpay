@@ -880,9 +880,9 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
  * 4. Surname intersection check
  * 5. Overall Jaro-Winkler score ≥ 0.85
  */
-export function matchNameDirect(targetNormalized: string, candidateNormalized: string): boolean {
+export function matchNameDirect(targetNormalized: string, candidateNormalized: string, threshold: number = 0.85): boolean {
   const { score } = calculateNameMatchScore(targetNormalized, candidateNormalized);
-  return score >= 0.85;
+  return score >= threshold;
 }
 
 /**
