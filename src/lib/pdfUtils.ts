@@ -954,7 +954,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
     }
   }
 
-  return { found: false, method: "" };
+  return { found: false, method: "", score: 0 };
 }
 
 // Legacy function - wrapper for compatibility
