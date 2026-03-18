@@ -993,7 +993,9 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
       const charAfter = idx + target.normalized.length < page.normalized.length
         ? page.normalized[idx + target.normalized.length]
         : " ";
-      const isWordBounded = charBefore === " " && (charAfter === " " || charAfter === undefined);
+      const validBoundaryChars = new Set([" ", undefined, "\n", "\t", ":", "/", ",", ".", ";", "-"]);
+      const isWordBounded = (charBefore === " " || idx === 0) && 
+        (validBoundaryChars.has(charAfter) || charAfter === undefined || /\d/.test(charAfter || ""));
       if (isWordBounded) {
         console.log("[Match] Substring fallback (word-bounded):", target.original);
         return { found: true, method: "substring", score: 0.8 };
