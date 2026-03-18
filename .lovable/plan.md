@@ -1,56 +1,70 @@
 
+Diagnóstico atualizado
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+Do I know what the issue is? Sim.
 
-## Diagnostico
+O problema real não é mais o mapeamento de colunas. Pelos logs:
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
-
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
-
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
-
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
-
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
-
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
-
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
-
-## Correcao
-
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
-
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
-
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
-
-### Logica resultante simplificada:
-
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
+```text
+[Excel] Sheet "Relação da Folha por Empregado": ref=empty, merges=0
 ```
 
-## Impacto
+isso mostra que o `XLSX.read(...)` não está montando a grade da aba. Ou seja:
+- a planilha entra no app
+- o nome da aba é lido
+- mas a aba vem “vazia” para o parser
+- por isso `fillMerges`, `sheet_to_json`, detecção de header e fallback por célula nunca conseguem funcionar
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+Isso é compatível com `.xls` legado (Excel 97-2003) mal interpretado no browser, especialmente em dois cenários:
+1. arquivo `.xls` dependente de suporte de codepage legado no SheetJS
+2. arquivo “.xls” exportado como HTML/tabela antiga disfarçada de Excel
 
-## Arquivos alterados
+Arquivos foco
+- `src/lib/excelUtils.ts`
+- opcionalmente um helper novo para inicializar SheetJS legado, se ficar mais limpo
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+Plano de correção
 
+1. Corrigir a leitura base do `.xls` antes do parsing
+- criar um leitor centralizado do workbook em `excelUtils`
+- inicializar suporte a codepages legadas do SheetJS (`set_cptable` + `cpexcel.full.mjs`)
+- tentar leitura em camadas:
+  - leitura padrão atual por `ArrayBuffer`
+  - fallback específico para `.xls` legado com opções de leitura mais tolerantes
+  - fallback para conteúdo HTML disfarçado de `.xls` quando detectado no buffer
+
+2. Detectar explicitamente “aba vazia”
+- adicionar uma checagem logo após `XLSX.read(...)`:
+  - se existir `SheetNames`, mas a sheet estiver sem `!ref` ou sem células úteis, marcar como falha de leitura do formato
+- registrar logs claros para separar:
+  - “arquivo lido mas layout não reconhecido”
+  - “arquivo .xls não foi decodificado corretamente”
+  - “sheet vazia / sem grade de células”
+
+3. Só então reutilizar o parser já melhorado
+- manter o fluxo atual de:
+  - `fillMerges`
+  - `analyzeSheetForPayrollLayout`
+  - `rawCellScanForHeaders`
+  - `parsePayrollReport`
+- isso evita refazer a lógica de negócio que já existe; a correção entra antes, na leitura do arquivo
+
+4. Adicionar fallback para `.xls` exportado como HTML
+- inspecionar os primeiros bytes/texto do arquivo
+- se o conteúdo parecer HTML/XML antigo de Excel, ler nesse modo em vez de tratar como BIFF puro
+- isso cobre exportações antigas muito comuns em sistemas brasileiros
+
+5. Melhorar a mensagem final para esse caso
+- trocar o erro genérico “Nenhum funcionário encontrado na planilha” por algo específico quando a aba vier vazia na leitura, por exemplo:
+  - “A planilha .xls foi aberta, mas o conteúdo não pôde ser decodificado corretamente. Vou tratar o formato Excel 97-2003 legado antes do parser.”
+- isso facilita diferenciar falha de leitura de falha de layout
+
+Resultado esperado
+- o app deixa de tratar esse caso como “0 funcionários”
+- a aba passa a gerar uma grade real de células
+- o parser existente volta a ter dados para detectar “Relação da Folha por Empregado”
+- o formato da imagem, em Excel 97-2003, passa a importar corretamente ou ao menos retorna um erro técnico preciso em vez de falso “nenhum funcionário”
+
+Observação importante
+- o warning de `ref` no `ExcelDropzone` é um problema separado de UI e não explica esse erro de importação
+- eu priorizaria primeiro a leitura correta do `.xls`, porque hoje o parser nem chega a enxergar as linhas da planilha
