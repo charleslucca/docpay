@@ -11,6 +11,7 @@ import {
   prepareTargetNameForMatch,
   findNameInPreparedPage,
   countEmployeesInDocument,
+  type MatchResult,
   type PreparedPage,
   type PreparedTarget,
   normalizeForMatch,
@@ -1134,6 +1135,7 @@ export function useDocumentProcessor() {
     let comparisons = 0;
     let lastStatusUpdate = Date.now();
     const matchMethodCounts: Record<string, number> = { favorecido: 0, substring: 0, "word-overlap": 0 };
+    const matchAuditLog: Array<{ name: string; method: string; score: number; page: number; comprovante: string }> = [];
 
     const totalComprovantes = comprovanteList.length;
     const totalEntries = preparedEntries.length;
@@ -1214,11 +1216,13 @@ export function useDocumentProcessor() {
         // Search using pre-processed data (FAST!) + validate comprovante name
         let foundPage = -1;
         let matchMethod = "";
+        let matchScore = 0;
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
           const result = findNameInPreparedPage(preparedPages[pageIdx], entry.prepared);
           if (result.found) {
             foundPage = pageIdx + 1; // 1-indexed
             matchMethod = result.method;
+            matchScore = result.score;
             break;
           }
         }
@@ -1226,6 +1230,8 @@ export function useDocumentProcessor() {
         if (foundPage > 0) {
           matchedEntryKeys.add(entryKey);
           if (matchMethod) matchMethodCounts[matchMethod] = (matchMethodCounts[matchMethod] || 0) + 1;
+          // Track per-match audit data
+          matchAuditLog.push({ name: entry.name, method: matchMethod, score: matchScore, page: foundPage, comprovante: comprovante.name });
 
           const updatedComprovante: UploadedFile = {
             ...comprovante,
@@ -1259,6 +1265,36 @@ export function useDocumentProcessor() {
     console.log(`[Match] Completed: ${comparisons} comparisons, ${pairs.length} matches found`);
     console.log(`[Match] Methods: favorecido=${matchMethodCounts.favorecido}, substring=${matchMethodCounts.substring}, word-overlap=${matchMethodCounts["word-overlap"]}`);
     console.log(`[Match] UserAgent: ${navigator.userAgent}`);
+
+    // === AUDIT: Confidence distribution ===
+    console.log(`\n  AUDITORIA DE CONFIANÇA`);
+    console.log(`  ├─ Alta confiança (FAVORECIDO label): ${matchMethodCounts.favorecido} match(es)`);
+    console.log(`  ├─ Média confiança (substring exato): ${matchMethodCounts.substring} match(es)`);
+    console.log(`  └─ Baixa confiança (word-overlap): ${matchMethodCounts["word-overlap"]} match(es)`);
+
+    // === DUPLICATE DETECTION ===
+    const pageMatchMap = new Map<string, string[]>(); // "comprovante:page" -> [employee names]
+    for (const audit of matchAuditLog) {
+      const key = `${audit.comprovante}:pg${audit.page}`;
+      if (!pageMatchMap.has(key)) pageMatchMap.set(key, []);
+      pageMatchMap.get(key)!.push(audit.name);
+    }
+    const duplicatePages = [...pageMatchMap.entries()].filter(([, names]) => names.length > 1);
+    if (duplicatePages.length > 0) {
+      console.log(`\n  ⚠️ PÁGINAS COM MÚLTIPLOS MATCHES (${duplicatePages.length}):`);
+      for (const [pageKey, names] of duplicatePages) {
+        console.log(`  ├─ ${pageKey}: ${names.join(", ")}`);
+      }
+    }
+
+    // Log low-confidence matches for manual review
+    const lowConfidence = matchAuditLog.filter(a => a.score < 0.8);
+    if (lowConfidence.length > 0) {
+      console.log(`\n  ⚠️ MATCHES DE BAIXA CONFIANÇA (${lowConfidence.length}) — revisar manualmente:`);
+      for (const lc of lowConfidence) {
+        console.log(`  ├─ ${lc.name} (método: ${lc.method}, score: ${lc.score}, pág: ${lc.page})`);
+      }
+    }
 
     // === RELATÓRIO COMPLETO DE PROCESSAMENTO ===
     const unmatchedEntries = preparedEntries
@@ -1456,7 +1492,7 @@ export function useDocumentProcessor() {
       message: `${pairs.length} correspondência(s) encontrada(s)`,
       matchesFound: pairs.length,
       totalToMatch: totalEntries,
-      // Include OCR metrics in final status (important for 0 matches case)
+      matchMethodCounts: { ...matchMethodCounts },
       ocrPagesTotal: aggregatedMetrics.pagesTotal,
       ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
       ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
@@ -1526,6 +1562,7 @@ export function useDocumentProcessor() {
       message: `${pairs.length} correspondência(s) encontrada(s)`,
       matchesFound: pairs.length,
       totalToMatch: totalEntries,
+      matchMethodCounts: { ...matchMethodCounts },
       ocrPagesTotal: aggregatedMetrics.pagesTotal,
       ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
       ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,

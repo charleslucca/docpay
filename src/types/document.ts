@@ -76,6 +76,8 @@ export interface ProcessingStatus {
   // Matching progress tracking
   matchesFound?: number;
   totalToMatch?: number;
+  // Match confidence distribution
+  matchMethodCounts?: Record<string, number>;
   // OCR diagnostic metrics (for comprovantes)
   ocrPagesTotal?: number;
   ocrPagesNeedingOcr?: number;

@@ -745,12 +745,20 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
     "FAVORECIDO",
     "BENEFICIARIO",
     "DESTINATARIO",
+    "CREDITADO",
+    "TITULAR",
+    "TITULAR DA CONTA",
+    "RECEBEDOR",
+    "NOME COMPLETO",
     "NOME DO BENEFICIARIO",
     "NOME DO FAVORECIDO",
     "NOME BENEFICIARIO",
     "NOME FAVORECIDO",
     "NOME DESTINATARIO",
     "NOME DO DESTINATARIO",
+    "NOME DO CREDITADO",
+    "NOME DO RECEBEDOR",
+    "NOME DO TITULAR",
   ];
 
   const labelPattern = labels.join("|");
@@ -778,7 +786,9 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
   // Fallback: busca direta quando regex falha
   if (names.length === 0) {
     const labelsList = ["NOME DO FAVORECIDO", "NOME DO BENEFICIARIO", "NOME FAVORECIDO", 
-                         "NOME BENEFICIARIO", "FAVORECIDO", "BENEFICIARIO", "DESTINATARIO"];
+                         "NOME BENEFICIARIO", "FAVORECIDO", "BENEFICIARIO", "DESTINATARIO",
+                         "CREDITADO", "TITULAR DA CONTA", "TITULAR", "RECEBEDOR", "NOME COMPLETO",
+                         "NOME DO CREDITADO", "NOME DO RECEBEDOR", "NOME DO TITULAR"];
     const stopWords = new Set(["CPF", "CNPJ", "AGENCIA", "CONTA", "BANCO", "VALOR", 
       "COOPERATIVA", "DATA", "MODALIDADE", "CODIGO", "NUMERO", "TIPO", "CREDITO", 
       "DEBITO", "PAGAMENTO", "TRANSFERENCIA", "PIX", "TED", "DOC", "CHAVE", "INSTITUICAO",
@@ -897,17 +907,23 @@ export function prepareTargetNameForMatch(name: string): PreparedTarget {
   };
 }
 
+export interface MatchResult {
+  found: boolean;
+  method: string;
+  score: number; // 0-1 confidence: 1.0=favorecido, 0.8=substring, 0.6=word-overlap
+}
+
 /**
  * Fast matching using pre-processed data
- * Returns true if target name is found in page
+ * Returns match result with method and confidence score
  */
-export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): { found: boolean; method: string } {
+export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarget): MatchResult {
   // 1. FAVORECIDO MATCH - highest priority for comprovantes (most precise)
   if (page.favorecidoNames.length > 0) {
     for (const favName of page.favorecidoNames) {
       if (matchNameDirect(target.normalized, favName)) {
         if (DEBUG_MATCH) console.log("[Match] Favorecido:", target.original, "↔", favName);
-        return { found: true, method: "favorecido" };
+        return { found: true, method: "favorecido", score: 1.0 };
       }
     }
     // FAVORECIDO names extracted but none matched — continue to fallback methods
@@ -917,7 +933,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
   // 2. FALLBACK: No FAVORECIDO extracted — try substring match on normalized text
   if (target.normalized.length >= 8 && page.normalized.includes(target.normalized)) {
     console.log("[Match] Substring fallback:", target.original);
-    return { found: true, method: "substring" };
+    return { found: true, method: "substring", score: 0.8 };
   }
 
   // 3. FALLBACK: Word overlap — at least 70% of target words found in page
@@ -933,12 +949,12 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
       const proximityRegex = new RegExp(namePattern);
       if (proximityRegex.test(page.normalized)) {
         console.log(`[Match] Word-overlap fallback: ${target.original} (${matchedWords.length}/${target.words.length} words)`);
-        return { found: true, method: "word-overlap" };
+        return { found: true, method: "word-overlap", score: 0.6 };
       }
     }
   }
 
-  return { found: false, method: "" };
+  return { found: false, method: "", score: 0 };
 }
 
 // Legacy function - wrapper for compatibility
