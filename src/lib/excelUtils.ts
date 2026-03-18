@@ -934,6 +934,99 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
 /**
  * Parse an Excel file and extract employee records
  */
+/**
+ * Attempt to read a workbook with multiple strategies for legacy .xls compatibility.
+ * Strategy 1: Standard ArrayBuffer read
+ * Strategy 2: With codepage and WTF options for legacy BIFF formats
+ * Strategy 3: HTML/XML fallback for .xls files exported as HTML tables
+ */
+function readWorkbookRobust(data: Uint8Array): XLSX.WorkBook {
+  // Strategy 1: Standard read
+  let workbook = XLSX.read(data, { type: "array" });
+  
+  if (hasPopulatedSheets(workbook)) {
+    console.log("[Excel] Strategy 1 (standard) succeeded");
+    return workbook;
+  }
+  console.log("[Excel] Strategy 1 (standard) produced empty sheets, trying alternatives...");
+
+  // Strategy 2: Legacy options with codepage support and WTF mode
+  try {
+    workbook = XLSX.read(data, { type: "array", WTF: true, codepage: 1252 });
+    if (hasPopulatedSheets(workbook)) {
+      console.log("[Excel] Strategy 2 (codepage 1252 + WTF) succeeded");
+      return workbook;
+    }
+  } catch (e) {
+    console.log("[Excel] Strategy 2 failed:", e instanceof Error ? e.message : e);
+  }
+
+  // Strategy 3: Try reading as raw binary string (works for some legacy BIFF)
+  try {
+    const binaryStr = Array.from(data).map(b => String.fromCharCode(b)).join("");
+    workbook = XLSX.read(binaryStr, { type: "binary", WTF: true });
+    if (hasPopulatedSheets(workbook)) {
+      console.log("[Excel] Strategy 3 (binary string) succeeded");
+      return workbook;
+    }
+  } catch (e) {
+    console.log("[Excel] Strategy 3 failed:", e instanceof Error ? e.message : e);
+  }
+
+  // Strategy 4: Detect HTML-disguised .xls and parse as HTML
+  try {
+    const textDecoder = new TextDecoder("utf-8", { fatal: false });
+    const textContent = textDecoder.decode(data);
+    const trimmed = textContent.trimStart().substring(0, 500).toLowerCase();
+    
+    if (trimmed.includes("<html") || trimmed.includes("<table") || trimmed.includes("<?xml") || trimmed.includes("<workbook")) {
+      console.log("[Excel] Detected HTML/XML content disguised as .xls, parsing as string...");
+      workbook = XLSX.read(textContent, { type: "string" });
+      if (hasPopulatedSheets(workbook)) {
+        console.log("[Excel] Strategy 4 (HTML/XML string) succeeded");
+        return workbook;
+      }
+    }
+  } catch (e) {
+    console.log("[Excel] Strategy 4 failed:", e instanceof Error ? e.message : e);
+  }
+
+  // Strategy 5: Try with different codepages common in Brazilian systems
+  for (const cp of [65001, 28591, 850, 437]) {
+    try {
+      workbook = XLSX.read(data, { type: "array", codepage: cp });
+      if (hasPopulatedSheets(workbook)) {
+        console.log(`[Excel] Strategy 5 (codepage ${cp}) succeeded`);
+        return workbook;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Return whatever we got (even if empty) — the caller will handle the error
+  console.warn("[Excel] All reading strategies produced empty sheets");
+  return workbook;
+}
+
+/**
+ * Check if at least one sheet in the workbook has actual cell data
+ */
+function hasPopulatedSheets(workbook: XLSX.WorkBook): boolean {
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet) continue;
+    
+    // Check !ref
+    if (sheet['!ref'] && sheet['!ref'] !== 'A1:A1') return true;
+    
+    // Even without !ref, check for any cell data
+    const cellKeys = Object.keys(sheet).filter(k => !k.startsWith('!'));
+    if (cellKeys.length > 0) return true;
+  }
+  return false;
+}
+
 export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetData; validation: ValidationResult }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -941,18 +1034,31 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
+        const workbook = readWorkbookRobust(data);
 
         if (workbook.SheetNames.length === 0) {
           throw new Error("Nenhuma aba encontrada na planilha");
         }
 
         console.log(`[Excel] File: "${file.name}", sheets: [${workbook.SheetNames.join(", ")}]`);
+        
+        // Log sheet status and detect empty sheets
+        let allSheetsEmpty = true;
         for (const sn of workbook.SheetNames) {
           const s = workbook.Sheets[sn];
           const ref = s?.['!ref'] || 'empty';
           const mergeCount = s?.['!merges']?.length || 0;
-          console.log(`[Excel]   Sheet "${sn}": ref=${ref}, merges=${mergeCount}`);
+          const cellCount = Object.keys(s || {}).filter(k => !k.startsWith('!')).length;
+          console.log(`[Excel]   Sheet "${sn}": ref=${ref}, merges=${mergeCount}, cells=${cellCount}`);
+          if (cellCount > 0) allSheetsEmpty = false;
+        }
+
+        if (allSheetsEmpty) {
+          throw new Error(
+            "A planilha .xls foi aberta, mas o conteúdo não pôde ser decodificado corretamente. " +
+            "Isso pode ocorrer com arquivos Excel 97-2003 (.xls) legados. " +
+            "Tente salvar a planilha como .xlsx (Excel mais recente) e enviar novamente."
+          );
         }
 
         // Check for payroll report format first (unified detection + layout analysis)
