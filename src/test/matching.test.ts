@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { matchNameDirect, normalizeForMatch, calculateNameMatchScore, jaroWinklerSimilarity, firstNameBlocking, tokenizeName, removeParticles } from "@/lib/pdfUtils";
 import { findEmployeeInSpreadsheet, type EmployeeRecord } from "@/lib/excelUtils";
+import { sanitizeName, sanitizeNameWithOCR, debugNameBytes } from "@/lib/nameUtils";
 
 describe("jaroWinklerSimilarity", () => {
   it("returns 1 for identical strings", () => {
