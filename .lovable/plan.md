@@ -1,50 +1,24 @@
 
+# Melhorias de Confiabilidade — Implementado ✅
 
-# Correção: Texto Destacado/Comentado no PDF Impedindo Match
+## Alterações realizadas
 
-## Problema
+### 1. Labels de extração expandidos (`src/lib/pdfUtils.ts`)
+- Adicionados: CREDITADO, TITULAR, TITULAR DA CONTA, RECEBEDOR, NOME COMPLETO, NOME DO CREDITADO, NOME DO RECEBEDOR, NOME DO TITULAR
+- Cobertura ampliada para mais formatos bancários
 
-Nomes de funcionários no comprovante bancário estão **destacados (realçados)** com cor de fundo ou possuem comentários/anotações no PDF. Quando um PDF é editado com destaque ou comentários, algumas ferramentas movem o texto para a camada de anotações (annotations) do PDF, fazendo com que `page.getTextContent()` do PDF.js **não extraia esse texto**. O resultado é que o nome do FAVORECIDO não aparece no texto extraído e o match falha.
+### 2. Score de confiança por match (`src/lib/pdfUtils.ts`, `src/hooks/useDocumentProcessor.ts`)
+- `findNameInPreparedPage` agora retorna `MatchResult` com `score`: 1.0 (favorecido), 0.8 (substring), 0.6 (word-overlap)
+- Audit log completo no console com distribuição de métodos
+- Matches de baixa confiança sinalizados para revisão manual
 
-## Causa Raiz
+### 3. Detecção de duplicatas (`src/hooks/useDocumentProcessor.ts`)
+- Após matching, detecta páginas de comprovante com múltiplos funcionários associados
+- Log de alerta no console para revisão
 
-O sistema usa apenas `page.getTextContent()` para extrair texto. Essa API lê apenas a camada de conteúdo (content stream) da página. Texto que faz parte de **anotações** (highlights, comments, popups, free text annotations) não é retornado por essa API — é necessário chamar `page.getAnnotations()` separadamente.
+### 4. UI de distribuição de confiança (`src/components/ProcessingStatus.tsx`)
+- Painel visual mostrando quantos matches vieram de cada método (Alta/Média/Baixa confiança)
+- Exibido ao finalizar processamento
 
-## Correção
-
-### 1. Extrair texto de anotações do PDF (`src/lib/pdfUtils.ts` e `src/lib/pdfCache.ts`)
-
-Criar uma função auxiliar que, após extrair o texto normal via `getTextContent()`, também chama `page.getAnnotations()` e concatena qualquer texto encontrado nas anotações (campos `contents`, `title`, `fieldValue`, e conteúdo de anotações do tipo FreeText, Highlight, Popup, Widget).
-
-Isso será aplicado em todos os pontos de extração de texto:
-- `extractTextFromPdf()` em pdfUtils.ts
-- `extractTextFromPage()` em pdfUtils.ts  
-- `extractSinglePageText()` em pdfCache.ts
-
-### 2. Lógica de extração de anotações
-
-```
-Para cada página:
-  1. Extrair texto normal (getTextContent) — já existente
-  2. Chamar page.getAnnotations()
-  3. Para cada anotação, extrair:
-     - annotation.contents (texto do comentário/popup)
-     - annotation.fieldValue (campos de formulário)
-     - annotation.alternativeText
-  4. Concatenar texto das anotações ao texto da página
-  5. Log: "[Annotations] Página X: Y anotações, Z chars extras"
-```
-
-### 3. Sem alteração na lógica de matching
-
-A extração de FAVORECIDO e todo o pipeline de matching permanecem inalterados — apenas o texto de entrada será mais completo.
-
-## Arquivos Alterados
-
-- `src/lib/pdfUtils.ts` — funções `extractTextFromPdf` e `extractTextFromPage`
-- `src/lib/pdfCache.ts` — função `extractSinglePageText`
-
-## Resultado Esperado
-
-Nomes destacados ou comentados no PDF serão incluídos no texto extraído, permitindo o match correto com os funcionários do holerite.
-
+### 5. Tipo atualizado (`src/types/document.ts`)
+- `ProcessingStatus.matchMethodCounts` adicionado para passar dados de confiança à UI
