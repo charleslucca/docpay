@@ -498,7 +498,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
         empresa,
         cidade: cidadeExtraida,
         contrato: sheetName,
-        colaborador: name,
+        colaborador: (() => { const s = sanitizeName(name); logSanitizationDiff(`colaborador[${name}]`, name, s); return name; })(),
         salario,
       });
     }
