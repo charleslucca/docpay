@@ -1,0 +1,1 @@
+ALTER TABLE public.funcionarios ADD COLUMN observacoes text;

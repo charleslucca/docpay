@@ -113,7 +113,7 @@ const AdminFuncionarios = () => {
       supabase.from("empresas").select("id, nome").order("nome"),
       supabase.from("municipios").select("id, nome").order("nome"),
     ]);
-    if (funcRes.data) setFuncionarios(funcRes.data.map(f => ({ ...f, observacoes: (f as any).observacoes ?? null, codigo: (f as any).codigo ?? null })));
+    if (funcRes.data) setFuncionarios(funcRes.data as Funcionario[]);
     if (empRes.data) setEmpresas(empRes.data);
     if (munRes.data) setMunicipios(munRes.data);
 
@@ -216,14 +216,14 @@ const AdminFuncionarios = () => {
     };
 
     if (editingFuncionario) {
-      const { error } = await supabase.from("funcionarios").update(payload as any).eq("id", editingFuncionario.id);
+      const { error } = await supabase.from("funcionarios").update(payload).eq("id", editingFuncionario.id);
       if (error) {
         toast({ title: "Erro ao atualizar", description: error.message, variant: "destructive" });
       } else {
         toast({ title: "Funcionário atualizado" });
       }
     } else {
-      const { error } = await supabase.from("funcionarios").insert(payload as any);
+      const { error } = await supabase.from("funcionarios").insert(payload);
       if (error) {
         toast({ title: "Erro ao criar", description: error.message, variant: "destructive" });
       } else {
