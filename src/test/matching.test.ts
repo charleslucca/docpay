@@ -222,8 +222,8 @@ describe("sanitizeNameWithOCR — OCR corrections", () => {
     expect(sanitizeNameWithOCR("S1LVA")).toBe("SILVA");
   });
 
-  it("applies 5→S correction", () => {
-    expect(sanitizeNameWithOCR("5ANTOS")).toBe("SANTOS");
+  it("applies 5→S correction between letters", () => {
+    expect(sanitizeNameWithOCR("DO5 SANTOS")).toBe("DOS SANTOS");
   });
 });
 
