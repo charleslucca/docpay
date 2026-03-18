@@ -933,7 +933,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
   // 2. FALLBACK: No FAVORECIDO extracted — try substring match on normalized text
   if (target.normalized.length >= 8 && page.normalized.includes(target.normalized)) {
     console.log("[Match] Substring fallback:", target.original);
-    return { found: true, method: "substring" };
+    return { found: true, method: "substring", score: 0.8 };
   }
 
   // 3. FALLBACK: Word overlap — at least 70% of target words found in page
