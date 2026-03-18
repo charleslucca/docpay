@@ -781,13 +781,14 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
           throw new Error("Nenhuma aba encontrada na planilha");
         }
 
-        // Check for payroll report format first
-        if (isPayrollReport(workbook)) {
+        // Check for payroll report format first (unified detection + layout analysis)
+        const payrollLayout = detectPayrollLayout(workbook);
+        if (payrollLayout) {
           console.log("[Excel] Detected payroll report format (Relação da Folha por Empregado)");
-          const result = parsePayrollReport(workbook, file.name);
+          const result = parsePayrollReport(workbook, payrollLayout, file.name);
 
           if (result.records.length === 0) {
-            throw new Error("Nenhum funcionário encontrado na planilha");
+            throw new Error("Formato de folha de pagamento detectado, mas nenhum funcionário encontrado. Verifique se a planilha contém dados de empregados.");
           }
 
           resolve({ data: result, validation: { valid: true, missingColumns: [] } });
