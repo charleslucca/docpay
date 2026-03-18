@@ -931,9 +931,22 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
   }
 
   // 2. FALLBACK: No FAVORECIDO extracted — try substring match on normalized text
-  if (target.normalized.length >= 8 && page.normalized.includes(target.normalized)) {
-    console.log("[Match] Substring fallback:", target.original);
-    return { found: true, method: "substring", score: 0.8 };
+  //    Word-boundary validation: ensure the match is NOT a partial inside a longer name
+  if (target.normalized.length >= 8) {
+    const idx = page.normalized.indexOf(target.normalized);
+    if (idx !== -1) {
+      const charBefore = idx > 0 ? page.normalized[idx - 1] : " ";
+      const charAfter = idx + target.normalized.length < page.normalized.length
+        ? page.normalized[idx + target.normalized.length]
+        : " ";
+      const isWordBounded = charBefore === " " && (charAfter === " " || charAfter === undefined);
+      if (isWordBounded) {
+        console.log("[Match] Substring fallback (word-bounded):", target.original);
+        return { found: true, method: "substring", score: 0.8 };
+      } else {
+        if (DEBUG_MATCH) console.log("[Match] Substring rejected (not word-bounded):", target.original, "context:", page.normalized.substring(Math.max(0, idx - 10), idx + target.normalized.length + 10));
+      }
+    }
   }
 
   // 3. FALLBACK: Word overlap — at least 70% of target words found in page
