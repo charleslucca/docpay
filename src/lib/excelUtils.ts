@@ -860,8 +860,13 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
         }
         if (servicoValue) {
           currentContrato = servicoValue;
-          currentCidade = extractCidadeFromServico(servicoValue);
-          if (currentCidade) cidadesSet.add(currentCidade);
+          const cidadeExtracted = extractCidadeFromServico(servicoValue);
+          if (cidadeExtracted) {
+            currentCidade = cidadeExtracted;
+            cidadesSet.add(currentCidade);
+          }
+          // If it's a company, don't overwrite currentCidade
+          console.log(`[Excel] Serviço detected: "${servicoValue}" → cidade="${cidadeExtracted || "(empresa, kept previous)"}", contrato="${servicoValue}"`);
         }
         servicoDetected = true;
         break;
@@ -874,12 +879,30 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       if (servicoMatch) {
         const servicoValue = servicoMatch[1].trim();
         currentContrato = servicoValue;
-        currentCidade = extractCidadeFromServico(servicoValue);
-        if (currentCidade) cidadesSet.add(currentCidade);
+        const cidadeExtracted = extractCidadeFromServico(servicoValue);
+        if (cidadeExtracted) {
+          currentCidade = cidadeExtracted;
+          cidadesSet.add(currentCidade);
+        }
         servicoDetected = true;
       }
     }
     if (servicoDetected) { skippedReasons.servico++; continue; }
+
+    // Detect "tipo" section headers (Empregados, Contribuintes, etc.)
+    let tipoDetected = false;
+    const firstCellStr = String(row[0] || "").trim();
+    const nomeCellStr = nomeCol >= 0 ? String(row[nomeCol] || "").trim() : "";
+    for (const { pattern, tipo } of tipoPatterns) {
+      if (pattern.test(firstCellStr) || pattern.test(nomeCellStr)) {
+        currentTipo = tipo;
+        tipoDetected = true;
+        skippedReasons.tipo++;
+        console.log(`[Excel] Tipo section detected: "${tipo}"`);
+        break;
+      }
+    }
+    if (tipoDetected) continue;
 
     // Also detect "Serviço:" via number-dash pattern (e.g. "6-MUNICIPIO DE...")
     // This catches cases where the label "Serviço:" is missing but the value has the pattern
