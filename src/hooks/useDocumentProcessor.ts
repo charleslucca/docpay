@@ -1213,18 +1213,26 @@ export function useDocumentProcessor() {
         const entryKey = `${entry.originalHolerite.id}_${entry.pageNumber}`;
         if (matchedEntryKeys.has(entryKey)) continue;
 
-        // Search using pre-processed data (FAST!) + validate comprovante name
+        // Search ALL pages and pick the BEST match (highest score)
         let foundPage = -1;
         let matchMethod = "";
         let matchScore = 0;
+        const candidateMatches: Array<{ page: number; method: string; score: number }> = [];
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
           const result = findNameInPreparedPage(preparedPages[pageIdx], entry.prepared);
           if (result.found) {
-            foundPage = pageIdx + 1; // 1-indexed
-            matchMethod = result.method;
-            matchScore = result.score;
-            break;
+            candidateMatches.push({ page: pageIdx + 1, method: result.method, score: result.score });
+            if (result.score > matchScore) {
+              foundPage = pageIdx + 1; // 1-indexed
+              matchMethod = result.method;
+              matchScore = result.score;
+            }
           }
+        }
+        if (candidateMatches.length > 1) {
+          console.log(`[MULTI-MATCH] ${entry.name} matched ${candidateMatches.length} pages:`, 
+            candidateMatches.map(c => `p${c.page}(${c.method}:${c.score.toFixed(2)})`).join(', '),
+            `→ chose p${foundPage} (score ${matchScore.toFixed(2)})`);
         }
 
         if (foundPage > 0) {
