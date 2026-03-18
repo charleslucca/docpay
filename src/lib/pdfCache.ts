@@ -81,8 +81,46 @@ export async function getCachedPdf(file: File): Promise<PDFDocumentProxy> {
   return pdf;
 }
 
+/**
+ * Extract text from PDF annotations (highlights, comments, popups, free text, form fields).
+ * These are NOT returned by page.getTextContent() and must be fetched separately.
+ */
+async function extractAnnotationTexts(page: any): Promise<string> {
+  try {
+    const annotations = await page.getAnnotations();
+    if (!annotations || annotations.length === 0) return '';
+    
+    const texts: string[] = [];
+    for (const ann of annotations) {
+      // Contents: comment text, popup text, highlight notes
+      if (ann.contents && typeof ann.contents === 'string' && ann.contents.trim()) {
+        texts.push(ann.contents.trim());
+      }
+      // fieldValue: form field values (Widget annotations)
+      if (ann.fieldValue && typeof ann.fieldValue === 'string' && ann.fieldValue.trim()) {
+        texts.push(ann.fieldValue.trim());
+      }
+      // alternativeText: accessibility text
+      if (ann.alternativeText && typeof ann.alternativeText === 'string' && ann.alternativeText.trim()) {
+        texts.push(ann.alternativeText.trim());
+      }
+    }
+    
+    if (texts.length > 0) {
+      const joined = texts.join(' ');
+      console.log(`[Annotations] ${annotations.length} annotation(s), ${joined.length} extra chars`);
+      return joined;
+    }
+  } catch (e) {
+    // Silently ignore annotation extraction errors
+    console.warn('[Annotations] Failed to extract annotations:', e);
+  }
+  return '';
+}
+
 // Helper function to extract text from a single page with cleanup
 // Sorts items by position (Y then X) to preserve reading order
+// Also extracts text from annotations (highlights, comments, etc.)
 async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Promise<string> {
   const page = await pdf.getPage(pageNum);
   const textContent = await page.getTextContent();
@@ -91,18 +129,23 @@ async function extractSinglePageText(pdf: PDFDocumentProxy, pageNum: number): Pr
   const sortedItems = textContent.items
     .filter((item: any) => item.str && item.str.trim())
     .sort((a: any, b: any) => {
-      // Inverter Y porque PDF usa coordenadas de baixo para cima
       const yDiff = b.transform[5] - a.transform[5];
-      // Dynamic threshold based on font height instead of fixed 5px
       const heightA = Math.abs(a.transform[3]) || a.height || 10;
       const heightB = Math.abs(b.transform[3]) || b.height || 10;
       const lineThreshold = Math.max(5, Math.min(heightA, heightB) * 0.5);
-      if (Math.abs(yDiff) > lineThreshold) return yDiff; // Linhas diferentes
-      return a.transform[4] - b.transform[4]; // Mesma linha, ordenar por X
+      if (Math.abs(yDiff) > lineThreshold) return yDiff;
+      return a.transform[4] - b.transform[4];
     });
   
-  const text = sortedItems.map((item: any) => item.str).join(' ');
-  page.cleanup(); // Release memory immediately!
+  let text = sortedItems.map((item: any) => item.str).join(' ');
+  
+  // Also extract text from annotations (highlights, comments, popups, form fields)
+  const annotationText = await extractAnnotationTexts(page);
+  if (annotationText) {
+    text = text + ' ' + annotationText;
+  }
+  
+  page.cleanup();
   return text;
 }
 

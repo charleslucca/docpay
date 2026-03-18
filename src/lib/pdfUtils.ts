@@ -24,6 +24,38 @@ function sortTextItems(items: any[]): any[] {
     });
 }
 
+/**
+ * Extract text from PDF annotations (highlights, comments, popups, free text, form fields).
+ */
+async function extractAnnotationTexts(page: any): Promise<string> {
+  try {
+    const annotations = await page.getAnnotations();
+    if (!annotations || annotations.length === 0) return '';
+    
+    const texts: string[] = [];
+    for (const ann of annotations) {
+      if (ann.contents && typeof ann.contents === 'string' && ann.contents.trim()) {
+        texts.push(ann.contents.trim());
+      }
+      if (ann.fieldValue && typeof ann.fieldValue === 'string' && ann.fieldValue.trim()) {
+        texts.push(ann.fieldValue.trim());
+      }
+      if (ann.alternativeText && typeof ann.alternativeText === 'string' && ann.alternativeText.trim()) {
+        texts.push(ann.alternativeText.trim());
+      }
+    }
+    
+    if (texts.length > 0) {
+      const joined = texts.join(' ');
+      console.log(`[Annotations] ${annotations.length} annotation(s), ${joined.length} extra chars`);
+      return joined;
+    }
+  } catch (e) {
+    console.warn('[Annotations] Failed to extract annotations:', e);
+  }
+  return '';
+}
+
 export async function extractTextFromPdf(
   file: File,
   cachedPdf?: PDFDocumentProxy,
@@ -37,7 +69,14 @@ export async function extractTextFromPdf(
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     const sorted = sortTextItems(textContent.items);
-    const pageText = sorted.map((item: any) => item.str).join(" ");
+    let pageText = sorted.map((item: any) => item.str).join(" ");
+    
+    // Also extract text from annotations
+    const annotationText = await extractAnnotationTexts(page);
+    if (annotationText) {
+      pageText = pageText + ' ' + annotationText;
+    }
+    
     pageTexts.push(pageText);
     fullText += pageText + "\n";
     page.cleanup();
@@ -56,7 +95,14 @@ export async function extractTextFromPage(
   const page = await pdf.getPage(pageNumber);
   const textContent = await page.getTextContent();
   const sorted = sortTextItems(textContent.items);
-  const text = sorted.map((item: any) => item.str).join(" ");
+  let text = sorted.map((item: any) => item.str).join(" ");
+  
+  // Also extract text from annotations
+  const annotationText = await extractAnnotationTexts(page);
+  if (annotationText) {
+    text = text + ' ' + annotationText;
+  }
+  
   page.cleanup();
   return text;
 }
