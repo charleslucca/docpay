@@ -947,6 +947,14 @@ export async function parseExcelFile(file: File): Promise<{ data: SpreadsheetDat
           throw new Error("Nenhuma aba encontrada na planilha");
         }
 
+        console.log(`[Excel] File: "${file.name}", sheets: [${workbook.SheetNames.join(", ")}]`);
+        for (const sn of workbook.SheetNames) {
+          const s = workbook.Sheets[sn];
+          const ref = s?.['!ref'] || 'empty';
+          const mergeCount = s?.['!merges']?.length || 0;
+          console.log(`[Excel]   Sheet "${sn}": ref=${ref}, merges=${mergeCount}`);
+        }
+
         // Check for payroll report format first (unified detection + layout analysis)
         const payrollLayout = detectPayrollLayout(workbook);
         if (payrollLayout) {
