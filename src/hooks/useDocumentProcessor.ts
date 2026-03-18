@@ -1562,6 +1562,7 @@ export function useDocumentProcessor() {
       message: `${pairs.length} correspondência(s) encontrada(s)`,
       matchesFound: pairs.length,
       totalToMatch: totalEntries,
+      matchMethodCounts: { ...matchMethodCounts },
       ocrPagesTotal: aggregatedMetrics.pagesTotal,
       ocrPagesNeedingOcr: aggregatedMetrics.pagesNeedingOcr,
       ocrPagesEmptyOrShort: aggregatedMetrics.pagesEmptyOrShort,
