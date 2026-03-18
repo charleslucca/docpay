@@ -1,56 +1,104 @@
 
 
-# Corrigir regressao de matching: 12 matches em vez de 65+
+# Análise de Confiabilidade: Extração e Matching
 
-## Diagnostico
+## Resumo Executivo
 
-O console mostra:
-- 146 funcionarios extraidos dos holerites (correto)
-- 70 paginas de comprovante com texto nativo (correto)
-- **Apenas 12 matches** (deveria ser 65+)
+O processamento rápido NÃO indica necessariamente falta de confiabilidade. A velocidade se deve ao design otimizado com pré-processamento em memória. A análise abaixo identifica pontos fortes e fragilidades reais.
 
-Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
+---
 
-### Problema 1: Bloqueio de paginas com multiplos funcionarios
+## Pontos Fortes do Sistema Atual
 
-Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
+1. **Pré-processamento em lote**: Nomes e páginas são normalizados UMA vez antes do matching (linhas 1055, 1126-1129). Isso explica a velocidade — não é pressa, é eficiência algorítmica.
 
-O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
+2. **Matching em 3 camadas** (`findNameInPreparedPage`):
+   - FAVORECIDO/BENEFICIÁRIO via regex de labels bancários
+   - Substring exata no texto normalizado
+   - Word-overlap (70%) com validação de proximidade
 
-### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
+3. **Proteção contra falsos positivos**: First-name blocking, lista de sobrenomes comuns, Jaro-Winkler, Levenshtein.
 
-Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
+4. **Relatório completo**: Log estruturado de todos os não-processados com categorização de causas.
 
-## Correcao
+---
 
-### Arquivo: `src/hooks/useDocumentProcessor.ts`
+## Fragilidades Identificadas
 
-**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+### 1. Extração de FAVORECIDO depende de labels fixos
+A função `extractFavorecidoNames` só encontra nomes que vêm após labels como "FAVORECIDO:", "BENEFICIARIO:", etc. Se o comprovante usar um label diferente (ex: "CREDITADO", "TITULAR DA CONTA", "RECEBEDOR"), o nome não será extraído. O fallback (substring/word-overlap) pode compensar, mas com menor precisão.
 
-**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+**Risco**: Comprovantes de bancos menos comuns ou formatos novos podem ter 0% de extração.
 
-### Logica resultante simplificada:
+### 2. Substring fallback aceita matches sem validação de contexto
+Na linha 918, se o nome normalizado aparece em qualquer lugar do texto da página, é aceito como match. Isso pode gerar falso positivo se o nome aparecer em um contexto não relacionado (ex: nome de gerente do banco, ou nome do pagador em vez do beneficiário).
 
-```typescript
-for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
-    foundPage = pageIdx + 1;
-    break;
-  }
-}
-```
+**Risco**: Baixo para nomes longos, moderado para nomes curtos/comuns.
 
-## Impacto
+### 3. Word-overlap pode dar falso positivo com nomes compartilhando palavras comuns
+Apesar da validação de proximidade (regex sequencial), nomes como "MARIA APARECIDA DOS SANTOS" podem coincidir parcialmente com "MARIA JOSE DOS SANTOS" se as palavras aparecerem na mesma página em outra ordem.
 
-| Aspecto | Antes | Depois |
-|---------|-------|--------|
-| Matches encontrados | 12 | ~65+ (restaurado) |
-| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
-| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+**Risco**: Moderado. A exigência de primeiro+último nome mitiga, mas não elimina.
 
-## Arquivos alterados
+### 4. Sem validação cruzada pós-matching
+Após o matching, não há verificação de que cada funcionário foi associado a APENAS UM comprovante. Se o mesmo nome aparecer em duas páginas (ex: pagamento duplicado), ambos seriam aceitos mas apenas o primeiro seria usado (break na linha 1222).
 
-| Arquivo | Alteracao |
+**Risco**: Baixo. O `break` protege contra duplicatas, mas não informa o usuário.
+
+### 5. OCR pode introduzir ruído não detectado
+O sistema tolera erros de OCR (0→O, 1→I, 5→S), mas se o OCR produzir caracteres completamente incorretos (ex: "MARI4 S1LVA"), a normalização não corrigirá e o nome falhará silenciosamente.
+
+**Risco**: Depende da qualidade dos scans. Para PDFs nativos (digitais), risco zero.
+
+### 6. Campo `banco` nunca é preenchido no formato atual
+O relatório "Relação da Folha por Empregado" não contém dados bancários. O campo existe na interface e no banco de dados mas permanece vazio.
+
+---
+
+## Recomendações de Melhoria
+
+### Prioridade Alta — Aumentar confiabilidade sem alterar estrutura
+
+1. **Adicionar mais labels de extração**: Incluir "CREDITADO", "TITULAR", "RECEBEDOR", "NOME COMPLETO" em `extractFavorecidoNames` para cobrir mais formatos bancários.
+
+2. **Log de confiança por match**: Adicionar o `score` e `method` de cada match ao relatório final (não apenas para os não-processados). Isso permite auditoria: "140 matches por favorecido (alta confiança), 5 por substring (média), 1 por word-overlap (baixa)".
+
+3. **Validação de duplicatas**: Após o matching, verificar se algum nome de funcionário foi associado a mais de um comprovante (ou vice-versa) e sinalizar como "possível duplicata".
+
+### Prioridade Média — Melhorias de robustez
+
+4. **Restringir substring match**: Exigir que o substring match ocorra dentro de um contexto de label bancário (próximo a "FAVORECIDO", "VALOR", "CPF"), não em qualquer lugar da página.
+
+5. **Adicionar validação por CPF**: Se o CPF estiver disponível tanto no holerite quanto no comprovante, usá-lo como confirmação adicional do match (não como critério primário, mas como boost de confiança).
+
+6. **Score mínimo configurável**: Permitir ao usuário ajustar o threshold de matching (atualmente fixo em 0.85) para cenários onde precisão é mais importante que cobertura.
+
+### Prioridade Baixa — Nice to have
+
+7. **Exportação de relatório de auditoria**: Gerar um CSV/PDF com TODOS os matches (não só os não-processados), incluindo score, método, e página do comprovante. Isso torna o processo auditável.
+
+8. **Detecção de comprovantes sem nenhum match**: Sinalizar páginas de comprovante que não foram associadas a nenhum funcionário (pode indicar formato não reconhecido).
+
+---
+
+## Conclusão sobre a Velocidade
+
+A velocidade do matching é esperada e não compromete a precisão. O algoritmo opera em O(C × E × P) onde C=comprovantes, E=empregados, P=páginas. Com pré-processamento, cada comparação é uma busca em Set + string.includes(), que são operações O(1) e O(n) respectivamente. Para 146 empregados × 70 páginas = ~10.000 comparações, isso leva milissegundos.
+
+O que PODE comprometer a precisão não é a velocidade, mas sim:
+- Qualidade da extração de FAVORECIDO (labels reconhecidos)
+- Qualidade do OCR (se aplicável)
+- Ambiguidade de nomes curtos/comuns
+
+---
+
+## Plano de Implementação Sugerido
+
+Se aprovado, implementaria as melhorias 1, 2 e 3 (prioridade alta):
+
+| Arquivo | Alteração |
 |---------|-----------|
-| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
+| `src/lib/pdfUtils.ts` | Adicionar labels extras em `extractFavorecidoNames`; adicionar retorno de score/method em `findNameInPreparedPage` |
+| `src/hooks/useDocumentProcessor.ts` | Log de confiança por match; detecção de duplicatas pós-matching |
+| `src/components/UnprocessedList.tsx` | Mostrar distribuição de métodos de match no resumo |
 
