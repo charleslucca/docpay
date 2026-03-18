@@ -773,6 +773,7 @@ function normalizeLightForExtraction(text: string): string {
     .replace(/([A-Z])0([A-Z])/g, "$1O$2")
     .replace(/([A-Z])1([A-Z])/g, "$1I$2")
     .replace(/([A-Z])5([A-Z])/g, "$1S$2")
+    .replace(/[\r\n]+/g, " ")  // Collapse newlines into spaces for regex matching
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -811,8 +812,9 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
 
   // Regex: label + optional colon + name + lookahead for common anchors
   // Uses light normalization so digits/colons/slashes are preserved for accurate anchoring
+  // IMPORTANT: Allow \n \r and multiple spaces between words (PDF.js may break lines mid-name)
   const regex = new RegExp(
-    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,80})(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|COMP|RECIBO|TRANSF|R\\$|BRL|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
+    `(?:${labelPattern})[\\s:]*([A-Z][A-Z \\n\\r]{4,80})(?=[\\s\\n\\r]*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|COMP|RECIBO|TRANSF|R\\$|BRL|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
     "g",
   );
 
@@ -1019,6 +1021,19 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
       if (proximityRegex.test(page.normalized)) {
         console.log(`[Match] Word-overlap fallback: ${target.original} (${matchedWords.length}/${target.words.length} words)`);
         return { found: true, method: "word-overlap", score: 0.6 };
+      }
+    }
+  }
+
+  // 4. FALLBACK: Proximity match — first name + last name within 100 chars of each other
+  if (target.firstName.length >= 3 && target.lastName && target.lastName.length >= 3) {
+    const firstIdx = page.normalized.indexOf(target.firstName);
+    const lastIdx = page.normalized.indexOf(target.lastName);
+    if (firstIdx !== -1 && lastIdx !== -1) {
+      const distance = Math.abs(lastIdx - firstIdx);
+      if (distance < 100 && distance > 0) {
+        console.log(`[Match] Proximity fallback: ${target.original} (first="${target.firstName}" @${firstIdx}, last="${target.lastName}" @${lastIdx}, dist=${distance})`);
+        return { found: true, method: "proximity", score: 0.5 };
       }
     }
   }

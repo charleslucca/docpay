@@ -1417,18 +1417,33 @@ export function useDocumentProcessor() {
       let closestCandidate = "";
       let bestScore = 0;
       let bestSharedWords = 0;
+      let substringPages: number[] = [];
+      let favorecidoPages: number[] = [];
 
       // Check every comprovante page
-      for (const [, extracted] of comprovanteTextsMap) {
+      let pageCounter = 0;
+      for (const [fileName, extracted] of comprovanteTextsMap) {
         for (const pp of extracted.preparedPages) {
+          pageCounter++;
           // Check if full normalized name appears as substring in page text
-          if (!foundInText && pp.normalized.includes(norm)) {
+          if (pp.normalized.includes(norm)) {
             foundInText = true;
+            substringPages.push(pageCounter);
+          }
+          // Check if first+last name appear nearby (proximity check)
+          if (!foundInText && e.prepared.firstName && e.prepared.lastName) {
+            const firstIdx = pp.normalized.indexOf(e.prepared.firstName);
+            const lastIdx = pp.normalized.indexOf(e.prepared.lastName);
+            if (firstIdx !== -1 && lastIdx !== -1 && Math.abs(lastIdx - firstIdx) < 100) {
+              foundInText = true;
+              substringPages.push(pageCounter);
+            }
           }
           // Check each favorecido name with new scoring
           for (const fav of pp.favorecidoNames) {
             if (fav === norm) {
               foundAsFavorecido = true;
+              favorecidoPages.push(pageCounter);
             }
             // Use calculateNameMatchScore for proper candidate evaluation
             const { score } = calculateNameMatchScore(norm, fav);
@@ -1443,6 +1458,9 @@ export function useDocumentProcessor() {
           }
         }
       }
+
+      // Detailed debug log for each unmatched employee
+      console.log(`[DEBUG-UNMATCHED] ${e.name}: substring em ${substringPages.length} páginas ${substringPages.length > 0 ? `[${substringPages.join(",")}]` : ""}, favorecido em ${favorecidoPages.length} páginas ${favorecidoPages.length > 0 ? `[${favorecidoPages.join(",")}]` : ""}, melhor candidato: "${closestCandidate}" (score=${bestScore.toFixed(2)})`);
 
       // Determine specific reason using new scoring system
       let reason: string;
