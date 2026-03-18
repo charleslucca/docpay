@@ -1,45 +1,56 @@
 
 
-## Diagnóstico
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-O código de detecção e parsing parece correto em teoria, mas continua falhando. O problema real é como o SheetJS lê arquivos `.xls` legados com células mescladas:
+## Diagnostico
 
-1. **`sheet_to_json({header: 1})` com `.xls` mesclados** — células mescladas só têm valor na célula âncora (canto superior esquerdo). As demais ficam vazias. Isso pode fazer com que cabeçalhos como "Salário" apareçam em posições inesperadas ou que o array da linha tenha comprimento diferente do esperado.
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-2. **Sem diagnóstico** — não há logs suficientes para entender se a detecção do layout está falhando (header não encontrado) ou se o parsing dos dados é que falha (nenhuma linha passa os filtros).
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-3. **Nenhum fallback para leitura direta de células** — se `sheet_to_json` produz resultados inesperados para `.xls` mesclado, o sistema simplesmente falha.
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-## Plano de correção (focado no layout da imagem)
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-### Arquivo: `src/lib/excelUtils.ts`
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-**1. Adicionar logging diagnóstico detalhado**
-- Em `analyzeSheetForPayrollLayout`: logar os primeiros 15 arrays de linha (apenas cabeçalhos/textos, nunca valores financeiros) para ver exatamente o que `sheet_to_json` produz
-- Em `parsePayrollReport`: logar quantas linhas são processadas, quantas são pulas por cada motivo (serviço, skipPattern, código inválido, nome curto)
-- Em `parseExcelFile`: logar sheet names, número de linhas por sheet, e qual branch do parser foi escolhido
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-**2. Adicionar fallback com leitura direta de células (raw cell access)**
-- Se `sheet_to_json` não encontrar o header, fazer um scan direto usando `sheet[XLSX.utils.encode_cell({r, c})]` para ler células individuais
-- Isso contorna qualquer problema de como `sheet_to_json` trata merges em `.xls`
-- Scan das primeiras 30 linhas × 50 colunas buscando "Código" e "Nome do empregado"
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-**3. Resolver merges antes do parsing**
-- Ler `sheet['!merges']` e preencher células cobertas com o valor da célula âncora (fill-merges)
-- Aplicar isso ANTES de chamar `sheet_to_json`, garantindo que os arrays reflitam o conteúdo visual real
-- Isso resolve o problema na raiz: após fill-merges, o `sheet_to_json` produz dados consistentes
+## Correcao
 
-**4. Tornar a detecção de "Serviço:" mais robusta para .xls**
-- Além de buscar em texto, verificar se há uma célula com valor que começa com número seguido de "-" na mesma linha (ex: "6-MUNICIPIO DE SANTO ANTONIO DA PATRULHA")
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-### Arquivo: `src/components/ExcelDropzone.tsx`
-- Sem alterações necessárias
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
 
-## Resultado esperado
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
 
-Após a correção:
-- O sistema vai logar exatamente o que está lendo do `.xls`, facilitando debug futuro
-- A leitura de células mescladas será resolvida na raiz (fill-merges)
-- O fallback de leitura direta garante que mesmo se `sheet_to_json` falhar, as células são encontradas
-- O layout da imagem (B SERVICE, Serviço por município, Empregados/Contribuintes) será importado corretamente
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
+```
+
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
