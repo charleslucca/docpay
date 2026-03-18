@@ -529,8 +529,25 @@ function analyzeSheetForPayrollLayout(workbook: XLSX.WorkBook, sheetIdx: number)
   const sheet = workbook.Sheets[workbook.SheetNames[sheetIdx]];
   if (!sheet) return noResult;
 
+  // Fill merged cells BEFORE converting to JSON — critical for .xls files
+  fillMerges(sheet);
+
   const jsonData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
   if (jsonData.length < 3) return noResult;
+
+  // Diagnostic: log first 15 rows (text only, no financial values)
+  console.log(`[Excel] Sheet "${workbook.SheetNames[sheetIdx]}" has ${jsonData.length} rows`);
+  for (let d = 0; d < Math.min(15, jsonData.length); d++) {
+    const row = jsonData[d] as unknown[];
+    if (!row) continue;
+    const textCells = row.map((c, ci) => {
+      const s = String(c || "").trim();
+      return s ? `[${ci}]="${s.substring(0, 40)}"` : null;
+    }).filter(Boolean);
+    if (textCells.length > 0) {
+      console.log(`[Excel]   Row ${d}: ${textCells.join(", ")}`);
+    }
+  }
 
   // --- Step 1: find header row by scanning ALL rows ---
   let headerRowIndex = -1;
