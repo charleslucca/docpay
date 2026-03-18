@@ -760,6 +760,8 @@ function extractEmpresaFromHeader(line: string): string {
  * Extract cidade from "Serviço:" line
  */
 function extractCidadeFromServico(servicoText: string): string {
+  // Guard: reject empty or literal "Serviço:" label
+  if (!servicoText || /^Servi[çc]o\s*:?\s*$/i.test(servicoText.trim())) return "";
   // Only extract cidade if this looks like a municipality, not a company
   if (!isServicoMunicipio(servicoText)) {
     return "";
