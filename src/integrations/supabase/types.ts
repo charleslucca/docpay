@@ -90,6 +90,7 @@ export type Database = {
           municipio_id: string
           nome: string
           nome_normalizado: string
+          observacoes: string | null
           updated_at: string
         }
         Insert: {
@@ -104,6 +105,7 @@ export type Database = {
           municipio_id: string
           nome: string
           nome_normalizado: string
+          observacoes?: string | null
           updated_at?: string
         }
         Update: {
@@ -118,6 +120,7 @@ export type Database = {
           municipio_id?: string
           nome?: string
           nome_normalizado?: string
+          observacoes?: string | null
           updated_at?: string
         }
         Relationships: [
