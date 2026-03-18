@@ -856,7 +856,8 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
         if (!servicoValue) {
           for (let cj = ci + 1; cj < row.length; cj++) {
             const nextCell = String(row[cj] || "").trim();
-            if (nextCell) {
+            // Skip cells that are just another "Serviço:" label
+            if (nextCell && !/^Servi[çc]o\s*:?\s*$/i.test(nextCell)) {
               servicoValue = nextCell;
               break;
             }
