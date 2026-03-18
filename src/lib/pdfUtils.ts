@@ -923,7 +923,7 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
     for (const favName of page.favorecidoNames) {
       if (matchNameDirect(target.normalized, favName)) {
         if (DEBUG_MATCH) console.log("[Match] Favorecido:", target.original, "↔", favName);
-        return { found: true, method: "favorecido" };
+        return { found: true, method: "favorecido", score: 1.0 };
       }
     }
     // FAVORECIDO names extracted but none matched — continue to fallback methods
