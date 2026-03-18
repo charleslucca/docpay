@@ -670,8 +670,9 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
 
   const skipPatterns = [
     /^TOTAL/i, /^SUBTOTAL/i, /^SOMA/i,
-    /^EMPREGADOS?$/i, /^CONTRIBUINTES?$/i,
+    /^EMPREGADOS?\b/i, /^CONTRIBUINTES?\b/i,
     /^RELAC/i, /^COMPETENCIA/i, /^PAGAMENTO/i,
+    /^Servi[çc]o/i, /^EMPRESA/i, /^CNPJ/i,
   ];
 
   for (let i = layout.headerRowIndex + 1; i < jsonData.length; i++) {
