@@ -15,6 +15,8 @@ import Account from "./pages/Account";
 import AdminIpWhitelist from "./pages/AdminIpWhitelist";
 import AdminUsers from "./pages/AdminUsers";
 import AdminFuncionarios from "./pages/AdminFuncionarios";
+import Dashboard from "./pages/Dashboard";
+import Historico from "./pages/Historico";
 import Blocked from "./pages/Blocked";
 import NotFound from "./pages/NotFound";
 
