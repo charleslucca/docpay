@@ -1,24 +1,32 @@
 
-# Melhorias de Confiabilidade — Implementado ✅
 
-## Alterações realizadas
+# Correção: Funcionários Não Sendo Salvos no Banco
 
-### 1. Labels de extração expandidos (`src/lib/pdfUtils.ts`)
-- Adicionados: CREDITADO, TITULAR, TITULAR DA CONTA, RECEBEDOR, NOME COMPLETO, NOME DO CREDITADO, NOME DO RECEBEDOR, NOME DO TITULAR
-- Cobertura ampliada para mais formatos bancários
+## Causa Raiz
 
-### 2. Score de confiança por match (`src/lib/pdfUtils.ts`, `src/hooks/useDocumentProcessor.ts`)
-- `findNameInPreparedPage` agora retorna `MatchResult` com `score`: 1.0 (favorecido), 0.8 (substring), 0.6 (word-overlap)
-- Audit log completo no console com distribuição de métodos
-- Matches de baixa confiança sinalizados para revisão manual
+A tabela `funcionarios` **NÃO possui a coluna `observacoes`**, mas o código de sincronização (`supabaseExcelSync.ts`) inclui esse campo nos payloads de INSERT e UPDATE. Isso faz com que o Supabase rejeite TODAS as inserções de funcionários silenciosamente.
 
-### 3. Detecção de duplicatas (`src/hooks/useDocumentProcessor.ts`)
-- Após matching, detecta páginas de comprovante com múltiplos funcionários associados
-- Log de alerta no console para revisão
+Evidência:
+- Colunas existentes: `id, empresa_id, municipio_id, nome, nome_normalizado, cargo, banco, contrato, ativo, created_at, updated_at, codigo`
+- Coluna **ausente**: `observacoes`
+- Resultado: 0 funcionários inseridos nas últimas importações (659 registros processados, 0 salvos)
+- Empresas (13) e Municípios (41) foram sincronizados corretamente porque não usam `observacoes`
 
-### 4. UI de distribuição de confiança (`src/components/ProcessingStatus.tsx`)
-- Painel visual mostrando quantos matches vieram de cada método (Alta/Média/Baixa confiança)
-- Exibido ao finalizar processamento
+## Correção
 
-### 5. Tipo atualizado (`src/types/document.ts`)
-- `ProcessingStatus.matchMethodCounts` adicionado para passar dados de confiança à UI
+### 1. Migração SQL: adicionar coluna `observacoes`
+```sql
+ALTER TABLE public.funcionarios ADD COLUMN observacoes text;
+```
+Isso resolve a incompatibilidade entre código e schema sem necessidade de alterar a lógica de sincronização.
+
+### 2. Atualizar `src/pages/AdminFuncionarios.tsx`
+- Remover os casts `(f as any).observacoes` que mascaram o problema de tipagem
+- O campo `observacoes` passará a existir nos types gerados após a migração
+
+### 3. Nenhuma alteração nos outros arquivos
+O `supabaseExcelSync.ts` e `excelUtils.ts` já lidam corretamente com `observacoes` — o problema era apenas a coluna ausente no banco.
+
+## Resultado Esperado
+Após a migração, a próxima importação salvará todos os 659+ funcionários corretamente no banco, e o menu "Funcionários" exibirá os dados.
+
