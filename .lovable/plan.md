@@ -1,39 +1,24 @@
 
+# Melhorias de Confiabilidade — Implementado ✅
 
-# Correção: 67 → 66 — Match perdido após mudanças de threshold relaxado
+## Alterações realizadas
 
-## Diagnóstico
+### 1. Labels de extração expandidos (`src/lib/pdfUtils.ts`)
+- Adicionados: CREDITADO, TITULAR, TITULAR DA CONTA, RECEBEDOR, NOME COMPLETO, NOME DO CREDITADO, NOME DO RECEBEDOR, NOME DO TITULAR
+- Cobertura ampliada para mais formatos bancários
 
-O loop de matching (useDocumentProcessor.ts, linha 1220-1228) pega a **primeira** página que retorna `found: true` e para (`break`). Com o threshold relaxado de 0.78 no FAVORECIDO, um funcionário pode agora fazer match com uma página **errada** (score baixo, 0.78) antes de chegar à sua página correta (score 1.0). Essa página errada pode já ter outro funcionário com score melhor, e a resolução de conflitos remove o match do funcionário — que agora perdeu sua chance de fazer match com a página certa.
+### 2. Score de confiança por match (`src/lib/pdfUtils.ts`, `src/hooks/useDocumentProcessor.ts`)
+- `findNameInPreparedPage` agora retorna `MatchResult` com `score`: 1.0 (favorecido), 0.8 (substring), 0.6 (word-overlap)
+- Audit log completo no console com distribuição de métodos
+- Matches de baixa confiança sinalizados para revisão manual
 
-Exemplo: Funcionário A fazia match com página 5 (substring, 0.8). Agora, com threshold 0.78, ele faz match com página 2 (FAVORECIDO relaxado, 0.78) — mas página 2 já tem Funcionário B (score 1.0). Conflito: B vence, A é removido. Resultado: -1 match.
+### 3. Detecção de duplicatas (`src/hooks/useDocumentProcessor.ts`)
+- Após matching, detecta páginas de comprovante com múltiplos funcionários associados
+- Log de alerta no console para revisão
 
-## Correção
+### 4. UI de distribuição de confiança (`src/components/ProcessingStatus.tsx`)
+- Painel visual mostrando quantos matches vieram de cada método (Alta/Média/Baixa confiança)
+- Exibido ao finalizar processamento
 
-### 1. Selecionar a MELHOR página, não a primeira (`useDocumentProcessor.ts`)
-
-No loop de matching (linhas 1220-1228), em vez de `break` no primeiro match, continuar buscando e guardar o match com **maior score**:
-
-```
-Lógica atual:
-  para cada página → se match → break (pega primeira)
-
-Lógica corrigida:
-  para cada página → se match → guardar se score > melhor anterior
-  no final → usar o melhor match
-```
-
-Isso garante que um match FAVORECIDO exato (score 1.0) ou substring (0.8) será preferido sobre um match FAVORECIDO relaxado (0.78), mesmo que o relaxado apareça primeiro na ordem de páginas.
-
-### 2. Log de diagnóstico para matches múltiplos
-
-Quando um funcionário faz match com mais de uma página, logar todas as opções e qual foi escolhida, para auditoria futura.
-
-## Arquivo Alterado
-
-- `src/hooks/useDocumentProcessor.ts` — loop de matching (linhas 1216-1228)
-
-## Resultado Esperado
-
-O match perdido será recuperado (66 → 67+), pois o sistema agora escolhe a página com maior confiança em vez da primeira encontrada.
-
+### 5. Tipo atualizado (`src/types/document.ts`)
+- `ProcessingStatus.matchMethodCounts` adicionado para passar dados de confiança à UI
