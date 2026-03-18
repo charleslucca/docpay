@@ -864,7 +864,7 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
     if (!cellNome || cellNome.length < 3) { skippedReasons.emptyName++; continue; }
 
     const cellNomeNorm = normalizeForComparison(cellNome);
-    if (skipPatterns.some(p => p.test(cellNomeNorm))) continue;
+    if (skipPatterns.some(p => p.test(cellNomeNorm))) { skippedReasons.skipPattern++; continue; }
 
     // Get code (optional — may not exist in some variations)
     let cellCodigo = "";
