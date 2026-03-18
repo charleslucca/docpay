@@ -342,6 +342,8 @@ function looksLikeCompany(value: string): boolean {
  */
 function isServicoMunicipio(value: string): boolean {
   const norm = normalizeForComparison(value);
+  // Guard: the literal label "Serviço:" is not a municipality
+  if (/^SERVICO:?$/i.test(norm.replace(/\s/g, ""))) return false;
   const municipioPatterns = [
     /MUNIC[IÍ]PIO/i, /PREFEITURA/i, /CAMARA\s+MUNICIPAL/i,
     /CÂMARA\s+MUNICIPAL/i, /PACO\s+MUNICIPAL/i, /PAÇO\s+MUNICIPAL/i,
