@@ -786,7 +786,9 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
   // Fallback: busca direta quando regex falha
   if (names.length === 0) {
     const labelsList = ["NOME DO FAVORECIDO", "NOME DO BENEFICIARIO", "NOME FAVORECIDO", 
-                         "NOME BENEFICIARIO", "FAVORECIDO", "BENEFICIARIO", "DESTINATARIO"];
+                         "NOME BENEFICIARIO", "FAVORECIDO", "BENEFICIARIO", "DESTINATARIO",
+                         "CREDITADO", "TITULAR DA CONTA", "TITULAR", "RECEBEDOR", "NOME COMPLETO",
+                         "NOME DO CREDITADO", "NOME DO RECEBEDOR", "NOME DO TITULAR"];
     const stopWords = new Set(["CPF", "CNPJ", "AGENCIA", "CONTA", "BANCO", "VALOR", 
       "COOPERATIVA", "DATA", "MODALIDADE", "CODIGO", "NUMERO", "TIPO", "CREDITO", 
       "DEBITO", "PAGAMENTO", "TRANSFERENCIA", "PIX", "TED", "DOC", "CHAVE", "INSTITUICAO",
