@@ -130,12 +130,7 @@ const REQUIRED_COLUMNS = ["EMPRESA", "CIDADE", "CONTRATO", "COLABORADOR", "BANCO
  * Normalize a string for comparison: remove accents, convert to uppercase, trim
  */
 export function normalizeForComparison(str: string): string {
-  return str
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .trim()
-    .replace(/\s+/g, " ");
+  return sanitizeName(str);
 }
 
 /**

@@ -748,17 +748,7 @@ function findAllOccurrences(text: string, search: string): number[] {
  * Normalize text for matching: remove accents, convert to uppercase, keep only letters and spaces
  */
 export function normalizeForMatch(text: string): string {
-  return text
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[-‐‑–—']/g, " ") // Normalize hyphens/apostrophes
-    .replace(/([A-Z])0([A-Z])/g, "$1O$2") // OCR: 0 -> O between letters
-    .replace(/([A-Z])1([A-Z])/g, "$1I$2") // OCR: 1 -> I between letters
-    .replace(/([A-Z])5([A-Z])/g, "$1S$2") // OCR: 5 -> S between letters
-    .replace(/[^A-Z\s]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return sanitizeNameWithOCR(text);
 }
 
 /**
