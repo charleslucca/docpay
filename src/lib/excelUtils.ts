@@ -886,12 +886,12 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
     } else {
       // No code column at all — accept row if name looks like a person name
       const words = cellNome.split(" ").filter(w => w.length >= 2);
-      if (words.length < 2) continue;
+      if (words.length < 2) { skippedReasons.fewWords++; continue; }
     }
 
     // Validate name looks like a person (at least 2 words)
     const nameWords = cellNome.split(/\s+/).filter(w => w.length >= 2);
-    if (nameWords.length < 2) continue;
+    if (nameWords.length < 2) { skippedReasons.fewWords++; continue; }
 
     const salario = salarioCol >= 0 ? parseNumericCell(row[salarioCol]) : undefined;
     const outrosProventos = outrosProvCol >= 0 ? parseNumericCell(row[outrosProvCol]) : undefined;
