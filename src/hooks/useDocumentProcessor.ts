@@ -1266,6 +1266,36 @@ export function useDocumentProcessor() {
     console.log(`[Match] Methods: favorecido=${matchMethodCounts.favorecido}, substring=${matchMethodCounts.substring}, word-overlap=${matchMethodCounts["word-overlap"]}`);
     console.log(`[Match] UserAgent: ${navigator.userAgent}`);
 
+    // === AUDIT: Confidence distribution ===
+    console.log(`\n  AUDITORIA DE CONFIANÇA`);
+    console.log(`  ├─ Alta confiança (FAVORECIDO label): ${matchMethodCounts.favorecido} match(es)`);
+    console.log(`  ├─ Média confiança (substring exato): ${matchMethodCounts.substring} match(es)`);
+    console.log(`  └─ Baixa confiança (word-overlap): ${matchMethodCounts["word-overlap"]} match(es)`);
+
+    // === DUPLICATE DETECTION ===
+    const pageMatchMap = new Map<string, string[]>(); // "comprovante:page" -> [employee names]
+    for (const audit of matchAuditLog) {
+      const key = `${audit.comprovante}:pg${audit.page}`;
+      if (!pageMatchMap.has(key)) pageMatchMap.set(key, []);
+      pageMatchMap.get(key)!.push(audit.name);
+    }
+    const duplicatePages = [...pageMatchMap.entries()].filter(([, names]) => names.length > 1);
+    if (duplicatePages.length > 0) {
+      console.log(`\n  ⚠️ PÁGINAS COM MÚLTIPLOS MATCHES (${duplicatePages.length}):`);
+      for (const [pageKey, names] of duplicatePages) {
+        console.log(`  ├─ ${pageKey}: ${names.join(", ")}`);
+      }
+    }
+
+    // Log low-confidence matches for manual review
+    const lowConfidence = matchAuditLog.filter(a => a.score < 0.8);
+    if (lowConfidence.length > 0) {
+      console.log(`\n  ⚠️ MATCHES DE BAIXA CONFIANÇA (${lowConfidence.length}) — revisar manualmente:`);
+      for (const lc of lowConfidence) {
+        console.log(`  ├─ ${lc.name} (método: ${lc.method}, score: ${lc.score}, pág: ${lc.page})`);
+      }
+    }
+
     // === RELATÓRIO COMPLETO DE PROCESSAMENTO ===
     const unmatchedEntries = preparedEntries
       .filter(e => !matchedEntryKeys.has(`${e.originalHolerite.id}_${e.pageNumber}`));
