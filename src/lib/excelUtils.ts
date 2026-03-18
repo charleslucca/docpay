@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { sanitizeName, logSanitizationDiff } from "./nameUtils";
 
 /**
  * Fill merged cell ranges so sheet_to_json produces complete data.
@@ -129,12 +130,7 @@ const REQUIRED_COLUMNS = ["EMPRESA", "CIDADE", "CONTRATO", "COLABORADOR", "BANCO
  * Normalize a string for comparison: remove accents, convert to uppercase, trim
  */
 export function normalizeForComparison(str: string): string {
-  return str
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .trim()
-    .replace(/\s+/g, " ");
+  return sanitizeName(str);
 }
 
 /**
@@ -502,7 +498,7 @@ function parseMunicipalitySheets(workbook: XLSX.WorkBook, fileName: string): Spr
         empresa,
         cidade: cidadeExtraida,
         contrato: sheetName,
-        colaborador: name,
+        colaborador: (() => { const s = sanitizeName(name); logSanitizationDiff(`colaborador[${name}]`, name, s); return name; })(),
         salario,
       });
     }
@@ -974,7 +970,7 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
       empresa,
       cidade: currentCidade,
       contrato: currentContrato,
-      colaborador: cellNome,
+      colaborador: (() => { const s = sanitizeName(cellNome); logSanitizationDiff(`colaborador[${cellNome}]`, cellNome, s); return cellNome; })(),
       codigo: cellCodigo || undefined,
       tipo: currentTipo || undefined,
       salario, outrosProventos, salarioFamilia, inss, irrf, outrosDescontos, liquido, fgts,

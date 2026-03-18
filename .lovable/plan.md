@@ -1,75 +1,51 @@
 
+# Melhorias de Confiabilidade — Implementado ✅
 
-# Auditoria e Correção: Normalização de Nomes
+## Alterações realizadas
 
-## Diagnóstico
+### 1. Labels de extração expandidos (`src/lib/pdfUtils.ts`)
+- Adicionados: CREDITADO, TITULAR, TITULAR DA CONTA, RECEBEDOR, NOME COMPLETO, NOME DO CREDITADO, NOME DO RECEBEDOR, NOME DO TITULAR
+- Cobertura ampliada para mais formatos bancários
 
-Existem **duas funções de normalização independentes** no sistema que tratam nomes de forma diferente:
+### 2. Score de confiança por match (`src/lib/pdfUtils.ts`, `src/hooks/useDocumentProcessor.ts`)
+- `findNameInPreparedPage` agora retorna `MatchResult` com `score`: 1.0 (favorecido), 0.8 (substring), 0.6 (word-overlap)
+- Audit log completo no console com distribuição de métodos
+- Matches de baixa confiança sinalizados para revisão manual
 
-| Função | Arquivo | Usado para | Remove não-letras? | Remove chars invisíveis? |
-|--------|---------|------------|---------------------|--------------------------|
-| `normalizeForMatch` | pdfUtils.ts | PDFs | Sim (`[^A-Z\s]`) | Parcial (via regex) |
-| `normalizeForComparison` | excelUtils.ts | Excel/DB | **Não** | **Não** |
+### 3. Detecção de duplicatas (`src/hooks/useDocumentProcessor.ts`)
+- Após matching, detecta páginas de comprovante com múltiplos funcionários associados
+- Log de alerta no console para revisão
 
-### Problemas identificados
+### 4. UI de distribuição de confiança (`src/components/ProcessingStatus.tsx`)
+- Painel visual mostrando quantos matches vieram de cada método (Alta/Média/Baixa confiança)
+- Exibido ao finalizar processamento
 
-1. **`normalizeForComparison` não remove caracteres invisíveis**: Zero-width spaces (`\u200B`), BOM (`\uFEFF`), zero-width joiners (`\u200D`), soft hyphens (`\u00AD`) sobrevivem à normalização. Esses chars são comuns em copiar/colar de sistemas bancários e ERPs.
+### 5. Tipo atualizado (`src/types/document.ts`)
+- `ProcessingStatus.matchMethodCounts` adicionado para passar dados de confiança à UI
 
-2. **`normalizeForComparison` mantém dígitos e pontuação**: Se um nome no Excel tiver `"JOAO.SILVA"` ou `"JOAO1SILVA"`, eles não são removidos — mas em `normalizeForMatch` seriam.
+---
 
-3. **Não há função centralizada de sanitização**: Cada ponto do pipeline aplica sua própria normalização, criando inconsistências quando nomes passam de Excel → DB → comparação com PDF.
+# Auditoria de Normalização de Nomes — Implementado ✅
 
-4. **Non-breaking spaces (`\u00A0`)**: Ambas as funções tratam via `\s+`, mas tabs e `\r\n` só são tratados por `normalizeForMatch` (via `[^A-Z\s]`).
+## Problema
+Duas funções de normalização independentes (`normalizeForMatch` em pdfUtils.ts e `normalizeForComparison` em excelUtils.ts) tratavam nomes de forma diferente, permitindo que caracteres invisíveis (BOM, zero-width spaces, non-breaking spaces, soft hyphens) causassem falhas de matching em nomes visualmente idênticos.
 
 ## Correções
 
-### 1. Criar função centralizada `sanitizeName` (`src/lib/nameUtils.ts`)
+### 1. Função centralizada `sanitizeName` (`src/lib/nameUtils.ts`) — NOVO
+- Pipeline de 8 etapas: strip invisíveis → normalizar whitespace → NFD → uppercase → hífens → remover não-letras → colapsar espaços → trim
+- `sanitizeNameWithOCR`: mesma pipeline + correções OCR (0→O, 1→I, 5→S)
+- `debugNameBytes`: representação hex para diagnóstico byte-a-byte
+- `logSanitizationDiff`: log automático quando sanitização altera o valor
 
-Novo arquivo com uma única função de sanitização usada por todo o pipeline:
+### 2. Unificação (`src/lib/pdfUtils.ts` + `src/lib/excelUtils.ts`)
+- `normalizeForMatch` → delega para `sanitizeNameWithOCR`
+- `normalizeForComparison` → delega para `sanitizeName`
+- Ambos os caminhos agora produzem output consistente
 
-```
-sanitizeName(raw: string): string
-  1. Strip BOM, zero-width chars, soft hyphens
-  2. Replace non-breaking spaces, tabs, newlines → space
-  3. NFD + remove combining marks (accents)
-  4. Uppercase
-  5. Replace hyphens/apostrophes → space
-  6. Remove tudo que não é A-Z ou espaço
-  7. Collapse múltiplos espaços → um
-  8. Trim
-```
+### 3. Diagnóstico na entrada de dados (`src/lib/excelUtils.ts`)
+- Log `[SANITIZE]` com bytes hex quando o valor do colaborador é alterado durante sanitização
 
-Exportar também `debugNameBytes(name: string): string` que retorna representação hex para diagnóstico.
-
-### 2. Unificar normalização (`pdfUtils.ts` + `excelUtils.ts`)
-
-- `normalizeForMatch` → delegar para `sanitizeName` (manter OCR fixes 0→O, 1→I, 5→S como passo adicional)
-- `normalizeForComparison` → delegar para `sanitizeName` (sem OCR fixes)
-- Garantir que ambos os caminhos produzem output identico para o mesmo input
-
-### 3. Sanitizar na entrada de dados (`excelUtils.ts`)
-
-- Aplicar `sanitizeName` ao campo `colaborador` no momento do parsing (antes de armazenar)
-- Adicionar log `[SANITIZE]` quando o valor sanitizado difere do original, mostrando bytes hex da diferença
-
-### 4. Adicionar testes de regressão (`src/test/matching.test.ts`)
-
-- Teste com non-breaking space: `"DENIZE\u00A0BERNARDES"` vs `"DENIZE BERNARDES"`
-- Teste com zero-width space: `"DENIZE\u200BBERNARDES"` vs `"DENIZE BERNARDES"`
-- Teste com BOM: `"\uFEFFDENIZE"` vs `"DENIZE"`
-- Teste com tab: `"DENIZE\tBERNARDES"` vs `"DENIZE BERNARDES"`
-- Confirmar que todos os 31 testes existentes continuam passando
-
-## Arquivos
-
-| Arquivo | Ação |
-|---------|------|
-| `src/lib/nameUtils.ts` | **Novo** — sanitizeName + debugNameBytes |
-| `src/lib/pdfUtils.ts` | Refatorar normalizeForMatch para usar sanitizeName |
-| `src/lib/excelUtils.ts` | Refatorar normalizeForComparison para usar sanitizeName; sanitizar colaborador no parsing |
-| `src/test/matching.test.ts` | Adicionar testes de chars invisíveis |
-
-## Resultado esperado
-
-Nomes visualmente idênticos serão sempre tratados como iguais, independente de chars invisíveis, encoding ou origem (Excel vs PDF). Log automático detecta e reporta inconsistências em novos uploads.
-
+### 4. Testes de regressão (`src/test/matching.test.ts`)
+- 15 novos testes cobrindo: non-breaking space, zero-width space, BOM, tabs, newlines, soft hyphens, zero-width joiners, acentos, múltiplos espaços, pontuação/dígitos, correções OCR, debugNameBytes, pipeline unificado
+- Total: 46 testes, todos passando
