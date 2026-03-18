@@ -11,6 +11,7 @@ import {
   prepareTargetNameForMatch,
   findNameInPreparedPage,
   countEmployeesInDocument,
+  type MatchResult,
   type PreparedPage,
   type PreparedTarget,
   normalizeForMatch,
