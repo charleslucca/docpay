@@ -817,16 +817,24 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
 
   let currentCidade = "";
   let currentContrato = "";
+  let currentTipo = "";
 
   const skipPatterns = [
     /^TOTAL/i, /^SUBTOTAL/i, /^SOMA/i,
-    /^EMPREGADOS?\b/i, /^CONTRIBUINTES?\b/i,
     /^RELAC/i, /^COMPETENCIA/i, /^PAGAMENTO/i,
     /^Servi[çc]o/i, /^EMPRESA/i, /^CNPJ/i,
     /^CODIGO/i, /^NOME\s*(DO|DA)?\s*(EMPREGADO)?/i,
   ];
 
-  let skippedReasons = { servico: 0, emptyName: 0, shortName: 0, skipPattern: 0, nonNumericCode: 0, fewWords: 0 };
+  // Patterns for section headers that define "tipo" (Empregados, Contribuintes, etc.)
+  const tipoPatterns = [
+    { pattern: /^EMPREGADOS?\s*$/i, tipo: "Empregados" },
+    { pattern: /^CONTRIBUINTES?\s*$/i, tipo: "Contribuintes" },
+    { pattern: /^AUTONOMOS?\s*$/i, tipo: "Autônomos" },
+    { pattern: /^ESTAGIARIOS?\s*$/i, tipo: "Estagiários" },
+  ];
+
+  let skippedReasons = { servico: 0, emptyName: 0, shortName: 0, skipPattern: 0, nonNumericCode: 0, fewWords: 0, tipo: 0 };
 
   for (let i = layout.headerRowIndex + 1; i < jsonData.length; i++) {
     const row = jsonData[i] as unknown[];
