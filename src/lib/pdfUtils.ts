@@ -811,8 +811,9 @@ export function extractFavorecidoNames(rawOrNormalizedText: string): string[] {
 
   // Regex: label + optional colon + name + lookahead for common anchors
   // Uses light normalization so digits/colons/slashes are preserved for accurate anchoring
+  // IMPORTANT: Allow \n \r and multiple spaces between words (PDF.js may break lines mid-name)
   const regex = new RegExp(
-    `(?:${labelPattern})\\s*:?\\s*([A-Z][A-Z ]{4,80})(?=\\s*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|COMP|RECIBO|TRANSF|R\\$|BRL|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
+    `(?:${labelPattern})[\\s:]*([A-Z][A-Z \\n\\r]{4,80})(?=[\\s\\n\\r]*(?:CPF|CNPJ|AG[E ]*NCIA|AGENCIA|CONTA|BANCO|VALOR|COOPERATIVA|DATA|MODALIDADE|CODIGO|NUMERO|TIPO|CREDITO|DEBITO|PAGAMENTO|TRANSFERENCIA|PIX|TED|DOC|CHAVE|INSTITUICAO|COMP|RECIBO|TRANSF|R\\$|BRL|\\d{3}[. ]?\\d{3}[. ]?\\d{3}|\\d{2}/\\d{2}|$))`,
     "g",
   );
 
