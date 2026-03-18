@@ -1215,11 +1215,13 @@ export function useDocumentProcessor() {
         // Search using pre-processed data (FAST!) + validate comprovante name
         let foundPage = -1;
         let matchMethod = "";
+        let matchScore = 0;
         for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
           const result = findNameInPreparedPage(preparedPages[pageIdx], entry.prepared);
           if (result.found) {
             foundPage = pageIdx + 1; // 1-indexed
             matchMethod = result.method;
+            matchScore = result.score;
             break;
           }
         }
@@ -1227,6 +1229,8 @@ export function useDocumentProcessor() {
         if (foundPage > 0) {
           matchedEntryKeys.add(entryKey);
           if (matchMethod) matchMethodCounts[matchMethod] = (matchMethodCounts[matchMethod] || 0) + 1;
+          // Track per-match audit data
+          matchAuditLog.push({ name: entry.name, method: matchMethod, score: matchScore, page: foundPage, comprovante: comprovante.name });
 
           const updatedComprovante: UploadedFile = {
             ...comprovante,
