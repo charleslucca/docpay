@@ -420,14 +420,27 @@ function isPayrollReport(workbook: XLSX.WorkBook): boolean {
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!firstSheet) return false;
   const jsonData = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1 });
-  // Check first 10 rows for the report identifier
-  for (let i = 0; i < Math.min(10, jsonData.length); i++) {
+  const scanLimit = Math.min(20, jsonData.length);
+  for (let i = 0; i < scanLimit; i++) {
     const row = jsonData[i] as unknown[];
     if (!row) continue;
+    // Check joined row text
     const rowText = row.map(c => String(c || "")).join(" ").toUpperCase();
     if (rowText.includes("RELAÇÃO DA FOLHA") || rowText.includes("RELACAO DA FOLHA")) {
       return true;
     }
+    // Check individual cells (merged cells may isolate the title)
+    for (const cell of row) {
+      const cellText = String(cell || "").toUpperCase();
+      if (cellText.includes("RELAÇÃO DA FOLHA") || cellText.includes("RELACAO DA FOLHA")) {
+        return true;
+      }
+    }
+    // Fallback: if row contains both "Código" and "Nome do empregado" headers
+    const headers = row.map(c => normalizeForComparison(String(c || "")));
+    const hasCodigo = headers.some(h => h === "CODIGO" || h === "CÓDIGO" || h === "COD");
+    const hasNome = headers.some(h => h.includes("NOME DO EMPREGADO") || h === "NOME EMPREGADO");
+    if (hasCodigo && hasNome) return true;
   }
   return false;
 }
