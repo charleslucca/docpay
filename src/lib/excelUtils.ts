@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { sanitizeName, logSanitizationDiff } from "./nameUtils";
 
 /**
  * Fill merged cell ranges so sheet_to_json produces complete data.
