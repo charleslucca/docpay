@@ -1,52 +1,56 @@
 
 
-## Problem
+# Corrigir regressao de matching: 12 matches em vez de 65+
 
-The payroll report `.xls` file fails to import because:
+## Diagnostico
 
-1. **Detection failure**: `isPayrollReport()` joins cells in each row and searches for "RELAÇÃO DA FOLHA", but in `.xls` format with merged cells, the title text may end up in unexpected cell positions or rows
-2. **Fixed column assumptions**: `parsePayrollReport()` hardcodes financial data to columns C-J (indices 2-9), but merged cells in `.xls` can shift positions
-3. **Header row not found dynamically**: The parser doesn't search for the actual column header row ("Código", "Nome do empregado")
+O console mostra:
+- 146 funcionarios extraidos dos holerites (correto)
+- 70 paginas de comprovante com texto nativo (correto)
+- **Apenas 12 matches** (deveria ser 65+)
 
-## Fix
+Dois problemas identificados no loop de matching (`useDocumentProcessor.ts`, linhas 1204-1309):
 
-### File: `src/lib/excelUtils.ts`
+### Problema 1: Bloqueio de paginas com multiplos funcionarios
 
-**1. Make `isPayrollReport()` more robust:**
-- Expand scan to 20 rows instead of 10
-- Also check individual cells (not just joined row text) for the title
-- Add fallback detection: if any row contains both "Código" and "Nome do empregado" columns, treat as payroll report
+Na linha 1224, `matchedPages` impede que mais de um funcionario seja associado a mesma pagina do comprovante. Com 70 paginas para 146 funcionarios (~2 por pagina), isso bloqueia metade dos matches legitimos.
 
-**2. Make `parsePayrollReport()` dynamic:**
-- Scan all rows (up to 20) for the column header row by looking for cells containing "Código" and "Nome do empregado"
-- Use `findColumnIndex()` (already exists) to map columns dynamically instead of hardcoded indices
-- Extract empresa by scanning first rows for a non-empty text cell that matches the pattern `N - COMPANY NAME`
-- Handle merged cells: check all cells in each row when looking for "Serviço:"
+O comprovante bancario (SICREDI) tipicamente lista varios favorecidos por pagina. O primeiro funcionario encontrado na pagina "trava" a pagina, e todos os demais que tambem aparecem naquela pagina sao rejeitados.
 
-**3. Improve empresa/metadata extraction:**
-- Scan first 6 rows for empresa (pattern: `^\d+\s*-\s*.+`)
-- Scan for CNPJ pattern to confirm report header area
+### Problema 2: Validacao cruzada com `extractEmployeeName` inadequada
 
-### No other files change — the fix is entirely within `excelUtils.ts`.
+Na linha 1266, o codigo extrai um nome do texto do comprovante usando `extractEmployeeName(comprovanteText, false)`. Essa funcao foi projetada para **holerites B SERVICE** (busca padrao "codigo + nome + CBO"). Quando aplicada ao texto de comprovantes bancarios, ela frequentemente extrai o nome errado (outro funcionario na mesma pagina, ou texto de cabecalho), causando rejeicao pelo `namesEquivalent`.
 
-## Technical details
+## Correcao
 
-```text
-Current flow:
-  .xls upload → isPayrollReport() → false (title not found)
-  → validateExcelStructure() → no "Todos" sheet → invalid
-  → parseMunicipalitySheets() → no city-format sheets → 0 records
-  → throws "Nenhum funcionário encontrado"
+### Arquivo: `src/hooks/useDocumentProcessor.ts`
 
-Fixed flow:
-  .xls upload → isPayrollReport() → true (finds "Código"+"Nome do empregado" header)
-  → parsePayrollReport() → dynamically finds header row → maps columns
-  → parses employee rows → returns records
+**Correcao 1** (linhas 1224, 1276-1279): Remover o `matchedPages` Set que bloqueia paginas. Comprovantes bancarios podem conter multiplos funcionarios na mesma pagina -- cada um deve poder ser matched independentemente.
+
+**Correcao 2** (linhas 1265-1269): Remover a validacao cruzada com `extractEmployeeName` no comprovante. O `findNameInPreparedPage` ja faz matching robusto (exato, primeiro+ultimo nome, fuzzy, substring). A validacao adicional com uma funcao projetada para outro formato de documento causa falsos negativos.
+
+### Logica resultante simplificada:
+
+```typescript
+for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  if (findNameInPreparedPage(preparedPages[pageIdx], entry.prepared)) {
+    foundPage = pageIdx + 1;
+    break;
+  }
+}
 ```
 
-### Key changes in `parsePayrollReport()`:
-- Find header row dynamically using `findColumnIndex` with aliases for each column
-- Column aliases: `["CODIGO", "CÓDIGO", "COD"]` for code, `["NOME DO EMPREGADO", "NOME", "EMPREGADO"]` for name
-- Use found indices for all financial columns instead of hardcoded 2-9
-- Empresa extraction: scan rows 0-5 for pattern `^\d+\s*-\s*`
+## Impacto
+
+| Aspecto | Antes | Depois |
+|---------|-------|--------|
+| Matches encontrados | 12 | ~65+ (restaurado) |
+| Paginas bloqueadas | Sim (1 match/pagina) | Nao (multiplos por pagina) |
+| Validacao cruzada | extractEmployeeName (incorreta para comprovantes) | Removida |
+
+## Arquivos alterados
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useDocumentProcessor.ts` | Remover `matchedPages` e validacao `extractEmployeeName` no matching |
 
