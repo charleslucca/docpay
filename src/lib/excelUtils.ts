@@ -602,7 +602,20 @@ function analyzeSheetForPayrollLayout(workbook: XLSX.WorkBook, sheetIdx: number)
     }
   }
 
-  if (headerRowIndex < 0) return noResult;
+  // Fallback: raw cell scan if sheet_to_json didn't find headers
+  if (headerRowIndex < 0) {
+    console.log("[Excel] sheet_to_json failed to find payroll headers, trying raw cell scan...");
+    const rawResult = rawCellScanForHeaders(sheet);
+    if (rawResult) {
+      headerRowIndex = rawResult.headerRow;
+      bestColumnMap = rawResult.columnMap;
+    }
+  }
+
+  if (headerRowIndex < 0) {
+    console.log("[Excel] No payroll headers found in sheet");
+    return noResult;
+  }
 
   // --- Step 2: extract empresa from rows before header ---
   let empresa = "";
