@@ -25,6 +25,11 @@ const mainItems = [
   { title: "Minha Conta", url: "/account", icon: User },
 ];
 
+const reportItems = [
+  { title: "Dashboard", url: "/relatorios/dashboard", icon: BarChart3 },
+  { title: "Histórico", url: "/relatorios/historico", icon: History },
+];
+
 const adminItems = [
   { title: "Usuários", url: "/admin/users", icon: Users },
   { title: "Funcionários", url: "/admin/funcionarios", icon: Users },
