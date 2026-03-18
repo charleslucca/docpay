@@ -1,5 +1,94 @@
 import * as XLSX from "xlsx";
 
+/**
+ * Fill merged cell ranges so sheet_to_json produces complete data.
+ * In .xls files, only the anchor cell of a merge has a value — this fills all cells in the range.
+ */
+function fillMerges(sheet: XLSX.WorkSheet): void {
+  const merges = sheet['!merges'];
+  if (!merges || merges.length === 0) return;
+
+  for (const merge of merges) {
+    const anchorAddr = XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c });
+    const anchorCell = sheet[anchorAddr];
+    if (!anchorCell) continue;
+
+    for (let r = merge.s.r; r <= merge.e.r; r++) {
+      for (let c = merge.s.c; c <= merge.e.c; c++) {
+        if (r === merge.s.r && c === merge.s.c) continue;
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!sheet[addr]) {
+          sheet[addr] = { t: anchorCell.t, v: anchorCell.v, w: anchorCell.w };
+        }
+      }
+    }
+  }
+  console.log(`[Excel] Filled ${merges.length} merged cell ranges`);
+}
+
+/**
+ * Raw cell scan fallback: read cells directly when sheet_to_json fails to find headers.
+ * Scans first maxRows × maxCols cells looking for payroll header columns.
+ */
+function rawCellScanForHeaders(sheet: XLSX.WorkSheet, maxRows = 30, maxCols = 50): { headerRow: number; columnMap: Record<string, number> } | null {
+  for (let r = 0; r < maxRows; r++) {
+    const cells: string[] = [];
+    for (let c = 0; c < maxCols; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = sheet[addr];
+      cells.push(cell ? String(cell.v || cell.w || "") : "");
+    }
+
+    const codigoCol = findColumnIndex(cells, PR_CODIGO_ALIASES);
+    const nomeCol = findColumnIndex(cells, PR_NOME_ALIASES);
+
+    if (codigoCol >= 0 && nomeCol >= 0) {
+      console.log(`[Excel] Raw cell scan found headers at row ${r}: codigo=${codigoCol}, nome=${nomeCol}`);
+      return {
+        headerRow: r,
+        columnMap: {
+          codigo: codigoCol,
+          nome: nomeCol,
+          salario: findColumnIndex(cells, PR_SALARIO_ALIASES),
+          outrosProv: findColumnIndex(cells, PR_OUTROS_PROV_ALIASES),
+          salFam: findColumnIndex(cells, PR_SAL_FAM_ALIASES),
+          inss: findColumnIndex(cells, PR_INSS_ALIASES),
+          irrf: findColumnIndex(cells, PR_IRRF_ALIASES),
+          outrosDesc: findColumnIndex(cells, PR_OUTROS_DESC_ALIASES),
+          liquido: findColumnIndex(cells, PR_LIQUIDO_ALIASES),
+          fgts: findColumnIndex(cells, PR_FGTS_ALIASES),
+        },
+      };
+    }
+
+    // Secondary: nome + financial column
+    if (nomeCol >= 0) {
+      const salCol = findColumnIndex(cells, PR_SALARIO_ALIASES);
+      const liqCol = findColumnIndex(cells, PR_LIQUIDO_ALIASES);
+      if (salCol >= 0 || liqCol >= 0) {
+        console.log(`[Excel] Raw cell scan found headers (secondary) at row ${r}: nome=${nomeCol}`);
+        return {
+          headerRow: r,
+          columnMap: {
+            codigo: codigoCol,
+            nome: nomeCol,
+            salario: salCol,
+            outrosProv: findColumnIndex(cells, PR_OUTROS_PROV_ALIASES),
+            salFam: findColumnIndex(cells, PR_SAL_FAM_ALIASES),
+            inss: findColumnIndex(cells, PR_INSS_ALIASES),
+            irrf: findColumnIndex(cells, PR_IRRF_ALIASES),
+            outrosDesc: findColumnIndex(cells, PR_OUTROS_DESC_ALIASES),
+            liquido: liqCol,
+            fgts: findColumnIndex(cells, PR_FGTS_ALIASES),
+          },
+        };
+      }
+    }
+  }
+  return null;
+}
+
+
 export interface EmployeeRecord {
   empresa: string;
   cidade: string;
