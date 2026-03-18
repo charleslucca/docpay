@@ -1024,6 +1024,19 @@ export function findNameInPreparedPage(page: PreparedPage, target: PreparedTarge
     }
   }
 
+  // 4. FALLBACK: Proximity match — first name + last name within 100 chars of each other
+  if (target.firstName.length >= 3 && target.lastName && target.lastName.length >= 3) {
+    const firstIdx = page.normalized.indexOf(target.firstName);
+    const lastIdx = page.normalized.indexOf(target.lastName);
+    if (firstIdx !== -1 && lastIdx !== -1) {
+      const distance = Math.abs(lastIdx - firstIdx);
+      if (distance < 100 && distance > 0) {
+        console.log(`[Match] Proximity fallback: ${target.original} (first="${target.firstName}" @${firstIdx}, last="${target.lastName}" @${lastIdx}, dist=${distance})`);
+        return { found: true, method: "proximity", score: 0.5 };
+      }
+    }
+  }
+
   return { found: false, method: "", score: 0 };
 }
 
