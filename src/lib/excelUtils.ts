@@ -792,7 +792,10 @@ function parsePayrollReport(workbook: XLSX.WorkBook, layout: PayrollLayoutAnalys
     /^EMPREGADOS?\b/i, /^CONTRIBUINTES?\b/i,
     /^RELAC/i, /^COMPETENCIA/i, /^PAGAMENTO/i,
     /^Servi[çc]o/i, /^EMPRESA/i, /^CNPJ/i,
+    /^CODIGO/i, /^NOME\s*(DO|DA)?\s*(EMPREGADO)?/i,
   ];
+
+  let skippedReasons = { servico: 0, emptyName: 0, shortName: 0, skipPattern: 0, nonNumericCode: 0, fewWords: 0 };
 
   for (let i = layout.headerRowIndex + 1; i < jsonData.length; i++) {
     const row = jsonData[i] as unknown[];
