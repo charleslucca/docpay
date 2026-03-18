@@ -773,6 +773,7 @@ function normalizeLightForExtraction(text: string): string {
     .replace(/([A-Z])0([A-Z])/g, "$1O$2")
     .replace(/([A-Z])1([A-Z])/g, "$1I$2")
     .replace(/([A-Z])5([A-Z])/g, "$1S$2")
+    .replace(/[\r\n]+/g, " ")  // Collapse newlines into spaces for regex matching
     .replace(/\s+/g, " ")
     .trim();
 }
