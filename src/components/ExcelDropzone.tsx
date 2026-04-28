@@ -79,7 +79,7 @@ export function ExcelDropzone({
     setSyncProgress(null);
 
     try {
-      const result = await syncSpreadsheetToDatabase(previewData, fileRef.current, (progress) => {
+      const result = await syncSpreadsheetToDatabase(previewData, (progress) => {
         setSyncProgress(progress);
       });
 
