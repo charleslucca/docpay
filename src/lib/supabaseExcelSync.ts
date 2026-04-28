@@ -396,7 +396,6 @@ async function logUploadHistory(
 
 export async function syncSpreadsheetToDatabase(
   data: SpreadsheetData,
-  file?: File,
   onProgress?: (progress: SyncProgress) => void
 ): Promise<SyncResult> {
   try {
