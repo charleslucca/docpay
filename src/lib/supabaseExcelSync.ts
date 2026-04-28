@@ -40,23 +40,6 @@ function chunkArray<T>(array: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
-async function uploadExcelFile(file: File): Promise<string | null> {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const fileName = `${timestamp}_${file.name}`;
-  const filePath = `uploads/${fileName}`;
-
-  const { error } = await supabase.storage
-    .from("excel-uploads")
-    .upload(filePath, file);
-
-  if (error) {
-    console.error("[Sync] Upload error:", error.message);
-    return null;
-  }
-
-  return filePath;
-}
-
 async function upsertEmpresasBatch(empresas: string[]): Promise<Map<string, string>> {
   const mapping = new Map<string, string>();
   if (empresas.length === 0) return mapping;
@@ -387,14 +370,12 @@ async function syncFuncionariosBatch(
 
 async function logUploadHistory(
   fileName: string,
-  filePath: string | null,
   stats: SyncResult["stats"]
 ): Promise<string | null> {
   const { data, error } = await supabase
     .from("excel_upload_history")
     .insert({
       file_name: fileName,
-      file_path: filePath,
       total_empresas: stats.empresas,
       total_municipios: stats.municipios,
       total_funcionarios: stats.totalFuncionarios,
@@ -428,12 +409,6 @@ export async function syncSpreadsheetToDatabase(
       funcionarios: data.records.length,
     });
 
-    onProgress?.({ stage: 'uploading', message: 'Enviando arquivo...' });
-    let filePath: string | null = null;
-    if (file) {
-      filePath = await uploadExcelFile(file);
-    }
-
     onProgress?.({ stage: 'syncing-empresas', message: `Sincronizando ${data.empresas.length} empresas...` });
     const empresaMap = await upsertEmpresasBatch(data.empresas);
     console.log("[Sync] Empresas synced:", empresaMap.size);
@@ -463,7 +438,7 @@ export async function syncSpreadsheetToDatabase(
     };
 
     onProgress?.({ stage: 'finalizing', message: 'Finalizando...' });
-    const historyId = await logUploadHistory(data.fileName, filePath, stats);
+    const historyId = await logUploadHistory(data.fileName, stats);
 
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
     console.log(`[Sync] Complete in ${elapsed}s!`, stats);
