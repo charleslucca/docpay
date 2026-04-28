@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { normalizeForComparison, type SpreadsheetData, type EmployeeRecord } from "./excelUtils";
 
 export interface SyncProgress {
-  stage: 'uploading' | 'syncing-empresas' | 'syncing-municipios' | 'syncing-funcionarios' | 'syncing-salarios' | 'finalizing';
+  stage: 'syncing-empresas' | 'syncing-municipios' | 'syncing-funcionarios' | 'syncing-salarios' | 'finalizing';
   message: string;
 }
 
