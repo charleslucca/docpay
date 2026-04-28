@@ -131,7 +131,6 @@ export function ExcelDropzone({
   const getProgressPercentage = (): number => {
     if (!syncProgress) return 0;
     switch (syncProgress.stage) {
-      case 'uploading': return 10;
       case 'syncing-empresas': return 25;
       case 'syncing-municipios': return 40;
       case 'syncing-funcionarios': return 70;
