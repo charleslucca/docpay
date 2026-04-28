@@ -41,7 +41,6 @@ export type Database = {
       excel_upload_history: {
         Row: {
           file_name: string
-          file_path: string | null
           funcionarios_atualizados: number
           funcionarios_novos: number
           funcionarios_removidos: number
@@ -53,7 +52,6 @@ export type Database = {
         }
         Insert: {
           file_name: string
-          file_path?: string | null
           funcionarios_atualizados?: number
           funcionarios_novos?: number
           funcionarios_removidos?: number
@@ -65,7 +63,6 @@ export type Database = {
         }
         Update: {
           file_name?: string
-          file_path?: string | null
           funcionarios_atualizados?: number
           funcionarios_novos?: number
           funcionarios_removidos?: number

@@ -79,7 +79,7 @@ export function ExcelDropzone({
     setSyncProgress(null);
 
     try {
-      const result = await syncSpreadsheetToDatabase(previewData, fileRef.current, (progress) => {
+      const result = await syncSpreadsheetToDatabase(previewData, (progress) => {
         setSyncProgress(progress);
       });
 
@@ -131,7 +131,6 @@ export function ExcelDropzone({
   const getProgressPercentage = (): number => {
     if (!syncProgress) return 0;
     switch (syncProgress.stage) {
-      case 'uploading': return 10;
       case 'syncing-empresas': return 25;
       case 'syncing-municipios': return 40;
       case 'syncing-funcionarios': return 70;
