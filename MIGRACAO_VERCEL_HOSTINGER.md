@@ -193,20 +193,46 @@ Vai aparecer um `backup_docpay.sql` (alguns MB) na pasta atual.
 
 ## PARTE D — Importar o banco na VPS
 
-### D.1 Enviar o arquivo para a VPS
+### D.1 (OBRIGATÓRIO) Limpar parâmetros incompatíveis do dump
+
+> **Por quê?** O `pg_dump` do Supabase Cloud usa PostgreSQL 15+ e adiciona a linha `SET transaction_timeout = 0;` no início do arquivo. A versão de Postgres que roda dentro do container do Supabase self-hosted (Postgres 15.1) **não reconhece esse parâmetro** e aborta a importação com:
+>
+> `ERROR: unrecognized configuration parameter "transaction_timeout"`
+>
+> A correção é remover essa linha do arquivo `.sql` **antes** de importar. Faça isso para **TODOS** os dumps (`backup_docpay.sql`, ou `backup_public.sql` + `backup_auth_users.sql` se você fez dumps separados).
+
+**Linux / Mac (no seu PC):**
+```bash
+cp backup_docpay.sql backup_docpay_original.sql
+sed -i.bak '/transaction_timeout/d' backup_docpay.sql
+grep -c "transaction_timeout" backup_docpay.sql
+```
+O último comando deve imprimir `0`. Se imprimir `0`, está limpo.
+
+**Windows (PowerShell, no seu PC):**
+```powershell
+Copy-Item backup_docpay.sql backup_docpay_original.sql
+(Get-Content backup_docpay.sql) | Where-Object { $_ -notmatch 'transaction_timeout' } | Set-Content backup_docpay_limpo.sql
+Select-String -Path backup_docpay_limpo.sql -Pattern "transaction_timeout"
+```
+Se o último comando **não imprimir nada**, está limpo. No Windows, use `backup_docpay_limpo.sql` daqui pra frente.
+
+> Se aparecerem outros erros parecidos de parâmetro desconhecido (ex.: `idle_in_transaction_session_timeout`), aplique o mesmo `sed`/filtro trocando o nome do parâmetro.
+
+### D.2 Enviar o arquivo para a VPS
 No seu PC:
 ```bash
 scp backup_docpay.sql root@<IP_DA_VPS>:/opt/supabase/
 ```
 
-### D.2 Importar dentro do container do Postgres
-Conecte na VPS via SSH e rode:
+### D.3 Importar dentro do container do Postgres
+Conecte na VPS via SSH e rode (com `ON_ERROR_STOP=1` para abortar de verdade se algo falhar):
 ```bash
-docker exec -i supabase-db psql -U postgres -d postgres < /opt/supabase/backup_docpay.sql
+docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 --single-transaction < /opt/supabase/backup_docpay.sql
 ```
-Vai imprimir várias linhas `CREATE TABLE`, `ALTER TABLE`, `COPY`. Erros do tipo `role "xxx" does not exist` podem ser ignorados.
+Vai imprimir várias linhas `CREATE TABLE`, `ALTER TABLE`, `COPY`. Mensagens `NOTICE:` (avisos) podem ser ignoradas. Linhas começando com `ERROR:` interrompem tudo — se acontecer, leia a mensagem, corrija o `.sql` (geralmente é mais um parâmetro a remover) e rode de novo.
 
-### D.3 Conferir se deu certo
+### D.4 Conferir se deu certo
 ```bash
 docker exec -it supabase-db psql -U postgres -c "\dt public.*"
 docker exec -it supabase-db psql -U postgres -c "SELECT count(*) FROM auth.users;"
@@ -214,7 +240,7 @@ docker exec -it supabase-db psql -U postgres -c "SELECT count(*) FROM public.fun
 ```
 Os números devem bater com o Supabase Cloud atual.
 
-### D.4 Como aplicar migrations futuras (quando o Lovable criar um arquivo novo em `supabase/migrations/`)
+### D.5 Como aplicar migrations futuras (quando o Lovable criar um arquivo novo em `supabase/migrations/`)
 No seu PC, com o arquivo da migration baixado:
 ```bash
 scp supabase/migrations/<NOVA_MIGRATION>.sql root@<IP_DA_VPS>:/tmp/
