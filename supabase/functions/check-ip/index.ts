@@ -37,9 +37,17 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Extract client IP
-    const forwarded = req.headers.get("x-forwarded-for");
-    const clientIp = forwarded ? forwarded.split(",")[0].trim() : "unknown";
+    // Extract client IP from platform-injected headers.
+    // Prefer `cf-connecting-ip` (set by Cloudflare in front of Supabase Edge)
+    // and `x-real-ip` (set by the Supabase infra). Both are overwritten by the
+    // platform and cannot be forged by the caller. Only fall back to the
+    // LAST entry of `x-forwarded-for` (closest hop to our edge), never the
+    // first one (which is fully attacker-controlled).
+    const cfIp = req.headers.get("cf-connecting-ip");
+    const realIp = req.headers.get("x-real-ip");
+    const xff = req.headers.get("x-forwarded-for");
+    const xffLast = xff ? xff.split(",").map((s) => s.trim()).filter(Boolean).pop() : null;
+    const clientIp = (cfIp || realIp || xffLast || "unknown").trim();
 
     // Create admin client
     const supabaseAdmin = createClient(
