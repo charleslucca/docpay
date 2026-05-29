@@ -106,6 +106,38 @@ O container do Postgres ficará com o nome **`docpay-db`** (prefixo do `COMPOSE_
 >
 > Pegue a connection string em: **Supabase Dashboard → Project Settings → Database → Connection string** (modo **Session**, formato URI). Substitua `SENHA` e `REGIAO`.
 
+### Opção A — Tudo em UM arquivo (recomendado)
+
+Gera um único `backup_docpay_full.sql` contendo: estrutura + dados do schema `public`, mais estrutura do schema `auth` com os dados de `auth.users` e `auth.identities` (ignora tabelas voláteis: sessões, refresh tokens, MFA, SSO/SAML, flow_state, one_time_tokens — recriadas pelo GoTrue).
+
+```bash
+# 1) Connection string do projeto zouizzfomwrxfptgxkwj
+export CLOUD_URL="postgresql://postgres.zouizzfomwrxfptgxkwj:SENHA@aws-0-REGIAO.pooler.supabase.com:5432/postgres"
+
+# 2) Dump completo (public + auth essencial)
+pg_dump "$CLOUD_URL" \
+  --schema=public \
+  --schema=auth \
+  --no-owner --no-privileges --no-comments \
+  --quote-all-identifiers \
+  --exclude-table-data='auth.audit_log_entries' \
+  --exclude-table-data='auth.refresh_tokens' \
+  --exclude-table-data='auth.sessions' \
+  --exclude-table-data='auth.mfa_*' \
+  --exclude-table-data='auth.sso_*' \
+  --exclude-table-data='auth.saml_*' \
+  --exclude-table-data='auth.flow_state' \
+  --exclude-table-data='auth.one_time_tokens' \
+  -f backup_docpay_full.sql
+
+# 3) Conferir
+ls -lh backup_docpay_full.sql
+```
+
+### Opção B — 3 arquivos separados (alternativa)
+
+Útil se quiser importar em etapas (primeiro estrutura, depois usuários).
+
 ```bash
 # 1) Definir a URL do banco Cloud
 export CLOUD_URL="postgresql://postgres.zouizzfomwrxfptgxkwj:SENHA@aws-0-REGIAO.pooler.supabase.com:5432/postgres"
@@ -133,13 +165,19 @@ pg_dump "$CLOUD_URL" \
 ls -lh backup_*.sql
 ```
 
-Esses **3 arquivos = 100%** do que você precisa para migrar (app + usuários).
-
 ---
 
 ## PARTE D — Enviar os dumps para a VPS
 
 Da sua máquina local:
+
+**Se usou a Opção A:**
+
+```bash
+scp backup_docpay_full.sql root@<IP_DA_VPS>:/opt/supabase-docpay/
+```
+
+**Se usou a Opção B:**
 
 ```bash
 scp backup_public.sql backup_auth_users.sql backup_auth_identities.sql \
@@ -151,6 +189,43 @@ scp backup_public.sql backup_auth_users.sql backup_auth_identities.sql \
 ## PARTE E — Importar no database `docpay`
 
 Na VPS, via SSH:
+
+### Opção A — Import do arquivo único
+
+```bash
+cd /opt/supabase-docpay
+
+# 1) Parar serviços que leem o banco
+docker compose stop kong auth rest realtime functions storage
+
+# 2) Limpar schema public e auth.users (cascade remove identities/sessions também)
+docker exec -i docpay-db psql -U postgres -d docpay -v ON_ERROR_STOP=1 <<'SQL'
+DROP SCHEMA IF EXISTS public CASCADE;
+CREATE SCHEMA public;
+TRUNCATE auth.users CASCADE;
+SQL
+
+# 3) Importar o dump completo
+docker exec -i docpay-db psql -U postgres -d docpay -v ON_ERROR_STOP=1 \
+  --single-transaction < /opt/supabase-docpay/backup_docpay_full.sql
+
+# 4) Reconceder permissões (PostgREST exige)
+docker exec -i docpay-db psql -U postgres -d docpay -v ON_ERROR_STOP=1 <<'SQL'
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role, authenticated;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role, authenticated;
+SQL
+
+# 5) Religar e recarregar o PostgREST
+docker compose start kong auth rest realtime functions storage
+docker exec docpay-db psql -U postgres -d docpay \
+  -c "NOTIFY pgrst, 'reload schema';"
+docker compose ps
+```
+
+### Opção B — Import dos 3 arquivos
 
 ```bash
 cd /opt/supabase-docpay
@@ -361,3 +436,4 @@ O stack Supabase consome ~3–4 GB de RAM com uso normal. KVM 2 dá folga confor
 | Login falha após import | `auth.identities` não importado | rodar passo 3 da PARTE E |
 | 502 no subdomínio | Kong fora do ar | `docker compose ps` + `docker compose logs kong` |
 | Container DB não chama `docpay-db` | `COMPOSE_PROJECT_NAME` errado | corrigir `.env` e `docker compose up -d` |
+| `pg_dump: server version mismatch` | `pg_dump` < 15 | instalar `postgresql-client-15+` antes de exportar |
