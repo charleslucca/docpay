@@ -48,7 +48,7 @@ interface UserEntry {
   created_at: string;
 }
 
-const FUNCTION_URL = `https://zouizzfomwrxfptgxkwj.supabase.co/functions/v1/admin-create-user`;
+const FUNCTION_NAME = "admin-create-user";
 
 const AdminUsers = () => {
   const { toast } = useToast();
@@ -75,11 +75,6 @@ const AdminUsers = () => {
   const [deleteUser, setDeleteUser] = useState<UserEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const getToken = async () => {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token;
-  };
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setCurrentUserId(data.session?.user?.id ?? null);
@@ -89,24 +84,16 @@ const AdminUsers = () => {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const token = await getToken();
-      if (!token) return;
-
-      const res = await fetch(FUNCTION_URL, {
+      const { data: json, error } = await supabase.functions.invoke(FUNCTION_NAME, {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
       });
 
-      const json = await res.json();
-      if (res.ok && json.users) {
+      if (!error && json?.users) {
         setUsers(json.users);
       } else {
         toast({
           title: "Erro",
-          description: json.error || "Não foi possível carregar os usuários.",
+          description: (json as any)?.error || error?.message || "Não foi possível carregar os usuários.",
           variant: "destructive",
         });
       }
@@ -138,20 +125,17 @@ const AdminUsers = () => {
 
     setAdding(true);
     try {
-      const token = await getToken();
-      const res = await fetch(FUNCTION_URL, {
+      const { data: json, error } = await supabase.functions.invoke(FUNCTION_NAME, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password, full_name: fullName.trim(), role }),
+        body: { email: email.trim(), password, full_name: fullName.trim(), role },
       });
 
-      const json = await res.json();
-      if (res.ok && json.success) {
+      if (!error && json?.success) {
         toast({ title: "Usuário criado com sucesso" });
         setFullName(""); setEmail(""); setPassword(""); setRole("employee");
         fetchUsers();
       } else {
-        toast({ title: "Erro ao criar usuário", description: json.error || "Erro desconhecido.", variant: "destructive" });
+        toast({ title: "Erro ao criar usuário", description: (json as any)?.error || error?.message || "Erro desconhecido.", variant: "destructive" });
       }
     } catch (error: any) {
       console.error("handleAdd error:", error);
@@ -182,23 +166,20 @@ const AdminUsers = () => {
 
     setSaving(true);
     try {
-      const token = await getToken();
       const payload: Record<string, string> = { user_id: editUser.id, full_name: editName.trim(), role: editRole };
       if (editPassword) payload.password = editPassword;
 
-      const res = await fetch(FUNCTION_URL, {
+      const { data: json, error } = await supabase.functions.invoke(FUNCTION_NAME, {
         method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: payload,
       });
 
-      const json = await res.json();
-      if (res.ok && json.success) {
+      if (!error && json?.success) {
         toast({ title: "Usuário atualizado" });
         setEditUser(null);
         fetchUsers();
       } else {
-        toast({ title: "Erro ao atualizar", description: json.error || "Erro desconhecido.", variant: "destructive" });
+        toast({ title: "Erro ao atualizar", description: (json as any)?.error || error?.message || "Erro desconhecido.", variant: "destructive" });
       }
     } catch (error: any) {
       console.error("handleEdit error:", error);
@@ -213,21 +194,17 @@ const AdminUsers = () => {
     if (!deleteUser) return;
     setDeleting(true);
     try {
-      const token = await getToken();
-
-      const res = await fetch(FUNCTION_URL, {
+      const { data: json, error } = await supabase.functions.invoke(FUNCTION_NAME, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: deleteUser.id }),
+        body: { user_id: deleteUser.id },
       });
 
-      const json = await res.json();
-      if (res.ok && json.success) {
+      if (!error && json?.success) {
         toast({ title: "Usuário excluído" });
         setDeleteUser(null);
         fetchUsers();
       } else {
-        toast({ title: "Erro ao excluir", description: json.error || "Erro desconhecido.", variant: "destructive" });
+        toast({ title: "Erro ao excluir", description: (json as any)?.error || error?.message || "Erro desconhecido.", variant: "destructive" });
       }
     } catch (error: any) {
       console.error("handleDelete error:", error);
