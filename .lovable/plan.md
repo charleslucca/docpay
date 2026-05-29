@@ -1,65 +1,96 @@
-## Comando para exportar TUDO do banco `zouizzfomwrxfptgxkwj`
+## Validação de integridade — Postgres self-hosted (VPS 191.101.234.62)
 
-A connection string já vem pronta no Supabase Dashboard → **Project Settings → Database → Connection string** (modo **Session**, formato URI). Você só substitui `SENHA` pela senha do banco e `REGIAO` pela região do seu projeto (ex: `sa-east-1`).
+Não consigo conectar diretamente na VPS pelas minhas ferramentas (elas só falam com o Supabase Cloud). A validação será feita via um único bloco SQL que você roda na VPS e me cola a saída. O script confere tudo que precisa estar íntegro para o frontend funcionar.
 
-### Opção A — Export completo em UM único arquivo (recomendado, mais simples)
+### O que o script verifica
 
-Roda **na sua máquina local** com `pg_dump` 15+ instalado.
+1. **Schemas existentes** (precisa ter `public` e `auth`)
+2. **Tabelas do schema `public`** — lista esperada: `empresas`, `funcionarios`, `funcionarios_salario`, `municipios`, `profiles`, `user_roles`, `ip_whitelist`, `processing_history`, `excel_upload_history`
+3. **Contagem de linhas** por tabela (compara com o Cloud depois)
+4. **Enum `app_role`** existe com valores `admin`, `employee`, `financeiro`
+5. **Funções**: `has_role`, `has_role_any`, `handle_new_user`, `update_updated_at_column`
+6. **Trigger `on_auth_user_created`** em `auth.users` (cria profile + role automaticamente)
+7. **RLS habilitado** em todas as tabelas de `public`
+8. **Policies** por tabela (contagem)
+9. **GRANTs** para `anon`, `authenticated`, `service_role` no schema `public`
+10. **Tabelas de `auth`**: `users` e `identities` com contagem
+11. **Buckets de storage**: `excel-uploads`, `generated-documents`
+
+### Como executar
+
+Você roda **um único comando** na VPS:
 
 ```bash
-# 1) Connection string do projeto zouizzfomwrxfptgxkwj
-export CLOUD_URL="postgresql://postgres.zouizzfomwrxfptgxkwj:SENHA@aws-0-REGIAO.pooler.supabase.com:5432/postgres"
+docker exec -i docpay-db psql -U postgres -d docpay <<'SQL' > /tmp/integridade.txt 2>&1
+\echo === 1. SCHEMAS ===
+SELECT schema_name FROM information_schema.schemata
+WHERE schema_name IN ('public','auth','storage') ORDER BY 1;
 
-# 2) Dump completo: estrutura do schema public + dados + auth.users + auth.identities
-pg_dump "$CLOUD_URL" \
-  --schema=public \
-  --schema=auth \
-  --no-owner --no-privileges --no-comments \
-  --quote-all-identifiers \
-  --exclude-table-data='auth.audit_log_entries' \
-  --exclude-table-data='auth.refresh_tokens' \
-  --exclude-table-data='auth.sessions' \
-  --exclude-table-data='auth.mfa_*' \
-  --exclude-table-data='auth.sso_*' \
-  --exclude-table-data='auth.saml_*' \
-  --exclude-table-data='auth.flow_state' \
-  --exclude-table-data='auth.one_time_tokens' \
-  -f backup_docpay_full.sql
+\echo === 2. TABELAS PUBLIC ===
+SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1;
 
-# 3) Conferir
-ls -lh backup_docpay_full.sql
+\echo === 3. CONTAGENS PUBLIC ===
+SELECT 'empresas' t, count(*) FROM public.empresas UNION ALL
+SELECT 'funcionarios', count(*) FROM public.funcionarios UNION ALL
+SELECT 'funcionarios_salario', count(*) FROM public.funcionarios_salario UNION ALL
+SELECT 'municipios', count(*) FROM public.municipios UNION ALL
+SELECT 'profiles', count(*) FROM public.profiles UNION ALL
+SELECT 'user_roles', count(*) FROM public.user_roles UNION ALL
+SELECT 'ip_whitelist', count(*) FROM public.ip_whitelist UNION ALL
+SELECT 'processing_history', count(*) FROM public.processing_history UNION ALL
+SELECT 'excel_upload_history', count(*) FROM public.excel_upload_history;
+
+\echo === 4. ENUM app_role ===
+SELECT unnest(enum_range(NULL::public.app_role));
+
+\echo === 5. FUNÇÕES ===
+SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+WHERE n.nspname='public' AND proname IN
+('has_role','has_role_any','handle_new_user','update_updated_at_column') ORDER BY 1;
+
+\echo === 6. TRIGGER on_auth_user_created ===
+SELECT tgname, tgrelid::regclass FROM pg_trigger WHERE tgname='on_auth_user_created';
+
+\echo === 7. RLS HABILITADO ===
+SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname='public' ORDER BY 1;
+
+\echo === 8. POLICIES POR TABELA ===
+SELECT tablename, count(*) FROM pg_policies WHERE schemaname='public'
+GROUP BY tablename ORDER BY 1;
+
+\echo === 9. GRANTS PUBLIC ===
+SELECT grantee, table_name, string_agg(privilege_type, ',') privs
+FROM information_schema.role_table_grants
+WHERE table_schema='public' AND grantee IN ('anon','authenticated','service_role')
+GROUP BY grantee, table_name ORDER BY 2,1;
+
+\echo === 10. AUTH ===
+SELECT 'auth.users' t, count(*) FROM auth.users UNION ALL
+SELECT 'auth.identities', count(*) FROM auth.identities;
+
+\echo === 11. STORAGE BUCKETS ===
+SELECT id, public FROM storage.buckets ORDER BY 1;
+SQL
+
+cat /tmp/integridade.txt
 ```
 
-Isso gera **1 arquivo só** com:
-- toda a estrutura do schema `public` (tabelas, funções `has_role`, `handle_new_user`, enums como `app_role`, triggers, RLS)
-- todos os dados das tabelas `public.*`
-- estrutura do schema `auth` + dados de `auth.users` e `auth.identities` (logins e senhas hash), ignorando tabelas voláteis (sessões, tokens, MFA) que serão recriadas pelo GoTrue.
+### O que faço com a saída
 
-### Opção B — 3 arquivos separados (já está no `MIGRACAO_VERCEL_HOSTINGER.md`)
+Você cola o conteúdo do `/tmp/integridade.txt` no chat. Eu comparo cada bloco contra o estado esperado (que conheço do Cloud) e devolvo um relatório no formato:
 
-Mantém o que já documentamos: `backup_public.sql`, `backup_auth_users.sql`, `backup_auth_identities.sql`. Vantagem: import mais granular. Desvantagem: 3 comandos a mais.
+```
+[OK]    Schemas: public, auth, storage presentes
+[OK]    9/9 tabelas em public
+[FALHA] Trigger on_auth_user_created ausente → script de correção:
+        CREATE TRIGGER on_auth_user_created ...
+[FALHA] Tabela funcionarios_salario sem GRANT para authenticated → corrigir com:
+        GRANT SELECT ON public.funcionarios_salario TO authenticated;
+...
+```
 
-## O que muda no documento
+Para cada falha, eu te entrego o SQL exato de correção, pronto para rodar com `docker exec -i docpay-db psql ...`.
 
-Atualizar `MIGRACAO_VERCEL_HOSTINGER.md`:
+### Nenhuma alteração de código
 
-1. **PARTE C** — adicionar no topo a **Opção A (1 arquivo)** como recomendada, mantendo a **Opção B (3 arquivos)** como alternativa.
-2. **PARTE D** — mostrar o `scp` para ambos os cenários (`backup_docpay_full.sql` OU os 3 arquivos).
-3. **PARTE E** — adicionar bloco de import correspondente à Opção A:
-   ```bash
-   docker compose stop kong auth rest realtime functions storage
-
-   docker exec -i docpay-db psql -U postgres -d docpay -v ON_ERROR_STOP=1 \
-     -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;
-         TRUNCATE auth.users CASCADE;"
-
-   docker exec -i docpay-db psql -U postgres -d docpay -v ON_ERROR_STOP=1 \
-     --single-transaction < /opt/supabase-docpay/backup_docpay_full.sql
-
-   # GRANTs (mesmo bloco já existente)
-   # NOTIFY pgrst, 'reload schema'
-   docker compose start kong auth rest realtime functions storage
-   ```
-4. **Solução de problemas** — adicionar linha: se `pg_dump` versão for < 15, atualizar antes de exportar (incompatibilidade com Supabase Cloud).
-
-Nenhum código da aplicação é tocado.
+Esta validação é 100% diagnóstica. Nenhum arquivo do projeto é tocado. Só geramos correções SQL **depois** que você compartilhar a saída e identificarmos o que está faltando.
