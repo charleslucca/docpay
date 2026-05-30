@@ -25,12 +25,13 @@ const ProtectedRoute = ({ children, checkIp = true }: ProtectedRouteProps) => {
         const { data, error } = await supabase.functions.invoke("check-ip");
         if (error) {
           console.error("IP check error:", error);
-          setIpAllowed(true); // fail open if edge function errors
+          setIpAllowed(false); // fail closed: deny access if the check fails
         } else {
-          setIpAllowed(data?.allowed ?? true);
+          setIpAllowed(data?.allowed === true);
         }
-      } catch {
-        setIpAllowed(true); // fail open
+      } catch (err) {
+        console.error("IP check threw:", err);
+        setIpAllowed(false); // fail closed
       } finally {
         setIpChecking(false);
       }
