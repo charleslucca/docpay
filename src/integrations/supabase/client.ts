@@ -8,7 +8,7 @@ import type { Database } from "./types";
 
 const SUPABASE_URL = "https://platform.multibrain.com.br:8443";
 const SUPABASE_PUBLISHABLE_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzc5NDcxMjMzLCJleHAiOjE5MzcxNTEyMzN9.GW2Tk-7ZIAR3iHIAHG6SWVOaU4QSloY8q0g4cbLQlOQ;
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzc5NDcxMjMzLCJleHAiOjE5MzcxNTEyMzN9.GW2Tk-7ZIAR3iHIAHG6SWVOaU4QSloY8q0g4cbLQlOQ";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
